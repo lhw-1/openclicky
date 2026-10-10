@@ -1457,7 +1457,14 @@ final class CompanionManager: ObservableObject {
             } catch is CancellationError {
                 // User spoke again — response was interrupted
             } catch {
-                if Self.isAccountNotice(error) {
+                if Self.isSignInRejection(error) {
+                    // The backend refused the token. Try one refresh; if the sign-in is dead the
+                    // session signs out, and either way the person hears what to do.
+                    await OpenClickyAuthSession.shared.refreshIfNeeded(force: true)
+                    speakWithSystemVoice(OpenClickyConfiguration.isConfigured
+                        ? "please ask that again."
+                        : "your openclicky sign-in has expired. sign in again in settings, account.")
+                } else if Self.isAccountNotice(error) {
                     if let notice = Self.accountNoticeToSpeak(for: error, alreadySpoken: &spokenAccountNotices) {
                         speakWithSystemVoice(notice)
                     }
@@ -1664,6 +1671,12 @@ final class CompanionManager: ObservableObject {
     }
 
     /// The account's answer to a failed ask: a 402 limit, or the free service's 503 trouble.
+    /// The backend answered 401: the token was refused (expired, or issued before a move).
+    static func isSignInRejection(_ error: Error) -> Bool {
+        let error = error as NSError
+        return error.domain == "ClaudeAPI" && error.code == 401
+    }
+
     static func isAccountNotice(_ error: Error) -> Bool {
         let error = error as NSError
         guard error.domain == "ClaudeAPI" else { return false }

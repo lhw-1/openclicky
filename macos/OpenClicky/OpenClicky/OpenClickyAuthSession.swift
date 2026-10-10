@@ -311,9 +311,28 @@ final class OpenClickyAuthSession: ObservableObject {
                   email: Self.refreshedEmail(session, stored: settings.accountEmail))
             print("🔐 Session refreshed")
         } catch {
-            lastErrorText = Self.describe(error)
-            print("🔐 Session refresh failed: \(lastErrorText ?? "")")
+            let status = (error as NSError).userInfo[Self.httpStatusKey] as? Int ?? 0
+            if Self.refreshRejectionEndsSession(status: status) {
+                // The sign-in server refused this refresh token outright (expired, revoked, or from
+                // another project after a move): it will never work again. Signing out shows the
+                // sign-in form, instead of looking signed in while every request answers 401.
+                print("🔐 Session refresh refused (\(status)); signing out")
+                signOut()
+                lastErrorText = Self.sessionExpiredMessage
+            } else {
+                lastErrorText = Self.describe(error)
+                print("🔐 Session refresh failed: \(lastErrorText ?? "")")
+            }
         }
+    }
+
+    nonisolated static let httpStatusKey = "OpenClickyAuthHTTPStatus"
+    nonisolated static let sessionExpiredMessage = "your sign-in expired — sign in again with your email."
+
+    /// A 4xx from the token endpoint means this refresh token is dead; a 429, a 5xx or no answer
+    /// (status 0) may pass, so the session is kept and tried again later.
+    nonisolated static func refreshRejectionEndsSession(status: Int) -> Bool {
+        (400..<500).contains(status) && status != 429
     }
 
     // MARK: - Supabase calls
@@ -346,7 +365,8 @@ final class OpenClickyAuthSession: ObservableObject {
         guard (response as? HTTPURLResponse)?.statusCode == 200 else {
             let json = (try? JSONSerialization.jsonObject(with: data) as? [String: Any]) ?? [:]
             let message = (json["error_description"] as? String) ?? (json["msg"] as? String) ?? (json["error"] as? String) ?? "sign-in rejected"
-            throw NSError(domain: "OpenClickyAuth", code: 2, userInfo: [NSLocalizedDescriptionKey: message])
+            let status = (response as? HTTPURLResponse)?.statusCode ?? 0
+            throw NSError(domain: "OpenClickyAuth", code: 2, userInfo: [NSLocalizedDescriptionKey: message, Self.httpStatusKey: status])
         }
         return try JSONDecoder().decode(TokenResponse.self, from: data)
     }
