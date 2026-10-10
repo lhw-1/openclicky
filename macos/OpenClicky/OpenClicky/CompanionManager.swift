@@ -1745,10 +1745,14 @@ final class CompanionManager: ObservableObject {
     /// onboarding demo puts it last). Returns the spoken text (tag removed) and the optional
     /// coordinate + label + screen number.
     static func parsePointingCoordinates(from responseText: String) -> PointingParseResult {
+        // A leading tag is moved to the end and read there. Only when text follows it: a tag on its
+        // own is already "at the end", and moving it again would recurse forever.
         if let leadingTagRange = responseText.range(of: #"^\s*\[POINT:[^\]]*\]"#, options: .regularExpression) {
             let leadingTag = responseText[leadingTagRange].trimmingCharacters(in: .whitespacesAndNewlines)
             let textAfterTag = responseText[leadingTagRange.upperBound...].trimmingCharacters(in: .whitespacesAndNewlines)
-            return parsePointingCoordinates(from: textAfterTag + " " + leadingTag)
+            if !textAfterTag.isEmpty {
+                return parsePointingCoordinates(from: textAfterTag + " " + leadingTag)
+            }
         }
         // Match [POINT:none] or [POINT:123,456:label] or [POINT:123,456:label:screen2]
         let pattern = #"\[POINT:(?:none|(\d+)\s*,\s*(\d+)(?::([^\]:\s][^\]:]*?))?(?::screen(\d+))?)\]\s*$"#

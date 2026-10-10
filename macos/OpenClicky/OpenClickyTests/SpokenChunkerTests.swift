@@ -54,4 +54,14 @@ struct PointTagPositionTests {
         #expect(trailing.spokenText == leading.spokenText)
         #expect(CompanionManager.parsePointingCoordinates(from: "[POINT:none] html is markup.").spokenText == "html is markup.")
     }
+
+    @Test func aTagOnItsOwnIsRead() {
+        // The answer speaker hands over just the tag when the voice starts. This once recursed
+        // forever (the moved tag was still "leading") and crashed the app.
+        let tagAlone = CompanionManager.parsePointingCoordinates(from: "[POINT:120,40:code]")
+        #expect(tagAlone.coordinate == CGPoint(x: 120, y: 40))
+        #expect(tagAlone.elementLabel == "code")
+        #expect(tagAlone.spokenText == "")
+        #expect(CompanionManager.parsePointingCoordinates(from: "  [POINT:none]  ").coordinate == nil)
+    }
 }
