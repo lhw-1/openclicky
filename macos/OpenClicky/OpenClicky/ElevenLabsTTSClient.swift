@@ -40,6 +40,17 @@ final class ElevenLabsTTSClient {
     /// Sends `text` to ElevenLabs TTS and plays the resulting audio.
     /// Throws on network or decoding errors. Cancellation-safe.
     func speakText(_ text: String) async throws {
+        let data = try await fetchAudio(for: text)
+        try Task.checkCancellation()
+        let player = try AVAudioPlayer(data: data)
+        self.audioPlayer = player
+        player.play()
+        print("🔊 ElevenLabs TTS: playing \(data.count / 1024)KB audio")
+    }
+
+    /// The audio for `text` from the backend's /tts, without playing it. Used by `SpeechQueue` to
+    /// fetch the next piece of an answer while the current one plays.
+    func fetchAudio(for text: String) async throws -> Data {
         var request = URLRequest(url: proxyURL)
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
@@ -69,13 +80,30 @@ final class ElevenLabsTTSClient {
             throw NSError(domain: "ElevenLabsTTS", code: httpResponse.statusCode,
                           userInfo: [NSLocalizedDescriptionKey: "TTS API error (\(httpResponse.statusCode)): \(errorBody)"])
         }
+        return data
+    }
 
+    /// Plays `data` and returns when it has finished (or was stopped). Cancelling the calling task
+    /// stops the audio.
+    func playToCompletion(_ data: Data) async throws {
         try Task.checkCancellation()
-
         let player = try AVAudioPlayer(data: data)
+        let finishObserver = AudioPlayerFinishObserver()
+        player.delegate = finishObserver
         self.audioPlayer = player
-        player.play()
-        print("🔊 ElevenLabs TTS: playing \(data.count / 1024)KB audio")
+        await withTaskCancellationHandler {
+            await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
+                finishObserver.onFinish = { continuation.resume() }
+                if !player.play() { finishObserver.finishOnce() }
+            }
+        } onCancel: {
+            Task { @MainActor in
+                player.stop()
+                finishObserver.finishOnce()
+            }
+        }
+        if audioPlayer === player { audioPlayer = nil }
+        try Task.checkCancellation()
     }
 
     /// Whether TTS audio is currently playing back.
@@ -85,7 +113,32 @@ final class ElevenLabsTTSClient {
 
     /// Stops any in-progress playback immediately.
     func stopPlayback() {
-        audioPlayer?.stop()
+        if let audioPlayer, let finishObserver = audioPlayer.delegate as? AudioPlayerFinishObserver {
+            audioPlayer.stop()
+            finishObserver.finishOnce()
+        } else {
+            audioPlayer?.stop()
+        }
         audioPlayer = nil
+    }
+}
+
+/// Tells `playToCompletion` when an AVAudioPlayer has finished, exactly once (natural end, decode
+/// error, or a stop).
+private final class AudioPlayerFinishObserver: NSObject, AVAudioPlayerDelegate {
+    var onFinish: (() -> Void)?
+
+    func finishOnce() {
+        let finish = onFinish
+        onFinish = nil
+        finish?()
+    }
+
+    func audioPlayerDidFinishPlaying(_ player: AVAudioPlayer, successfully flag: Bool) {
+        DispatchQueue.main.async { self.finishOnce() }
+    }
+
+    func audioPlayerDecodeErrorDidOccur(_ player: AVAudioPlayer, error: Error?) {
+        DispatchQueue.main.async { self.finishOnce() }
     }
 }

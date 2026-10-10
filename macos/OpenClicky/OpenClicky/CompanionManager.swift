@@ -531,6 +531,21 @@ final class CompanionManager: ObservableObject {
         print("🎯 Element pointing: (\(formatted(screenshotPoint.x)), \(formatted(screenshotPoint.y))) → \"\(trimmedLabel ?? "element")\"")
     }
 
+    /// Moves the pointer for the ask lane's [POINT:…] tag, on the screen the tag names (the cursor's
+    /// screen when it names none).
+    private func pointAtAnswerTag(_ pointTag: String, screenCaptures: [CompanionScreenCapture]) {
+        let parseResult = Self.parsePointingCoordinates(from: pointTag)
+        guard let pointCoordinate = parseResult.coordinate else { return }
+        let targetScreenCapture: CompanionScreenCapture? = {
+            if let screenNumber = parseResult.screenNumber, screenNumber >= 1 && screenNumber <= screenCaptures.count {
+                return screenCaptures[screenNumber - 1]
+            }
+            return screenCaptures.first(where: { $0.isCursorScreen })
+        }()
+        guard let targetScreenCapture else { return }
+        pointAt(screenshotPoint: pointCoordinate, label: parseResult.elementLabel, in: targetScreenCapture)
+    }
+
     /// While docked, pointing needs the buddy on screen: launch it from the notch, let the
     /// normal navigation fly it to the element, and it returns to the notch afterwards.
     private func launchDockedCursorForPointing() {
@@ -1275,17 +1290,19 @@ final class CompanionManager: ObservableObject {
 
     don't point at things when it would be pointless — like if the user asks a general knowledge question, or the conversation has nothing to do with what's on screen, or you'd just be pointing at something obvious they're already looking at. but if there's a specific UI element, menu, button, or area on screen that's relevant to what you're helping with, point at it.
 
-    when you point, append a coordinate tag at the very end of your response, AFTER your spoken text. the screenshot images are labeled with their pixel dimensions. use those dimensions as the coordinate space. the origin (0,0) is the top-left corner of the image. x increases rightward, y increases downward.
+    when you point, START your response with a coordinate tag, BEFORE your spoken text — the cursor flies there as your voice begins. the screenshot images are labeled with their pixel dimensions. use those dimensions as the coordinate space. the origin (0,0) is the top-left corner of the image. x increases rightward, y increases downward.
 
     format: [POINT:x,y:label] where x,y are integer pixel coordinates in the screenshot's coordinate space, and label is a short 1-3 word description of the element (like "search bar" or "save button"). if the element is on the cursor's screen you can omit the screen number. if the element is on a DIFFERENT screen, append :screenN where N is the screen number from the image label (e.g. :screen2). this is important — without the screen number, the cursor will point at the wrong place.
 
-    if pointing wouldn't help, append [POINT:none].
+    if pointing wouldn't help, start with [POINT:none].
 
     examples:
-    - user asks how to color grade in final cut: "you'll want to open the color inspector — it's right up in the top right area of the toolbar. click that and you'll get all the color wheels and curves. [POINT:1100,42:color inspector]"
-    - user asks what html is: "html stands for hypertext markup language, it's basically the skeleton of every web page. curious how it connects to the css you're looking at? [POINT:none]"
-    - user asks how to commit in xcode: "see that source control menu up top? click that and hit commit, or you can use command option c as a shortcut. [POINT:285,11:source control]"
-    - element is on screen 2 (not where cursor is): "that's over on your other monitor — see the terminal window? [POINT:400,300:terminal:screen2]"
+    - user asks how to color grade in final cut: "[POINT:1100,42:color inspector] you'll want to open the color inspector — it's right up in the top right area of the toolbar. click that and you'll get all the color wheels and curves."
+    - user asks what html is: "[POINT:none] html stands for hypertext markup language, it's basically the skeleton of every web page. curious how it connects to the css you're looking at?"
+    - user asks how to commit in xcode: "[POINT:285,11:source control] see that source control menu up top? click that and hit commit, or you can use command option c as a shortcut."
+    - element is on screen 2 (not where cursor is): "[POINT:400,300:terminal:screen2] that's over on your other monitor — see the terminal window?"
+
+    keep your first sentence short: it is spoken while the rest of your answer is still being written.
     """
 
     // MARK: - AI Response Pipeline
@@ -1345,18 +1362,38 @@ final class CompanionManager: ObservableObject {
                 // An account cannot run the agent, so it offers the quick actions to Claude instead.
                 let tools = AccountCapabilities.current().kind == .account ? RealtimeVoiceClient.anthropicToolDefinitions() : []
                 let toolsLine = tools.isEmpty ? "" : "\n\n" + Self.accountToolsInstruction
-                let (fullResponseText, toolCalls, _) = try await claudeAPI.analyzeImageStreaming(
-                    images: labeledImages,
-                    systemPrompt: Self.composeTalkInstructions(base: Self.withReplyLanguage(Self.companionVoiceResponseSystemPrompt) + toolsLine, skillsBlock: talkSkillsBlock()),
-                    conversationHistory: historyForAPI,
-                    userPrompt: SelectedTextReader.currentSelection().map {
-                        transcript + "\n\n[" + SelectedTextReader.contextLine(for: $0) + "]"
-                    } ?? transcript,
-                    tools: tools,
-                    onTextChunk: { _ in
-                        // No streaming text display — spinner stays until TTS plays
-                    }
+                // The answer is spoken while it is still being written: each finished sentence goes to
+                // the voice, and the pointer moves when the voice starts (the prompt puts the tag first).
+                let answerSpeaker = StreamingAnswerSpeaker(
+                    speechQueue: SpeechQueue(
+                        fetchAudio: { [elevenLabsTTSClient] pieceText in try await elevenLabsTTSClient.fetchAudio(for: pieceText) },
+                        playAudio: { [elevenLabsTTSClient] audioData in try await elevenLabsTTSClient.playToCompletion(audioData) }
+                    ),
+                    onVoiceStarts: { [weak self] in self?.voiceState = .responding },
+                    onPointTag: { [weak self] pointTag in self?.pointAtAnswerTag(pointTag, screenCaptures: screenCaptures) }
                 )
+                let answerPlayback = Task { @MainActor in try await answerSpeaker.play() }
+
+                let fullResponseText: String
+                let toolCalls: [ClaudeToolCall]
+                do {
+                    (fullResponseText, toolCalls, _) = try await claudeAPI.analyzeImageStreaming(
+                        images: labeledImages,
+                        systemPrompt: Self.composeTalkInstructions(base: Self.withReplyLanguage(Self.companionVoiceResponseSystemPrompt) + toolsLine, skillsBlock: talkSkillsBlock()),
+                        conversationHistory: historyForAPI,
+                        userPrompt: SelectedTextReader.currentSelection().map {
+                            transcript + "\n\n[" + SelectedTextReader.contextLine(for: $0) + "]"
+                        } ?? transcript,
+                        tools: tools,
+                        onTextChunk: { accumulatedAnswer in
+                            answerSpeaker.receive(accumulatedAnswer: accumulatedAnswer)
+                        }
+                    )
+                } catch {
+                    answerSpeaker.cancel()
+                    answerPlayback.cancel()
+                    throw error
+                }
                 var toolOutcomes: [String] = []
                 for call in toolCalls.prefix(2) {
                     switch MacAction.parse(toolName: call.name, arguments: call.arguments) {
@@ -1366,30 +1403,21 @@ final class CompanionManager: ObservableObject {
                     }
                 }
 
-                guard !Task.isCancelled else { return }
+                guard !Task.isCancelled else {
+                    answerSpeaker.cancel()
+                    answerPlayback.cancel()
+                    return
+                }
+                answerSpeaker.finish(closingSentences: toolOutcomes)
 
-                // Parse the [POINT:...] tag from Claude's response
+                // The tag is stripped so it doesn't confuse future context.
                 let parseResult = Self.parsePointingCoordinates(from: fullResponseText)
                 let spokenText = Self.spokenReply(text: parseResult.spokenText, toolOutcomes: toolOutcomes)
-
-                // Pick the screen capture matching Claude's screen number,
-                // falling back to the cursor screen if not specified.
-                let targetScreenCapture: CompanionScreenCapture? = {
-                    if let screenNumber = parseResult.screenNumber,
-                       screenNumber >= 1 && screenNumber <= screenCaptures.count {
-                        return screenCaptures[screenNumber - 1]
-                    }
-                    return screenCaptures.first(where: { $0.isCursorScreen })
-                }()
-
-                if let pointCoordinate = parseResult.coordinate, let targetScreenCapture {
-                    pointAt(screenshotPoint: pointCoordinate, label: parseResult.elementLabel, in: targetScreenCapture)
-                } else {
+                if parseResult.coordinate == nil {
                     print("🎯 Element pointing: \(parseResult.elementLabel ?? "no element")")
                 }
 
-                // Save this exchange to conversation history (with the point tag
-                // stripped so it doesn't confuse future context)
+                // Save this exchange to conversation history
                 conversationHistory.append((
                     userTranscript: transcript,
                     assistantResponse: spokenText
@@ -1406,21 +1434,24 @@ final class CompanionManager: ObservableObject {
 
                 ClickyAnalytics.trackAIResponseReceived(characterCount: spokenText.count)
 
-                // Play the response via TTS. Keep the spinner (processing state)
-                // until the audio actually starts playing, then switch to responding.
-                if !spokenText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                    do {
-                        try await elevenLabsTTSClient.speakText(spokenText)
-                        // speakText returns after player.play() — audio is now playing
-                        voiceState = .responding
-                    } catch {
-                        // 402 is the account's voice allowance (tts_budget): the system voice is the plan, not a failure.
-                        let nsError = error as NSError
-                        if !(nsError.domain == "ElevenLabsTTS" && nsError.code == 402) {
-                            ClickyAnalytics.trackTTSError(error: error.localizedDescription)
-                        }
-                        print("⚠️ TTS via backend failed (\(error.localizedDescription)); using the system voice")
-                        speakWithSystemVoice(spokenText)
+                // Wait for the voice to finish. A question asked meanwhile cancels this task, and the
+                // cancellation is passed on to the playback.
+                do {
+                    try await withTaskCancellationHandler {
+                        try await answerPlayback.value
+                    } onCancel: {
+                        answerPlayback.cancel()
+                    }
+                } catch let failure as SpeechQueue.Failure {
+                    // 402 is the account's voice allowance (tts_budget): the system voice is the plan, not a failure.
+                    let nsError = failure.underlyingError as NSError
+                    if !(nsError.domain == "ElevenLabsTTS" && nsError.code == 402) {
+                        ClickyAnalytics.trackTTSError(error: nsError.localizedDescription)
+                    }
+                    print("⚠️ TTS via backend failed (\(nsError.localizedDescription)); using the system voice")
+                    if !Task.isCancelled {
+                        speakWithSystemVoice(failure.unspokenText.joined(separator: " "))
+                        answerSpeaker.voiceFellBack()
                     }
                 }
             } catch is CancellationError {
@@ -1696,9 +1727,16 @@ final class CompanionManager: ObservableObject {
         let screenNumber: Int?
     }
 
-    /// Parses a [POINT:x,y:label:screenN] or [POINT:none] tag from the end of Claude's response.
-    /// Returns the spoken text (tag removed) and the optional coordinate + label + screen number.
+    /// Parses a [POINT:x,y:label:screenN] or [POINT:none] tag from the start or the end of Claude's
+    /// response (the ask prompt puts it first so the pointer can move as the voice starts; the
+    /// onboarding demo puts it last). Returns the spoken text (tag removed) and the optional
+    /// coordinate + label + screen number.
     static func parsePointingCoordinates(from responseText: String) -> PointingParseResult {
+        if let leadingTagRange = responseText.range(of: #"^\s*\[POINT:[^\]]*\]"#, options: .regularExpression) {
+            let leadingTag = responseText[leadingTagRange].trimmingCharacters(in: .whitespacesAndNewlines)
+            let textAfterTag = responseText[leadingTagRange.upperBound...].trimmingCharacters(in: .whitespacesAndNewlines)
+            return parsePointingCoordinates(from: textAfterTag + " " + leadingTag)
+        }
         // Match [POINT:none] or [POINT:123,456:label] or [POINT:123,456:label:screen2]
         let pattern = #"\[POINT:(?:none|(\d+)\s*,\s*(\d+)(?::([^\]:\s][^\]:]*?))?(?::screen(\d+))?)\]\s*$"#
 
