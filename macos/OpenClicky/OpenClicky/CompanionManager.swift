@@ -1110,8 +1110,15 @@ final class CompanionManager: ObservableObject {
         }
         orbPanelManager.onOrbClicked = { [weak self] in self?.dictationTakeController.orbClicked() }
         orbPanelManager.start()
-        dictationSettings.preferredMicrophoneUIDDidChange = { [weak self] uid in self?.dictationTakeController.dictationManager.preferredMicrophoneUID = uid }
+        // The microphone chosen in settings is the one both ways in hear with: fn dictation and the
+        // ⌃⌥ question. The question used the Mac's default input, which can be a headset or an
+        // unplugged jack, and heard "no" while dictation, on the built-in microphone, heard fine.
+        dictationSettings.preferredMicrophoneUIDDidChange = { [weak self] uid in
+            self?.dictationTakeController.dictationManager.preferredMicrophoneUID = uid
+            self?.buddyDictationManager.preferredMicrophoneUID = uid
+        }
         dictationTakeController.dictationManager.preferredMicrophoneUID = dictationSettings.preferredMicrophoneUID
+        buddyDictationManager.preferredMicrophoneUID = dictationSettings.preferredMicrophoneUID
         AppUpdater.shared.start()
         clipboardHistoryMonitor.start()
         if !dictationSettings.hasCompletedDictationOnboarding {
@@ -1247,8 +1254,10 @@ final class CompanionManager: ObservableObject {
             pendingKeyboardShortcutStartTask = Task {
                 await buddyDictationManager.startPushToTalkFromKeyboardShortcut(
                     currentDraftText: "",
-                    updateDraftText: { _ in
-                        // Partial transcripts are hidden (waveform-only UI)
+                    updateDraftText: { [weak self] partialTranscript in
+                        // The words appear by the pointer as they are heard, so the person can see
+                        // it is listening (and what it heard) before letting go.
+                        self?.showAskLiveTranscript(partialTranscript)
                     },
                     submitDraftText: { [weak self] finalTranscript in
                         guard let self else { return }
@@ -1877,6 +1886,26 @@ final class CompanionManager: ObservableObject {
         } else {
             streamCursorCaption(message, holdSeconds: holdSeconds)
         }
+    }
+
+    /// The question as it is being heard, shown at once (no typewriter): it changes many times a second.
+    private func showAskLiveTranscript(_ partialTranscript: String) {
+        let heardSoFar = partialTranscript.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !heardSoFar.isEmpty else { return }
+        if isCursorDocked, !isOverlayVisible {
+            transientHideTask?.cancel()
+            transientHideTask = nil
+            overlayWindowManager.hasShownOverlayBefore = true
+            overlayWindowManager.showOverlay(onScreens: NSScreen.screens, companionManager: self)
+            isOverlayVisible = true
+        }
+        cursorCaptionTypingTimer?.invalidate()
+        cursorCaptionTypingTimer = nil
+        cursorCaptionDismissWorkItem?.cancel()
+        cursorCaptionDismissWorkItem = nil
+        cursorCaptionText = heardSoFar
+        cursorCaptionOpacity = 1.0
+        isCursorCaptionVisible = true
     }
 
     // MARK: - Cursor caption (typewriter text next to the buddy)
