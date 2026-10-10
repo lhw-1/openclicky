@@ -203,6 +203,28 @@ struct DictationRootView: View {
                 .hidden()
                 .accessibilityHidden(true)
         )
+        // ⌃⌘S shows or hides the sidebar, the Mac's usual shortcut for it.
+        .background(
+            Button("toggle sidebar") { model.isRailCollapsed.toggle() }
+                .keyboardShortcut("s", modifiers: [.control, .command])
+                .hidden()
+                .accessibilityHidden(true)
+        )
+        // With the sidebar hidden its own button goes with it, so the same button sits beside the
+        // window's close/minimise/zoom buttons to bring it back.
+        .overlay(alignment: .topLeading) {
+            if model.isRailCollapsed {
+                Button(action: { model.isRailCollapsed = false }) {
+                    Image(systemName: "sidebar.left").font(.system(size: 13)).foregroundStyle(Paper.inkSecondary)
+                        .frame(width: 26, height: 22)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain).pointerCursor().help("Show Sidebar (⌃⌘S)")
+                .accessibilityLabel("show sidebar")
+                .padding(.leading, 84)
+                .padding(.top, 9)
+            }
+        }
         .ignoresSafeArea()
     }
 }
@@ -239,7 +261,7 @@ struct DictationRailView: View {
                         Button(action: { model.isRailCollapsed.toggle() }) {
                             Image(systemName: "sidebar.left").font(.system(size: 13)).foregroundStyle(Paper.inkSecondary)
                         }
-                        .buttonStyle(.plain).pointerCursor().help("Toggle Sidebar")
+                        .buttonStyle(.plain).pointerCursor().help("Hide Sidebar (⌃⌘S)")
                     }
                     .padding(.top, 44)
                     .padding(.horizontal, 10)
