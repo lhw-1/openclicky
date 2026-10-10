@@ -602,11 +602,13 @@ final class DictationTakeController: ObservableObject {
         var pasteOutcome = TakeRecord.PasteOutcome.none
         var pasteMessage = "moved to text box"
         if field.isSecure || host.isSecureInputOn() {
+            // Not copied either: a password should not sit on the clipboard (it can sync to other
+            // devices). It stays in history only.
             pasteOutcome = .leftInOrb
             pasteMessage = "not pasting into a password field"
         } else if let target = field.appBundleID, let frontNow, target != frontNow {
-            pasteOutcome = .leftInOrb
-            pasteMessage = "the app changed — copy from here"
+            pasteOutcome = .leftOnPasteboard
+            pasteMessage = "the app changed — copied, press ⌘V"
         } else if field.isEditable || !host.isAccessibilityTrusted() || field.role == nil {
             // Editable, or unknown (no permission / the app exposes nothing): try the paste.
             switch host.paste(outputText) {
@@ -615,7 +617,9 @@ final class DictationTakeController: ObservableObject {
                 switch landing {
                 case .verified: pasteOutcome = .verified
                 case .posted: pasteOutcome = .posted
-                case .noTarget: pasteOutcome = .leftInOrb
+                case .noTarget:
+                    pasteOutcome = .leftOnPasteboard
+                    pasteMessage = "couldn't see it land — copied, press ⌘V"
                 case .leftOnPasteboard: pasteOutcome = .leftOnPasteboard
                 }
             case .leftOnPasteboard:
@@ -623,10 +627,13 @@ final class DictationTakeController: ObservableObject {
                 pasteMessage = "copied — press ⌘V (allow accessibility to paste for you)"
             }
         } else {
-            pasteOutcome = .leftInOrb
-            pasteMessage = "no text box found, copy from here"
+            pasteOutcome = .leftOnPasteboard
+            pasteMessage = "no text box — copied, press ⌘V"
         }
         guard takeID == thisTakeID else { return }
+        // Words with nowhere to go are put on the clipboard and the orb says so in one line; the
+        // big box only opens when the person asked for it ("rest with the box open").
+        if pasteOutcome == .leftOnPasteboard { host.copyToPasteboard(outputText) }
 
         let record = TakeRecord(id: thisTakeID, createdAt: takeStartedAt, mode: mode == .edit ? .edit : .dictate, status: .complete,
                                 rawText: raw, formattedText: outputText, appBundleID: field.appBundleID,
@@ -641,10 +648,10 @@ final class DictationTakeController: ObservableObject {
 
         orb.boxText = outputText
         orb.liveTranscript = ""
-        let showBox = pasteOutcome == .leftInOrb || pasteOutcome == .leftOnPasteboard
-            || (pasteOutcome == .posted && settings.orbOpensBoxWhenPasteUnverified) || settings.orbRestsExpanded
+        let showBox = (pasteOutcome == .posted && settings.orbOpensBoxWhenPasteUnverified) || settings.orbRestsExpanded
         orb.boxReason = pasteOutcome == .verified || pasteOutcome == .posted ? "your last take" : pasteMessage
-        orb.quickRewrites = host.makePolisher() == nil ? [] : Self.quickRewrites.map(\.label)
+        // The box's AI rewrites only when the AI clean-up is switched on: off means nothing goes online.
+        orb.quickRewrites = host.makePolisher() == nil || !DictationEngineResolver.wantsModelPolish(settings: settings) ? [] : Self.quickRewrites.map(\.label)
         orb.isBoxOpen = showBox
         scheduleBoxClose()
         earcons.play(pasteOutcome == .verified || pasteOutcome == .posted ? .complete : .notify)
@@ -831,8 +838,10 @@ final class DictationTakeController: ObservableObject {
         orb.boxText = untypedForBox.isEmpty ? session.typedText : untypedForBox
         orb.liveTranscript = ""
         orb.boxReason = pasteOutcome == .posted ? "your last take" : message
-        orb.quickRewrites = host.makePolisher() == nil ? [] : Self.quickRewrites.map(\.label)
-        orb.isBoxOpen = pasteOutcome == .leftOnPasteboard || settings.orbRestsExpanded
+        // The box's AI rewrites only when the AI clean-up is switched on: off means nothing goes online.
+        orb.quickRewrites = host.makePolisher() == nil || !DictationEngineResolver.wantsModelPolish(settings: settings) ? [] : Self.quickRewrites.map(\.label)
+        // The rest is on the clipboard and the orb says so; the box opens only when asked for.
+        orb.isBoxOpen = settings.orbRestsExpanded
         scheduleBoxClose()
         earcons.play(pasteOutcome == .posted ? .complete : .notify)
         earcons.tap()

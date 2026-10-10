@@ -298,7 +298,7 @@ struct DictationTakeControllerTests {
         #expect(h.orb.phase == .failed("didn't catch that"))
     }
 
-    @Test @MainActor func theWordsStayInTheOrbWhenTheAppChanged() async throws {
+    @Test @MainActor func theWordsAreCopiedWhenTheAppChanged() async throws {
         let h = try Harness()
         h.controller.handle(.dictationPressed)
         await h.waitUntil { h.controller.state == .listening }
@@ -307,9 +307,24 @@ struct DictationTakeControllerTests {
         h.capture.deliverFinal("hello")
         await h.waitUntil { h.controller.state == .idle }
         #expect(h.pasted.texts.isEmpty)
-        #expect(h.orb.isBoxOpen)
-        #expect(h.orb.boxText == "Hello")
-        #expect(try h.store.recent().first?.pasteOutcome == .leftInOrb)
+        // Nowhere to put them: on the clipboard, one line on the orb, no box.
+        #expect(h.pasted.copied == ["Hello"])
+        #expect(!h.orb.isBoxOpen)
+        #expect(h.orb.phase == .done("the app changed — copied, press ⌘V"))
+        #expect(try h.store.recent().first?.pasteOutcome == .leftOnPasteboard)
+    }
+
+    @Test @MainActor func withTheCleanUpOffTheBoxOffersNoAIRewrites() async throws {
+        let h = try Harness()
+        h.settings.polishWithModel = false
+        h.settings.choosePolishOfflineTakes(false)
+        h.settings.orbRestsExpanded = true
+        h.controller.handle(.dictationPressed)
+        await h.waitUntil { h.controller.state == .listening }
+        h.controller.handle(.dictationReleased(wasTap: false))
+        h.capture.deliverFinal("hello")
+        await h.waitUntil { h.controller.state == .idle }
+        #expect(h.orb.quickRewrites.isEmpty)
     }
 
     @Test @MainActor func aSecureFieldIsNeverPastedInto() async throws {
@@ -322,6 +337,8 @@ struct DictationTakeControllerTests {
         h.capture.deliverFinal("my password")
         await h.waitUntil { h.controller.state == .idle }
         #expect(h.pasted.texts.isEmpty)
+        #expect(h.pasted.copied.isEmpty)
+        #expect(!h.orb.isBoxOpen)
         #expect(h.orb.phase == .done("not pasting into a password field"))
     }
 
