@@ -268,7 +268,9 @@ struct SarvamSpeechClient: Sendable {
             "messages": [["role": "system", "content": system], ["role": "user", "content": user]],
             "temperature": 0.2,
             "max_tokens": maxTokens,
-            "reasoning_effort": "low",
+            // sarvam-105b reasons by default, and "low" still spent all 1,024 tokens thinking and
+            // answered nothing after ~5 s (2026-10-11). An explicit null turns reasoning off.
+            "reasoning_effort": NSNull(),
         ]
         request.httpBody = try? JSONSerialization.data(withJSONObject: body)
         return request

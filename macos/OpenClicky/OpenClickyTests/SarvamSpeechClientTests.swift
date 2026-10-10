@@ -74,6 +74,10 @@ struct SarvamSpeechClientTests {
         let body = try #require(JSONSerialization.jsonObject(with: request.httpBody ?? Data()) as? [String: Any])
         #expect(body["model"] as? String == "sarvam-105b")
         #expect((body["messages"] as? [[String: String]])?.map { $0["role"] } == ["system", "user"])
+        // sarvam-105b reasons by default and "low" still spent all 1,024 tokens thinking, leaving
+        // no answer (2026-10-11). An explicit null switches reasoning off: 0.3 s, a real answer.
+        #expect(body.keys.contains("reasoning_effort"))
+        #expect(body["reasoning_effort"] is NSNull)
     }
 
     @Test func longTakesAreSplitIntoPiecesInOrder() {
