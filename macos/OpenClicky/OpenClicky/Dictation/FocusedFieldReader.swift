@@ -95,8 +95,12 @@ enum FocusedFieldReader {
     static func focusedTextTarget() -> FocusedTextTarget? {
         guard AXIsProcessTrusted() else { return nil }
         let systemWide = AXUIElementCreateSystemWide()
+        // A timeout set on the system-wide element is the default for every Accessibility call this
+        // process makes, so it is put back (0 = the system default) right after this one read.
         AXUIElementSetMessagingTimeout(systemWide, messagingTimeoutSeconds)
-        guard let focused = element(systemWide, kAXFocusedUIElementAttribute) else { return nil }
+        let focusedElement = element(systemWide, kAXFocusedUIElementAttribute)
+        AXUIElementSetMessagingTimeout(systemWide, 0)
+        guard let focused = focusedElement else { return nil }
         AXUIElementSetMessagingTimeout(focused, messagingTimeoutSeconds)
         var processID: pid_t = 0
         guard AXUIElementGetPid(focused, &processID) == .success else { return nil }
