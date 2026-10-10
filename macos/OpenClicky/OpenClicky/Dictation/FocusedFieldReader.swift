@@ -27,6 +27,36 @@ struct FocusedFieldSnapshot: Equatable {
     static let unknown = FocusedFieldSnapshot(appBundleID: nil, appName: nil, role: nil, isEditable: false, isSecure: false, value: nil, selectedText: nil)
 }
 
+/// The focused element as Accessibility reports it system-wide, for live typing: kept at press and
+/// compared before every typed phrase, so keystrokes only ever go to the field the take began in.
+struct FocusedTextTarget {
+    /// The pid Accessibility gives the element (NSWorkspace's frontmost app lags right after ⌘-Tab).
+    let processID: pid_t
+    let element: AXUIElement
+    let role: String?
+    let isSecure: Bool
+
+    /// Text roles live typing types into. Not AXWebArea (a focused page, where letters are
+    /// single-key shortcuts — Gmail's e, #, !) and not the editable-ancestor guess the paste path
+    /// uses for Electron apps: those keep the paste path.
+    static let liveTypingTextRoles: Set<String> = ["AXTextField", "AXTextArea", "AXComboBox", "AXSearchField"]
+
+    static func isLiveTypingTextRole(_ role: String?) -> Bool {
+        role.map { liveTypingTextRoles.contains($0) } ?? false
+    }
+
+    /// A real text field that is not a password field.
+    var acceptsLiveTyping: Bool { Self.isLiveTypingTextRole(role) && !isSecure }
+
+    /// The same element, by Accessibility's own identity (`CFEqual`) and pid. Element identity was
+    /// chosen over pid + focused window: it also catches focus moving inside one window (compose
+    /// box → message list). An app that hands out a new element object for the same field would
+    /// stop live typing early, which only sends the rest to the pasteboard.
+    func isSameElement(as other: FocusedTextTarget) -> Bool {
+        processID == other.processID && CFEqual(element, other.element)
+    }
+}
+
 enum FocusedFieldReader {
     private static let editableRoles: Set<String> = ["AXTextField", "AXTextArea", "AXComboBox", "AXSearchField", "AXWebArea"]
     private static let maxValueCharacters = 20_000
@@ -57,6 +87,21 @@ enum FocusedFieldReader {
             if let selected = string(focused, kAXSelectedTextAttribute), !selected.isEmpty { snapshot.selectedText = selected }
         }
         return snapshot
+    }
+
+    /// The focused element system-wide, with its pid, role and whether it is a password field; nil
+    /// without the permission or when nothing has focus. A few AX calls under the short messaging
+    /// timeout, since it runs before every phrase live typing types.
+    static func focusedTextTarget() -> FocusedTextTarget? {
+        guard AXIsProcessTrusted() else { return nil }
+        let systemWide = AXUIElementCreateSystemWide()
+        AXUIElementSetMessagingTimeout(systemWide, messagingTimeoutSeconds)
+        guard let focused = element(systemWide, kAXFocusedUIElementAttribute) else { return nil }
+        AXUIElementSetMessagingTimeout(focused, messagingTimeoutSeconds)
+        var processID: pid_t = 0
+        guard AXUIElementGetPid(focused, &processID) == .success else { return nil }
+        return FocusedTextTarget(processID: processID, element: focused, role: string(focused, kAXRoleAttribute),
+                                 isSecure: string(focused, kAXSubroleAttribute) == "AXSecureTextField")
     }
 
     /// Captions near the focused element: the titles and values of its window's visible controls,

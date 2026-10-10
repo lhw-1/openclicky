@@ -299,9 +299,14 @@ final class DictationTakeController: ObservableObject {
             switch state {
             case .starting, .listening:
                 guard takeMode == .dictate else { break }
+                if liveTyping?.hasTyped == true {
+                    // Words already went into the field: an edit now would rewrite a selection the
+                    // person never meant. The take stays a dictation.
+                    orb.hint = "already typing — release and start an edit"
+                    break
+                }
                 takeMode = .edit
-                // An edit's words are an instruction, not text: stop typing them. Words already
-                // typed stay where they are.
+                // An edit's words are an instruction, not text: nothing of it may be typed.
                 stopLiveTyping(reason: "the take became a hey clicky edit", takeID: takeID)
                 orb.phase = .editListening
                 orb.hint = "say your edit, then let go"
@@ -483,9 +488,15 @@ final class DictationTakeController: ObservableObject {
         AppLog.append("take \(failedTakeID.uuidString.prefix(8)) failed: \(message)")
         let pcm = audioStore.endCapture()
         if let liveTyping, liveTyping.hasTyped {
-            // The typed words stay in the app; the take is recorded with them.
+            // The typed words stay in the app; the take is recorded with them, and what was heard
+            // but not typed yet goes to the pasteboard, as when typing stops.
             logLiveTypedTotal(liveTyping, takeID: failedTakeID)
             recordInterruptedLiveTypedTake(liveTyping, takeID: failedTakeID, status: .failed, reason: message)
+            let heardButUntyped = heardButUntypedText(liveTyping)
+            if !heardButUntyped.isEmpty {
+                host.copyToPasteboard(heardButUntyped)
+                orb.phase = .failed("\(message) — the rest is copied, press ⌘V")
+            }
         } else if !settings.incognito, !message.hasPrefix("didn't catch") {
             let record = TakeRecord(id: failedTakeID, createdAt: takeStartedAt, mode: takeMode == .edit ? .edit : .dictate, status: .failed,
                                     rawText: orb.liveTranscript, formattedText: "", appBundleID: fieldAtPress.appBundleID,
@@ -523,9 +534,13 @@ final class DictationTakeController: ObservableObject {
     private func finishTake(rawText: String, takeID thisTakeID: UUID) async {
         guard takeID == thisTakeID, state == .listening || state == .starting || state == .finishing else { return }
         state = .finishing
+        // The live session closes here: a partial that lands from now on is never typed, so
+        // nothing can be typed during finishing and then typed or pasted again.
+        let liveTypingAtFinish = liveTyping
+        liveTyping = nil
         _ = audioStore.endCapture()
         var raw = rawText.trimmingCharacters(in: .whitespacesAndNewlines)
-        if raw.isEmpty, let liveTyping, liveTyping.hasTyped {
+        if raw.isEmpty, let liveTyping = liveTypingAtFinish, liveTyping.hasTyped {
             // The engine's final came back empty but words were already typed: they are the take.
             raw = liveTyping.typedRawWords.joined(separator: " ")
         }
@@ -543,7 +558,7 @@ final class DictationTakeController: ObservableObject {
         let mode = takeMode
         let field = fieldAtPress
 
-        if mode == .dictate, let liveTyping, liveTyping.hasTyped {
+        if mode == .dictate, let liveTyping = liveTypingAtFinish, liveTyping.hasTyped {
             finishLiveTypedTake(rawText: raw, session: liveTyping, duration: duration, takeID: thisTakeID)
             return
         }
@@ -642,13 +657,14 @@ final class DictationTakeController: ObservableObject {
 
     /// A take's words are typed as they settle only when: it is a dictation (not a Hey Clicky
     /// edit), no model will polish it (the same decision `TakeFormatter.format` makes), the focused
-    /// field is editable and not a password field, and secure input is off.
+    /// element is a real text field (not a web page, where letters are shortcuts) and not a
+    /// password field, and secure input is off.
     private func makeLiveTypingSessionIfWanted(mode: TakeMode) -> LiveTypingSession? {
-        guard mode == .dictate, fieldAtPress.isEditable, !fieldAtPress.isSecure,
-              let appBundleID = fieldAtPress.appBundleID, !host.isSecureInputOn() else { return nil }
+        guard mode == .dictate, !fieldAtPress.isSecure, !host.isSecureInputOn(),
+              let focusedTarget = host.readFocusedTextTarget(), focusedTarget.acceptsLiveTyping else { return nil }
         let space = spaceStore.space
         let context = TakeFormattingContext(
-            style: space.style(forAppBundleID: appBundleID), dictionary: space.dictionary, shortcuts: space.shortcuts,
+            style: space.style(forAppBundleID: fieldAtPress.appBundleID), dictionary: space.dictionary, shortcuts: space.shortcuts,
             appName: fieldAtPress.appName, language: settings.language, script: settings.script)
         let modelWillPolish = TakeFormatter.modelPassWillRun(
             context: context, polisher: host.makePolisher(), wantsModel: DictationEngineResolver.wantsModelPolish(settings: settings))
@@ -660,55 +676,85 @@ final class DictationTakeController: ObservableObject {
         let shortcutTriggers = space.shortcuts.map { splitIntoNormalizedWords($0.trigger) }
         return LiveTypingSession(
             committer: StableWordCommitter(protectedPhrases: dictionaryAliases, takeStartTriggers: shortcutTriggers),
-            appBundleID: appBundleID, formattingContext: context)
+            focusedTargetAtPress: focusedTarget, formattingContext: context)
     }
 
-    /// A partial transcript: settled words are typed (when this take types live) and the orb shows
-    /// what has not been typed yet.
+    /// A partial transcript: settled words are typed (when this take types live and the key is
+    /// still held or the tapped take still listens) and the orb shows what has not been typed yet.
     private func handlePartialTranscript(_ partial: String, takeID thisTakeID: UUID) {
         guard var session = liveTyping else {
             orb.liveTranscript = partial
             return
         }
-        if session.stoppedReason == nil {
-            let settledWords = session.committer.observe(partial: partial, at: host.now())
-            if !settledWords.isEmpty {
-                typeLivePhrase(settledWords, session: &session, takeID: thisTakeID)
+        session.latestPartial = partial
+        let takeIsStillListening = state == .starting || state == .listening
+        if session.stoppedReason == nil, takeIsStillListening {
+            _ = session.committer.observe(partial: partial, at: host.now())
+            // Everything committed but not typed yet: the words that settled now, plus any that
+            // waited for a held modifier to be let go.
+            let pendingWords = Array(session.committer.committedWords.dropFirst(session.typedRawWords.count))
+            if !pendingWords.isEmpty {
+                typeLivePhrase(pendingWords, session: &session, takeID: thisTakeID)
             }
         }
         liveTyping = session
-        let partialWords = StableWordCommitter.words(of: partial)
-        let alignment = TranscriptAlignment.align(finalWords: partialWords, committedWords: session.typedRawWords)
-        orb.liveTranscript = alignment.remainingWords(of: partialWords).joined(separator: " ")
+        orb.liveTranscript = untypedWords(of: partial, session: session).joined(separator: " ")
     }
 
-    /// Why typing must not go on right now, checked before every typing step: keystrokes go to
-    /// whatever app is in front, so it must still be the app the take began in.
-    private func liveTypingBlockedReason(_ session: LiveTypingSession) -> String? {
-        if host.frontAppBundleID() != session.appBundleID { return "the app changed" }
+    private func untypedWords(of transcript: String, session: LiveTypingSession) -> [String] {
+        let transcriptWords = StableWordCommitter.words(of: transcript)
+        return TranscriptAlignment.align(finalWords: transcriptWords, committedWords: session.typedRawWords).remainingWords(of: transcriptWords)
+    }
+
+    /// What the take heard that never reached the field, formatted, for the pasteboard.
+    private func heardButUntypedText(_ session: LiveTypingSession) -> String {
+        LivePhraseFormatter.textToType(
+            phraseWords: untypedWords(of: session.latestPartial, session: session), context: session.formattingContext, typedSoFar: session.typedText)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    /// Why typing must stop, checked before every typing step: keystrokes go to whatever has
+    /// focus, so it must still be the very element the take began in (Accessibility's element
+    /// and pid — NSWorkspace's frontmost app lags right after ⌘-Tab), still a text field, with
+    /// secure input off.
+    private func liveTypingStopReason(_ session: LiveTypingSession) -> String? {
+        guard let focusedNow = host.readFocusedTextTarget() else { return "the text field lost focus" }
+        if focusedNow.processID != session.focusedTargetAtPress.processID { return "the app changed" }
+        if !focusedNow.isSameElement(as: session.focusedTargetAtPress) || !focusedNow.acceptsLiveTyping { return "the focus moved" }
         if host.isSecureInputOn() { return "secure input came on" }
         return nil
     }
 
-    /// Formats and types one phrase. False when typing stopped instead (the phrase was not typed).
+    enum LivePhraseTypingResult { case typed, deferredForHeldModifier, stopped }
+
+    /// Formats and types one phrase. A phrase is only ever typed whole: when typing stops, or
+    /// waits for a held modifier, none of it was posted.
     @discardableResult
-    private func typeLivePhrase(_ phraseWords: [String], session: inout LiveTypingSession, takeID thisTakeID: UUID) -> Bool {
-        if let reason = liveTypingBlockedReason(session) {
+    private func typeLivePhrase(_ phraseWords: [String], session: inout LiveTypingSession, takeID thisTakeID: UUID) -> LivePhraseTypingResult {
+        if let reason = liveTypingStopReason(session) {
             markLiveTypingStopped(&session, reason: reason, takeID: thisTakeID)
-            return false
+            return .stopped
         }
-        let text = LivePhraseFormatter.textToType(
-            phraseWords: phraseWords, context: session.formattingContext, typedSoFar: session.typedText, isEntireTake: false)
+        guard LiveTypingModifierGuard.allowsTyping(heldFlags: host.heldModifierFlags(), dictationKey: settings.dictationKey) else {
+            // Typed now, the letters could merge with the held key (⌃M is Return). They stay
+            // pending and go with the next phrase, or at release.
+            return .deferredForHeldModifier
+        }
+        let text = LivePhraseFormatter.textToType(phraseWords: phraseWords, context: session.formattingContext, typedSoFar: session.typedText)
+        if LivePhraseFormatter.containsControlCharacters(text) {
+            markLiveTypingStopped(&session, reason: "a line break can't be typed safely", takeID: thisTakeID)
+            return .stopped
+        }
         if !text.isEmpty {
             guard host.typeText(text) else {
                 markLiveTypingStopped(&session, reason: "keystrokes could not be posted", takeID: thisTakeID)
-                return false
+                return .stopped
             }
             session.typedText += text
             session.typedPhraseCount += 1
         }
         session.typedRawWords.append(contentsOf: phraseWords)
-        return true
+        return .typed
     }
 
     private func markLiveTypingStopped(_ session: inout LiveTypingSession, reason: String, takeID thisTakeID: UUID) {
@@ -735,11 +781,16 @@ final class DictationTakeController: ObservableObject {
         let finalWords = StableWordCommitter.words(of: raw)
         let alignment = TranscriptAlignment.align(finalWords: finalWords, committedWords: session.typedRawWords)
         if !alignment.alignedByWords {
-            AppLog.append("take \(thisTakeID.uuidString.prefix(8)) final transcript revised typed words; typing after word \(alignment.remainderStartIndex)")
+            // Where the typed words end in the final cannot be told: typing on could skip or
+            // repeat words, so everything after the last match goes to the pasteboard instead.
+            markLiveTypingStopped(&session, reason: "the words were heard differently", takeID: thisTakeID)
         }
         let remainingWords = alignment.remainingWords(of: finalWords)
         if session.stoppedReason == nil, !remainingWords.isEmpty {
-            typeLivePhrase(remainingWords, session: &session, takeID: thisTakeID)
+            // The dictation key is up by now; a modifier still held is someone else's.
+            if typeLivePhrase(remainingWords, session: &session, takeID: thisTakeID) == .deferredForHeldModifier {
+                markLiveTypingStopped(&session, reason: "a modifier key was held", takeID: thisTakeID)
+            }
         }
 
         var pasteOutcome = TakeRecord.PasteOutcome.posted
@@ -748,7 +799,7 @@ final class DictationTakeController: ObservableObject {
         if let reason = session.stoppedReason {
             // Typing stopped before the end: the rest waits on the pasteboard for the person's ⌘V.
             untypedText = LivePhraseFormatter.textToType(
-                phraseWords: remainingWords, context: session.formattingContext, typedSoFar: session.typedText, isEntireTake: false)
+                phraseWords: remainingWords, context: session.formattingContext, typedSoFar: session.typedText)
             let untypedForPasteboard = untypedText.trimmingCharacters(in: .whitespacesAndNewlines)
             if !untypedForPasteboard.isEmpty {
                 host.copyToPasteboard(untypedForPasteboard)

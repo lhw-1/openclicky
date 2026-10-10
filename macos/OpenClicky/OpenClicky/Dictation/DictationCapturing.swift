@@ -58,6 +58,10 @@ struct DictationHost {
     var copyToPasteboard: @MainActor (String) -> Void = { FrontAppTextInserter.copyToPasteboard($0) }
     /// The clock live typing measures how long a word has been stable with.
     var now: () -> Date = { Date() }
+    /// The focused element through Accessibility, read at press and before every typed phrase.
+    var readFocusedTextTarget: () -> FocusedTextTarget? = { FocusedFieldReader.focusedTextTarget() }
+    /// The modifier keys physically held right now (live typing waits while a foreign one is).
+    var heldModifierFlags: () -> CGEventFlags = { CGEventSource.flagsState(.hidSystemState) }
     var verifyPaste: (String, FocusedFieldSnapshot) async -> PasteLanding = { await PasteLanding.verify(text: $0, before: $1) }
     var makePolisher: () -> (any TakePolisher)? = { DictationEngineResolver.makePolisher() }
     var engineUnavailableReason: (DictationEngineChoice) -> String? = { DictationEngineResolver.unavailableReason(for: $0) }

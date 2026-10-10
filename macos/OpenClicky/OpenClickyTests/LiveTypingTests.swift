@@ -7,6 +7,7 @@
 //  was already typed.
 //
 
+import CoreGraphics
 import Foundation
 import Testing
 @testable import OpenClicky
@@ -46,12 +47,14 @@ struct StableWordCommitterTests {
         _ = committer.observe(partial: "send it to bob now please", at: at(0))
         _ = committer.observe(partial: "send it to bob now please", at: at(0.7))
         #expect(committer.committedWords == ["send", "it", "to", "bob"])
-        // The engine revises an already committed word: the commit stands, and the words after it
-        // ("now please", unchanged since 0 s and now clear of the tail) carry on after it.
-        let more = committer.observe(partial: "send it to rob now please and thanks", at: at(0.8))
+        // The engine revises an already committed word: the commit stands, and nothing more commits
+        // while the partial no longer lines up with what was typed.
+        #expect(committer.observe(partial: "send it to rob now please and thanks", at: at(0.8)).isEmpty)
+        #expect(committer.committedWords == ["send", "it", "to", "bob"])
+        // Once it lines up again, the settled words after it carry on.
+        let more = committer.observe(partial: "send it to bob now please and thanks", at: at(1.5))
         #expect(more == ["now", "please"])
         #expect(committer.committedWords == ["send", "it", "to", "bob", "now", "please"])
-        #expect(committer.uncommittedTail(of: "send it to rob now please and thanks") == "and thanks")
     }
 
     @Test func aShorterPartialDoesNotLoseCommittedWords() {
@@ -95,47 +98,53 @@ struct LivePhraseFormatterTests {
     }
 
     @Test func theFirstPhraseOfATakeIsCapitalisedLikeAFinishedTake() {
-        let text = LivePhraseFormatter.textToType(phraseWords: ["git", "status"], context: context(), typedSoFar: "", isEntireTake: false)
+        let text = LivePhraseFormatter.textToType(phraseWords: ["git", "status"], context: context(), typedSoFar: "")
         #expect(text == "Git status")
     }
 
     @Test func laterPhrasesGetASpaceAndKeepTheirCase() {
-        let text = LivePhraseFormatter.textToType(phraseWords: ["and", "then"], context: context(), typedSoFar: "Hello there", isEntireTake: false)
+        let text = LivePhraseFormatter.textToType(phraseWords: ["and", "then"], context: context(), typedSoFar: "Hello there")
         #expect(text == " and then")
     }
 
     @Test func aPhraseAfterASentenceEndIsCapitalised() {
-        let text = LivePhraseFormatter.textToType(phraseWords: ["how", "are", "you"], context: context(), typedSoFar: "Hello there.", isEntireTake: false)
+        let text = LivePhraseFormatter.textToType(phraseWords: ["how", "are", "you"], context: context(), typedSoFar: "Hello there.")
         #expect(text == " How are you")
     }
 
     @Test func noSpaceIsAddedAfterExistingWhitespaceOrBeforePunctuation() {
-        #expect(LivePhraseFormatter.textToType(phraseWords: ["next"], context: context(), typedSoFar: "Hello\n", isEntireTake: false) == "Next")
-        #expect(LivePhraseFormatter.textToType(phraseWords: [",", "then"], context: context(), typedSoFar: "Hello", isEntireTake: false) == ", then")
+        #expect(LivePhraseFormatter.textToType(phraseWords: ["next"], context: context(), typedSoFar: "Hello\n") == "Next")
+        #expect(LivePhraseFormatter.textToType(phraseWords: [",", "then"], context: context(), typedSoFar: "Hello") == ", then")
     }
 
     @Test func dictionaryTermsAndFillersAreApplied() {
         let term = DictionaryTerm(written: "Aaditya Kshatriya", heardAs: ["aditya shatriya"])
-        let text = LivePhraseFormatter.textToType(phraseWords: ["um", "ask", "aditya", "shatriya"], context: context(dictionary: [term]), typedSoFar: "", isEntireTake: false)
+        let text = LivePhraseFormatter.textToType(phraseWords: ["um", "ask", "aditya", "shatriya"], context: context(dictionary: [term]), typedSoFar: "")
         #expect(text == "Ask Aaditya Kshatriya")
     }
 
     @Test func aPhraseOfOnlyFillersTypesNothing() {
-        #expect(LivePhraseFormatter.textToType(phraseWords: ["um"], context: context(), typedSoFar: "Hello", isEntireTake: false) == "")
+        #expect(LivePhraseFormatter.textToType(phraseWords: ["um"], context: context(), typedSoFar: "Hello") == "")
     }
 
-    @Test func aSpokenShortcutExpandsOnlyWhenItIsTheWholeTake() {
+    @Test func aSpokenShortcutIsNeverExpandedInATypedPhrase() {
+        // Whole-take shortcuts always take the paste path; inside a typed take a trigger is words.
         let shortcut = SpokenShortcut(trigger: "my sign-off", replacement: "Warm regards,\nPrasanth")
-        let whole = LivePhraseFormatter.textToType(phraseWords: ["my", "sign", "off."], context: context(shortcuts: [shortcut]), typedSoFar: "", isEntireTake: true)
-        #expect(whole == "Warm regards,\nPrasanth")
-        // Inside a longer take a trigger is just words, as in the finished-take formatter.
-        let inside = LivePhraseFormatter.textToType(phraseWords: ["my", "sign", "off"], context: context(shortcuts: [shortcut]), typedSoFar: "Add", isEntireTake: false)
+        let inside = LivePhraseFormatter.textToType(phraseWords: ["my", "sign", "off"], context: context(shortcuts: [shortcut]), typedSoFar: "Add")
         #expect(inside == " my sign off")
+    }
+
+    @Test func controlCharactersAreDetected() {
+        #expect(LivePhraseFormatter.containsControlCharacters("line one\nline two"))
+        #expect(LivePhraseFormatter.containsControlCharacters("tab\there"))
+        #expect(LivePhraseFormatter.containsControlCharacters("escape \u{1B}[A"))
+        #expect(LivePhraseFormatter.containsControlCharacters("zero\u{200B}width"))
+        #expect(!LivePhraseFormatter.containsControlCharacters(" Hello, there! 25 kg — ok"))
     }
 
     @Test func theCasualStyleStaysLowercase() {
         let casual = DictationStyle.seeded().first { $0.id == "personal-messaging" }!
-        #expect(LivePhraseFormatter.textToType(phraseWords: ["lemme", "know"], context: context(style: casual), typedSoFar: "", isEntireTake: false) == "lemme know")
+        #expect(LivePhraseFormatter.textToType(phraseWords: ["lemme", "know"], context: context(style: casual), typedSoFar: "") == "lemme know")
     }
 }
 
@@ -160,11 +169,35 @@ struct TranscriptAlignmentTests {
         #expect(alignment.remainingWords(of: final) == ["to", "friday"])
     }
 
-    @Test func revisedCommittedWordsFallBackToTheCommittedCount() {
+    @Test func revisedCommittedWordsLeaveEverythingAfterTheLastMatchForThePasteboard() {
+        // "bob" became "rob": nothing lines up, so nothing is typed blind; the words after the
+        // last matching one are what the person gets to paste.
         let final = ["send", "it", "to", "rob", "now", "please"]
         let alignment = TranscriptAlignment.align(finalWords: final, committedWords: ["send", "it", "to", "bob"])
         #expect(!alignment.alignedByWords)
-        #expect(alignment.remainingWords(of: final) == ["now", "please"])
+        #expect(alignment.remainingWords(of: final) == ["rob", "now", "please"])
+    }
+
+    @Test func numbersRewrittenAtTheTailLoseNoWords() {
+        let final = ["I", "have", "25", "apples", "and", "three", "oranges."]
+        let alignment = TranscriptAlignment.align(finalWords: final, committedWords: ["I", "have", "twenty", "five", "apples", "and"])
+        #expect(alignment.alignedByWords)
+        #expect(alignment.remainingWords(of: final) == ["three", "oranges."])
+    }
+
+    @Test func gonnaWrittenOutAsGoingToLosesNoWords() {
+        let final = ["I'm", "going", "to", "go", "home", "now"]
+        let alignment = TranscriptAlignment.align(finalWords: final, committedWords: ["I'm", "gonna", "go"])
+        #expect(alignment.alignedByWords)
+        #expect(alignment.remainingWords(of: final) == ["home", "now"])
+    }
+
+    @Test func aMatchFarFromWhereTheWordsShouldBeIsNotTrusted() {
+        // "go" appears, but nine words past where the committed words end: not a match.
+        let final = ["we", "will", "see", "a", "b", "c", "d", "e", "f", "g", "h", "go"]
+        let alignment = TranscriptAlignment.align(finalWords: final, committedWords: ["I'm", "gonna", "go"])
+        #expect(!alignment.alignedByWords)
+        #expect(alignment.remainingWords(of: final) == final)
     }
 
     @Test func aFinalShorterThanTheCommittedWordsLeavesNothing() {
@@ -189,5 +222,33 @@ struct KeyboardTextChunkingTests {
         #expect(chunks.joined() == text)
         #expect(chunks.allSatisfy { $0.utf16.count <= 20 })
         #expect(chunks.first == String(repeating: "a", count: 19))
+    }
+}
+
+struct LiveTypingDecisionTests {
+    @Test func onlyRealTextRolesAreTypedInto() {
+        for role in ["AXTextField", "AXTextArea", "AXComboBox", "AXSearchField"] {
+            #expect(FocusedTextTarget.isLiveTypingTextRole(role))
+        }
+        // A web page that has focus turns letters into single-key shortcuts (Gmail's e, #, !).
+        for role in ["AXWebArea", "AXGroup", "AXStaticText", "AXUnknown"] {
+            #expect(!FocusedTextTarget.isLiveTypingTextRole(role))
+        }
+        #expect(!FocusedTextTarget.isLiveTypingTextRole(nil))
+    }
+
+    @Test func onlyTheDictationKeysOwnModifierMayBeHeldWhileTyping() {
+        #expect(LiveTypingModifierGuard.allowsTyping(heldFlags: [], dictationKey: .fn))
+        #expect(LiveTypingModifierGuard.allowsTyping(heldFlags: .maskSecondaryFn, dictationKey: .fn))
+        #expect(LiveTypingModifierGuard.allowsTyping(heldFlags: .maskControl, dictationKey: .rightControl))
+        #expect(LiveTypingModifierGuard.allowsTyping(heldFlags: .maskCommand, dictationKey: .rightCommand))
+        #expect(LiveTypingModifierGuard.allowsTyping(heldFlags: .maskAlternate, dictationKey: .rightOption))
+        // Caps lock changes nothing about text posted as a unicode string.
+        #expect(LiveTypingModifierGuard.allowsTyping(heldFlags: [.maskSecondaryFn, .maskAlphaShift], dictationKey: .fn))
+
+        #expect(!LiveTypingModifierGuard.allowsTyping(heldFlags: [.maskSecondaryFn, .maskControl], dictationKey: .fn))
+        #expect(!LiveTypingModifierGuard.allowsTyping(heldFlags: .maskCommand, dictationKey: .fn))
+        #expect(!LiveTypingModifierGuard.allowsTyping(heldFlags: .maskShift, dictationKey: .rightControl))
+        #expect(!LiveTypingModifierGuard.allowsTyping(heldFlags: .maskSecondaryFn, dictationKey: .rightCommand))
     }
 }

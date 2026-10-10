@@ -10,6 +10,7 @@
 //  lined up against what was already typed — plus the per-take bookkeeping the controller keeps.
 //
 
+import CoreGraphics
 import Foundation
 
 /// Decides which words of a revising partial transcript have settled enough to type.
@@ -51,6 +52,9 @@ struct StableWordCommitter {
     mutating func observe(partial: String, at now: Date) -> [String] {
         let partialWords = Self.words(of: partial)
         let alignment = TranscriptAlignment.align(finalWords: partialWords, committedWords: committedWords)
+        // The partial no longer lines up with what was committed (the engine rewrote typed words):
+        // nothing more is committed blind; the final transcript decides at release.
+        guard alignment.alignedByWords else { return [] }
         let uncommittedWords = alignment.remainingWords(of: partialWords)
 
         // Each position keeps its clock while it holds the same word; a revision restarts it.
@@ -123,25 +127,28 @@ struct StableWordCommitter {
 /// whole take — fillers, dictionary terms, sentence case — and spaces it against what was typed.
 enum LivePhraseFormatter {
     /// The exact text to type for a phrase: its leading space (when one is needed) included.
-    /// `isEntireTake` is true only when these words are everything that was said: a spoken shortcut
-    /// expands then and only then, as in `TakeFormatter.formatLocally`.
-    static func textToType(phraseWords: [String], context: TakeFormattingContext, typedSoFar: String, isEntireTake: Bool) -> String {
-        let phrase = TakeFormatter.collapseWhitespace(phraseWords.joined(separator: " "))
-        guard !phrase.isEmpty else { return "" }
-
-        var text: String
-        if isEntireTake, typedSoFar.isEmpty, let shortcut = TakeFormatter.matchingShortcut(for: phrase, in: context.shortcuts) {
-            text = shortcut.replacement
-        } else {
-            text = phrase
-            if context.style.removeFillers { text = TakeFormatter.removeFillers(from: text) }
-            text = TakeFormatter.applyDictionary(to: text, terms: context.dictionary)
-            if context.style.sentenceCase {
-                text = TakeFormatter.sentenceCased(text, startingAtSentenceStart: typedSoFarEndsASentence(typedSoFar))
-            }
+    /// Spoken shortcuts are not applied: a shortcut expands only when it is the whole take, and a
+    /// take that could still be one is held back (`StableWordCommitter.takeStartTriggers`) until it
+    /// either grows past every trigger or ends, when it takes the paste path, which expands it.
+    static func textToType(phraseWords: [String], context: TakeFormattingContext, typedSoFar: String) -> String {
+        var text = TakeFormatter.collapseWhitespace(phraseWords.joined(separator: " "))
+        guard !text.isEmpty else { return "" }
+        if context.style.removeFillers { text = TakeFormatter.removeFillers(from: text) }
+        text = TakeFormatter.applyDictionary(to: text, terms: context.dictionary)
+        if context.style.sentenceCase {
+            text = TakeFormatter.sentenceCased(text, startingAtSentenceStart: typedSoFarEndsASentence(typedSoFar))
         }
         guard !text.isEmpty else { return "" }
         return needsSeparatingSpace(typedSoFar: typedSoFar, next: text) ? " " + text : text
+    }
+
+    /// A line break, tab, escape or any other control (Cc) or format (Cf) character. Typed as a
+    /// keystroke in a terminal a new line runs the command line, so such text is never typed; it
+    /// goes to the pasteboard instead. A dictionary term's written form can carry one.
+    static func containsControlCharacters(_ text: String) -> Bool {
+        text.unicodeScalars.contains { scalar in
+            scalar.properties.generalCategory == .control || scalar.properties.generalCategory == .format
+        }
     }
 
     /// The take's start, or after ".", "!", "?" or a new line: where `TakeFormatter.sentenceCased`
@@ -169,8 +176,12 @@ struct TranscriptAlignment: Equatable {
     /// the remainder simply starts after as many words as were committed.
     let alignedByWords: Bool
 
-    /// How many committed words at the end are searched for when the start no longer matches.
-    static let trailingRunLength = 3
+    /// The longest run of committed words at the end that is searched for when the start no
+    /// longer matches; shorter runs (2, then 1) are tried after it.
+    static let longestTrailingRunLength = 3
+    /// A run counts only if it ends this close to where the committed words would end: "go" nine
+    /// words further on is another "go", not the one that was typed.
+    static let maximumDistanceFromExpectedEnd = 3
 
     func remainingWords(of words: [String]) -> [String] {
         guard remainderStartIndex < words.count else { return [] }
@@ -182,41 +193,73 @@ struct TranscriptAlignment: Equatable {
         TakeFormatter.normalizedForMatching(word)
     }
 
+    /// Where the not-yet-typed words of `finalWords` begin. When the committed words cannot be
+    /// found (`alignedByWords` false), `remainderStartIndex` is the end of the longest common
+    /// start: nothing after it can be typed safely (some of it may be typed words, rewritten), so
+    /// the caller hands it to the person instead of skipping or repeating words.
     static func align(finalWords: [String], committedWords: [String]) -> TranscriptAlignment {
         guard !committedWords.isEmpty else { return TranscriptAlignment(remainderStartIndex: 0, alignedByWords: true) }
         let finalNormalized = finalWords.map { normalizedWord($0) }
         let committedNormalized = committedWords.map { normalizedWord($0) }
+        let expectedEnd = committedNormalized.count
 
         // The usual case: the transcript starts with exactly the committed words.
-        if finalNormalized.count >= committedNormalized.count,
-           Array(finalNormalized.prefix(committedNormalized.count)) == committedNormalized {
-            return TranscriptAlignment(remainderStartIndex: committedNormalized.count, alignedByWords: true)
+        if finalNormalized.count >= expectedEnd, Array(finalNormalized.prefix(expectedEnd)) == committedNormalized {
+            return TranscriptAlignment(remainderStartIndex: expectedEnd, alignedByWords: true)
         }
 
-        // A word was added or dropped earlier on: find the committed words' last few in the
-        // transcript, nearest to where they would have been.
-        let runLength = min(trailingRunLength, committedNormalized.count)
-        let trailingRun = Array(committedNormalized.suffix(runLength))
-        if runLength > 0, finalNormalized.count >= runLength {
-            let candidateEnds = (runLength...finalNormalized.count).filter { end in
-                Array(finalNormalized[(end - runLength)..<end]) == trailingRun
+        // The engine rewrote words on the way ("twenty five" → "25", "gonna" → "going to"): find
+        // the committed words' last 3, then 2, then 1 near where they should end.
+        for runLength in stride(from: min(longestTrailingRunLength, expectedEnd), through: 1, by: -1) {
+            let trailingRun = Array(committedNormalized.suffix(runLength))
+            guard finalNormalized.count >= runLength else { continue }
+            let nearbyEnds = (runLength...finalNormalized.count).filter { end in
+                abs(end - expectedEnd) <= maximumDistanceFromExpectedEnd
+                    && Array(finalNormalized[(end - runLength)..<end]) == trailingRun
             }
-            if let nearestEnd = candidateEnds.min(by: { abs($0 - committedNormalized.count) < abs($1 - committedNormalized.count) }) {
+            if let nearestEnd = nearbyEnds.min(by: { abs($0 - expectedEnd) < abs($1 - expectedEnd) }) {
                 return TranscriptAlignment(remainderStartIndex: nearestEnd, alignedByWords: true)
             }
         }
 
-        // The engine revised words that were already typed. Never retype or delete: carry on after
-        // as many words as were committed.
-        return TranscriptAlignment(remainderStartIndex: min(committedNormalized.count, finalWords.count), alignedByWords: false)
+        // Nothing lines up: never retype, never delete, never skip. Everything after the last word
+        // that still matches from the start is left for the person.
+        var commonStartCount = 0
+        while commonStartCount < min(finalNormalized.count, expectedEnd),
+              finalNormalized[commonStartCount] == committedNormalized[commonStartCount] {
+            commonStartCount += 1
+        }
+        return TranscriptAlignment(remainderStartIndex: commonStartCount, alignedByWords: false)
+    }
+}
+
+/// Keystrokes posted while a modifier is physically held can merge with it: with right ⌃ as the
+/// dictation key "m" became ⌃M (Return), with fn the A key became fn+A. Typing waits while any
+/// modifier other than the dictation key's own is held.
+enum LiveTypingModifierGuard {
+    static let modifiersThatChangeKeystrokes: CGEventFlags = [.maskShift, .maskControl, .maskAlternate, .maskCommand, .maskSecondaryFn]
+
+    static func ownModifier(of dictationKey: DictationHotkey) -> CGEventFlags {
+        switch dictationKey {
+        case .fn: return .maskSecondaryFn
+        case .rightOption: return .maskAlternate
+        case .rightCommand: return .maskCommand
+        case .rightControl: return .maskControl
+        }
+    }
+
+    static func allowsTyping(heldFlags: CGEventFlags, dictationKey: DictationHotkey) -> Bool {
+        let heldModifiers = heldFlags.intersection(modifiersThatChangeKeystrokes)
+        return heldModifiers.subtracting(ownModifier(of: dictationKey)).isEmpty
     }
 }
 
 /// One take's live typing, as the controller keeps it.
 struct LiveTypingSession {
     var committer: StableWordCommitter
-    /// The app the take began in; nothing is typed anywhere else.
-    let appBundleID: String
+    /// The text field that had focus at press (element and pid, through Accessibility); nothing is
+    /// typed anywhere else.
+    let focusedTargetAtPress: FocusedTextTarget
     /// The take's style, dictionary and shortcuts, read at press.
     let formattingContext: TakeFormattingContext
     /// Everything typed so far, exactly as typed.
@@ -224,6 +267,8 @@ struct LiveTypingSession {
     /// The engine's words behind `typedText` (what the final transcript is lined up against).
     var typedRawWords: [String] = []
     var typedPhraseCount = 0
+    /// The latest partial transcript: what was heard, for the pasteboard if the take fails.
+    var latestPartial = ""
     /// Why typing stopped before the take ended (the app changed, secure input came on, keystrokes
     /// could not be posted); nil while it may continue.
     var stoppedReason: String?

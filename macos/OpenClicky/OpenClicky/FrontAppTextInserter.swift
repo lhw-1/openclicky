@@ -65,26 +65,34 @@ enum FrontAppTextInserter {
     /// dictation key's hold and break tap / double-tap detection). The bytes spell "OCLT".
     static let liveTypingEventMarker: Int64 = 0x4F43_4C54
 
+    /// The virtual key the text-carrying events claim to be. Not a letter (keycode 0 is the A key,
+    /// and fn+A or ⌃A mean something): 0x42 has no `kVK_` constant in HIToolbox's Events.h,
+    /// so the event has no key meaning of its own and the app reads only its unicode string.
+    static let liveTypingVirtualKeyCode: CGKeyCode = 0x42
+
     /// Types text into the app in front as keystrokes carrying the text itself, leaving the
     /// pasteboard alone (live typing posts many small phrases; pasting each would churn the
     /// clipboard). False without Accessibility or an event source.
     @MainActor
     static func typeAsKeystrokes(_ text: String) -> Bool {
         guard !text.isEmpty else { return true }
-        guard AXIsProcessTrusted(), let eventSource = CGEventSource(stateID: .combinedSessionState) else { return false }
+        // A private event source carries no modifier state of its own, and posting at the session
+        // tap (not the HID tap) keeps the events from picking up the modifiers physically held —
+        // the dictation key usually still is. The controller also waits while a foreign modifier
+        // is held (`LiveTypingModifierGuard`).
+        guard AXIsProcessTrusted(), let eventSource = CGEventSource(stateID: .privateState) else { return false }
+        eventSource.userData = liveTypingEventMarker
         for chunk in keyboardChunks(of: text) {
             let utf16Units = Array(chunk.utf16)
-            guard let keyDown = CGEvent(keyboardEventSource: eventSource, virtualKey: 0, keyDown: true),
-                  let keyUp = CGEvent(keyboardEventSource: eventSource, virtualKey: 0, keyDown: false) else { return false }
+            guard let keyDown = CGEvent(keyboardEventSource: eventSource, virtualKey: liveTypingVirtualKeyCode, keyDown: true),
+                  let keyUp = CGEvent(keyboardEventSource: eventSource, virtualKey: liveTypingVirtualKeyCode, keyDown: false) else { return false }
             for event in [keyDown, keyUp] {
                 event.keyboardSetUnicodeString(stringLength: utf16Units.count, unicodeString: utf16Units)
-                // The dictation key (fn, or a right-hand modifier) is usually still held while words
-                // are typed; without clearing the flags the app would see fn+letter or ⌘+letter.
                 event.flags = []
                 event.setIntegerValueField(.eventSourceUserData, value: liveTypingEventMarker)
             }
-            keyDown.post(tap: .cghidEventTap)
-            keyUp.post(tap: .cghidEventTap)
+            keyDown.post(tap: .cgSessionEventTap)
+            keyUp.post(tap: .cgSessionEventTap)
         }
         return true
     }
