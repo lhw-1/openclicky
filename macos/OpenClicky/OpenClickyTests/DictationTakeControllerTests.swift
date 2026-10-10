@@ -83,7 +83,16 @@ private struct Harness {
     let controller: DictationTakeController
     let pasted: Pasted
 
-    final class Pasted { var texts: [String] = []; var frontApp: String? = "com.apple.Notes" }
+    final class Pasted {
+        var texts: [String] = []
+        var frontApp: String? = "com.apple.Notes"
+        /// What live typing posted as keystrokes, one entry per typing step.
+        var typed: [String] = []
+        /// What was put on the pasteboard without a paste (live typing that had to stop).
+        var copied: [String] = []
+        /// The clock live typing measures word stability with; tests move it by hand.
+        var now = Date(timeIntervalSince1970: 1_000)
+    }
 
     init(polisher: (any TakePolisher)? = nil, field: FocusedFieldSnapshot? = nil) throws {
         let suite = "openclicky-tests-\(UUID().uuidString)"
@@ -107,6 +116,9 @@ private struct Harness {
         host.isAccessibilityTrusted = { true }
         host.paste = { text in pasted.texts.append(text); return .typed }
         host.verifyPaste = { _, _ in .verified }
+        host.typeText = { text in pasted.typed.append(text); return true }
+        host.copyToPasteboard = { text in pasted.copied.append(text) }
+        host.now = { pasted.now }
         host.makePolisher = { polisher }
         host.engineUnavailableReason = { _ in nil }
         let spaceStore = DictationSpaceStore(directoryURL: FileManager.default.temporaryDirectory.appendingPathComponent("space-\(UUID().uuidString)"))
@@ -310,5 +322,103 @@ struct DictationTakeControllerTests {
         await h.waitUntil { h.controller.state == .idle }
         #expect(h.pasted.texts == ["Secret plans"])
         #expect(try h.store.recent().isEmpty)
+    }
+
+    // MARK: live typing (no model polish: the words go in as they settle)
+
+    /// Delivers a partial now and again after the stability threshold, so its settled words commit.
+    @MainActor private func speak(_ partial: String, in h: Harness) {
+        h.capture.deliverPartial(partial)
+        h.pasted.now = h.pasted.now.addingTimeInterval(StableWordCommitter.requiredStableSeconds + 0.1)
+        h.capture.deliverPartial(partial)
+    }
+
+    @Test @MainActor func withoutPolishTheSettledWordsAreTypedWhileSpeakingAndTheRestAtRelease() async throws {
+        let h = try Harness()
+        h.controller.handle(.dictationPressed)
+        await h.waitUntil { h.controller.state == .listening }
+        speak("hello there my friend", in: h)
+        #expect(h.pasted.typed == ["Hello there"])
+        // The orb shows only what has not been typed yet.
+        #expect(h.orb.liveTranscript == "my friend")
+        speak("hello there my friend how are you", in: h)
+        // "my friend" had already settled and is now clear of the tail; "how" settles a moment later.
+        #expect(h.pasted.typed == ["Hello there", " my friend", " how"])
+        h.controller.handle(.dictationReleased(wasTap: false))
+        h.capture.deliverFinal("Hello there, my friend, how are you?")
+        await h.waitUntil { h.controller.state == .idle }
+        #expect(h.pasted.typed == ["Hello there", " my friend", " how", " are you?"])
+        #expect(h.pasted.texts.isEmpty)
+        let record = try #require(try h.store.recent().first)
+        #expect(record.rawText == "Hello there, my friend, how are you?")
+        #expect(record.formattedText == "Hello there my friend how are you?")
+        #expect(record.pasteOutcome == .posted)
+        #expect(record.status == .complete)
+    }
+
+    @Test @MainActor func aTakeThatWillBePolishedIsNotTypedLive() async throws {
+        let h = try Harness(polisher: SlowPolisher(seconds: 0.05, answer: "Hello there, my friend."))
+        h.controller.handle(.dictationPressed)
+        await h.waitUntil { h.controller.state == .listening }
+        speak("hello there my friend", in: h)
+        #expect(h.pasted.typed.isEmpty)
+        #expect(h.orb.liveTranscript == "hello there my friend")
+        h.controller.handle(.dictationReleased(wasTap: false))
+        h.capture.deliverFinal("hello there my friend")
+        await h.waitUntil { h.controller.state == .idle }
+        #expect(h.pasted.typed.isEmpty)
+        #expect(h.pasted.texts == ["Hello there, my friend."])
+    }
+
+    @Test @MainActor func aFieldThatIsNotEditableIsNotTypedInto() async throws {
+        let label = FocusedFieldSnapshot(appBundleID: "com.apple.finder", appName: "Finder", role: "AXStaticText", isEditable: false, isSecure: false, value: nil, selectedText: nil)
+        let h = try Harness(field: label)
+        h.pasted.frontApp = "com.apple.finder"
+        h.controller.handle(.dictationPressed)
+        await h.waitUntil { h.controller.state == .listening }
+        speak("hello there my friend", in: h)
+        #expect(h.pasted.typed.isEmpty)
+    }
+
+    @Test @MainActor func whenTheAppChangesTypingStopsAndTheRestGoesToThePasteboard() async throws {
+        let h = try Harness()
+        h.controller.handle(.dictationPressed)
+        await h.waitUntil { h.controller.state == .listening }
+        speak("hello there my friend", in: h)
+        #expect(h.pasted.typed == ["Hello there"])
+        h.pasted.frontApp = "com.apple.Safari"
+        speak("hello there my friend and more words", in: h)
+        #expect(h.pasted.typed == ["Hello there"])
+        // Back in the original app: typing stays stopped for this take.
+        h.pasted.frontApp = "com.apple.Notes"
+        speak("hello there my friend and more words to come", in: h)
+        #expect(h.pasted.typed == ["Hello there"])
+        h.controller.handle(.dictationReleased(wasTap: false))
+        h.capture.deliverFinal("hello there my friend and more words to come")
+        await h.waitUntil { h.controller.state == .idle }
+        #expect(h.pasted.typed == ["Hello there"])
+        #expect(h.pasted.texts.isEmpty)
+        #expect(h.pasted.copied == ["my friend and more words to come"])
+        #expect(h.orb.boxText == "my friend and more words to come")
+        let record = try #require(try h.store.recent().first)
+        #expect(record.pasteOutcome == .leftOnPasteboard)
+    }
+
+    @Test @MainActor func cancellingLeavesTheTypedWordsAndRecordsThem() async throws {
+        let h = try Harness()
+        h.controller.handle(.dictationPressed)
+        await h.waitUntil { h.controller.state == .listening }
+        speak("hello there my friend", in: h)
+        #expect(h.pasted.typed == ["Hello there"])
+        #expect(h.controller.handle(.escapePressed))
+        #expect(h.controller.state == .idle)
+        await h.settle(0.2)
+        #expect(h.pasted.typed == ["Hello there"])
+        #expect(h.pasted.texts.isEmpty)
+        #expect(h.pasted.copied.isEmpty)
+        let record = try #require(try h.store.recent().first)
+        #expect(record.status == .cancelled)
+        #expect(record.formattedText == "Hello there")
+        #expect(record.pasteOutcome == .posted)
     }
 }

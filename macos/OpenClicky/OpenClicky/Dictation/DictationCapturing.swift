@@ -44,7 +44,7 @@ extension BuddyDictationManager: DictationCapturing {
     var sessionActivityPublisher: AnyPublisher<Bool, Never> { $isKeyboardShortcutSessionActiveOrFinalizing.eraseToAnyPublisher() }
 }
 
-/// What the controller needs from the Mac around a take; injectable so tests paste nowhere.
+/// What the controller needs from the Mac around a take; injectable so tests paste and type nowhere.
 struct DictationHost {
     var readFocusedField: () -> FocusedFieldSnapshot = { FocusedFieldReader.snapshot() }
     var readNearbyTerms: () -> [String] = { FocusedFieldReader.nearbyTerms() }
@@ -52,6 +52,12 @@ struct DictationHost {
     var isSecureInputOn: () -> Bool = { IsSecureEventInputEnabled() }
     var isAccessibilityTrusted: () -> Bool = { AXIsProcessTrusted() }
     var paste: @MainActor (String) -> FrontAppTextInserter.Outcome = { FrontAppTextInserter.insert($0) }
+    /// Live typing: the text as posted keystrokes (no pasteboard); false when they could not be posted.
+    var typeText: @MainActor (String) -> Bool = { FrontAppTextInserter.typeAsKeystrokes($0) }
+    /// Live typing that had to stop leaves the rest of the take here, for a manual ⌘V.
+    var copyToPasteboard: @MainActor (String) -> Void = { FrontAppTextInserter.copyToPasteboard($0) }
+    /// The clock live typing measures how long a word has been stable with.
+    var now: () -> Date = { Date() }
     var verifyPaste: (String, FocusedFieldSnapshot) async -> PasteLanding = { await PasteLanding.verify(text: $0, before: $1) }
     var makePolisher: () -> (any TakePolisher)? = { DictationEngineResolver.makePolisher() }
     var engineUnavailableReason: (DictationEngineChoice) -> String? = { DictationEngineResolver.unavailableReason(for: $0) }

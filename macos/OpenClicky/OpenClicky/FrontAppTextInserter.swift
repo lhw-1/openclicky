@@ -54,6 +54,81 @@ enum FrontAppTextInserter {
         return .typed
     }
 
+    // MARK: live typing
+
+    /// `CGEventKeyboardSetUnicodeString` carries at most 20 UTF-16 units per event; longer strings
+    /// are cut off by the system, so text is posted in chunks of this size.
+    static let maximumUTF16UnitsPerKeyboardEvent = 20
+
+    /// Stamped into `eventSourceUserData` of every keystroke live typing posts, so OpenClicky's own
+    /// shortcut tap can ignore them (a typed letter would otherwise read as a key pressed during the
+    /// dictation key's hold and break tap / double-tap detection). The bytes spell "OCLT".
+    static let liveTypingEventMarker: Int64 = 0x4F43_4C54
+
+    /// Types text into the app in front as keystrokes carrying the text itself, leaving the
+    /// pasteboard alone (live typing posts many small phrases; pasting each would churn the
+    /// clipboard). False without Accessibility or an event source.
+    @MainActor
+    static func typeAsKeystrokes(_ text: String) -> Bool {
+        guard !text.isEmpty else { return true }
+        guard AXIsProcessTrusted(), let eventSource = CGEventSource(stateID: .combinedSessionState) else { return false }
+        for chunk in keyboardChunks(of: text) {
+            let utf16Units = Array(chunk.utf16)
+            guard let keyDown = CGEvent(keyboardEventSource: eventSource, virtualKey: 0, keyDown: true),
+                  let keyUp = CGEvent(keyboardEventSource: eventSource, virtualKey: 0, keyDown: false) else { return false }
+            for event in [keyDown, keyUp] {
+                event.keyboardSetUnicodeString(stringLength: utf16Units.count, unicodeString: utf16Units)
+                // The dictation key (fn, or a right-hand modifier) is usually still held while words
+                // are typed; without clearing the flags the app would see fn+letter or ⌘+letter.
+                event.flags = []
+                event.setIntegerValueField(.eventSourceUserData, value: liveTypingEventMarker)
+            }
+            keyDown.post(tap: .cghidEventTap)
+            keyUp.post(tap: .cghidEventTap)
+        }
+        return true
+    }
+
+    /// Cuts text into pieces of at most `maximumUTF16UnitsPerKeyboardEvent` UTF-16 units without
+    /// splitting a character (an emoji's surrogate pair, a letter with its combining marks).
+    static func keyboardChunks(of text: String) -> [String] {
+        var chunks: [String] = []
+        var currentChunk = ""
+        for character in text {
+            let characterUnits = String(character).utf16.count
+            if currentChunk.utf16.count + characterUnits > maximumUTF16UnitsPerKeyboardEvent, !currentChunk.isEmpty {
+                chunks.append(currentChunk)
+                currentChunk = ""
+            }
+            if characterUnits > maximumUTF16UnitsPerKeyboardEvent {
+                // A single grapheme longer than one event (a long emoji sequence): its scalars go
+                // separately, which still never splits a surrogate pair.
+                for scalar in character.unicodeScalars {
+                    let scalarText = String(scalar)
+                    if currentChunk.utf16.count + scalarText.utf16.count > maximumUTF16UnitsPerKeyboardEvent, !currentChunk.isEmpty {
+                        chunks.append(currentChunk)
+                        currentChunk = ""
+                    }
+                    currentChunk += scalarText
+                }
+            } else {
+                currentChunk.append(character)
+            }
+        }
+        if !currentChunk.isEmpty { chunks.append(currentChunk) }
+        return chunks
+    }
+
+    /// Puts text on the pasteboard and leaves it there (no keystroke): what live typing could not
+    /// type is waiting for the person's own ⌘V.
+    @MainActor
+    static func copyToPasteboard(_ text: String) {
+        let pasteboard = NSPasteboard.general
+        lastInsertedAt = Date()
+        pasteboard.clearContents()
+        pasteboard.setString(text, forType: .string)
+    }
+
     /// Copies every item and type on the pasteboard so it can be put back after the paste.
     private static func snapshot(of pasteboard: NSPasteboard) -> [NSPasteboardItem] {
         (pasteboard.pasteboardItems ?? []).map { item in

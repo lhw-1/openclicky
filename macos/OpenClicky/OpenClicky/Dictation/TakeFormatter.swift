@@ -106,10 +106,11 @@ enum TakeFormatter {
     }
 
     /// A capital letter after each sentence end. No punctuation is added: the engines punctuate,
-    /// and "git status" must land in a terminal as spoken.
-    static func sentenceCased(_ text: String) -> String {
+    /// and "git status" must land in a terminal as spoken. Live typing formats a take a phrase at a
+    /// time, so a phrase that continues a sentence starts with `startingAtSentenceStart` false.
+    static func sentenceCased(_ text: String, startingAtSentenceStart: Bool = true) -> String {
         var characters = Array(text)
-        var atSentenceStart = true
+        var atSentenceStart = startingAtSentenceStart
         for index in characters.indices {
             let character = characters[index]
             if atSentenceStart, character.isLetter {
@@ -135,7 +136,7 @@ enum TakeFormatter {
     /// The local pass, then the model's rewrite when there is one to ask and the style wants it.
     static func format(_ raw: String, context: TakeFormattingContext, polisher: (any TakePolisher)?, wantsModel: Bool) async -> FormattedTake {
         var local = formatLocally(raw, context: context)
-        guard local.expandedShortcut == nil, !local.text.isEmpty, wantsModel, context.style.polishWithModel else { return local }
+        guard local.expandedShortcut == nil, !local.text.isEmpty, modelPassWanted(context: context, wantsModel: wantsModel) else { return local }
         guard let polisher else {
             local.formattingDegraded = true
             return local
@@ -156,6 +157,19 @@ enum TakeFormatter {
             local.formattingDegraded = true
             return local
         }
+    }
+
+    /// The settings allow a model (`DictationEngineResolver.wantsModelPolish`) and this app's style
+    /// asks for one. With a polisher configured as well, the model pass runs; live typing types only
+    /// takes for which it will not.
+    static func modelPassWanted(context: TakeFormattingContext, wantsModel: Bool) -> Bool {
+        wantsModel && context.style.polishWithModel
+    }
+
+    /// Whether `format` will ask a model to rewrite this take (a shortcut take aside, which is
+    /// decided by its words, not known before they are heard).
+    static func modelPassWillRun(context: TakeFormattingContext, polisher: (any TakePolisher)?, wantsModel: Bool) -> Bool {
+        modelPassWanted(context: context, wantsModel: wantsModel) && polisher != nil
     }
 
     static func systemPrompt(for context: TakeFormattingContext) -> String {

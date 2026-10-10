@@ -130,6 +130,10 @@ final class GlobalPushToTalkShortcutMonitor: ObservableObject {
         default: recognizerEventKind = nil
         }
         guard let recognizerEventKind else { return Unmanaged.passUnretained(event) }
+        // Keystrokes OpenClicky typed itself (live dictation) are not the person pressing keys.
+        if event.getIntegerValueField(.eventSourceUserData) == FrontAppTextInserter.liveTypingEventMarker {
+            return Unmanaged.passUnretained(event)
+        }
 
         let eventKeyCode = UInt16(event.getIntegerValueField(.keyboardEventKeycode))
         let modifierFlags = NSEvent.ModifierFlags(rawValue: UInt(event.flags.rawValue)).intersection(.deviceIndependentFlagsMask)
