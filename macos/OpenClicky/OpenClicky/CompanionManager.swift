@@ -1205,9 +1205,15 @@ final class CompanionManager: ObservableObject {
         }
         switch transition {
         case .pressed:
-            guard !buddyDictationManager.isDictationInProgress else { return }
+            guard !buddyDictationManager.isDictationInProgress else {
+                AppLog.append("ask: ⌃⌥ ignored — the microphone is still busy with dictation")
+                showAskCaption("one moment — still finishing your dictation", holdSeconds: 3)
+                return
+            }
             // Don't register push-to-talk while the onboarding video is playing
             guard !showOnboardingVideo else { return }
+            AppLog.append("ask: ⌃⌥ pressed, listening")
+            askHeardSomethingSinceLastPress = false
 
             // Cancel any pending transient hide so the overlay stays visible
             transientHideTask?.cancel()
@@ -1245,10 +1251,19 @@ final class CompanionManager: ObservableObject {
                         // Partial transcripts are hidden (waveform-only UI)
                     },
                     submitDraftText: { [weak self] finalTranscript in
-                        self?.lastTranscript = finalTranscript
-                        print("🗣️ Companion received transcript: \(finalTranscript)")
+                        guard let self else { return }
+                        self.lastTranscript = finalTranscript
+                        self.askHeardSomethingSinceLastPress = true
+                        let question = finalTranscript.trimmingCharacters(in: .whitespacesAndNewlines)
+                        AppLog.append("ask: heard \(question.count) chars")
+                        guard !question.isEmpty else {
+                            self.showAskCaption("didn't catch that — hold ⌃⌥ and ask again", holdSeconds: 3)
+                            return
+                        }
                         ClickyAnalytics.trackUserMessageSent(characterCount: finalTranscript.count)
-                        self?.sendTranscriptToClaudeWithScreenshot(transcript: finalTranscript)
+                        // Show what was heard and that an answer is coming, until the voice starts.
+                        self.showAskCaption("“\(question)” · thinking…", holdSeconds: 30)
+                        self.sendTranscriptToClaudeWithScreenshot(transcript: finalTranscript)
                     }
                 )
             }
@@ -1261,6 +1276,15 @@ final class CompanionManager: ObservableObject {
             pendingKeyboardShortcutStartTask?.cancel()
             pendingKeyboardShortcutStartTask = nil
             buddyDictationManager.stopPushToTalkFromKeyboardShortcut()
+            AppLog.append("ask: ⌃⌥ released")
+            // A release that never produces a transcript used to end in silence: say so instead.
+            askNothingHeardCheck?.cancel()
+            askNothingHeardCheck = Task { @MainActor [weak self] in
+                try? await Task.sleep(nanoseconds: 4_000_000_000)
+                guard !Task.isCancelled, let self, !self.askHeardSomethingSinceLastPress else { return }
+                AppLog.append("ask: nothing heard after release")
+                self.showAskCaption("didn't catch that — hold ⌃⌥ and ask again", holdSeconds: 3)
+            }
         case .none:
             break
         }
@@ -1369,10 +1393,16 @@ final class CompanionManager: ObservableObject {
                         fetchAudio: { [elevenLabsTTSClient] pieceText in try await elevenLabsTTSClient.fetchAudio(for: pieceText) },
                         playAudio: { [elevenLabsTTSClient] audioData in try await elevenLabsTTSClient.playToCompletion(audioData) }
                     ),
-                    onVoiceStarts: { [weak self] in self?.voiceState = .responding },
+                    onVoiceStarts: { [weak self] in
+                        self?.voiceState = .responding
+                        self?.dismissCursorCaption()
+                        AppLog.append("ask: voice started")
+                    },
                     onPointTag: { [weak self] pointTag in self?.pointAtAnswerTag(pointTag, screenCaptures: screenCaptures) }
                 )
                 let answerPlayback = Task { @MainActor in try await answerSpeaker.play() }
+                let askStartedAt = Date()
+                AppLog.append("ask: sending to claude (\(screenCaptures.count) screen(s))")
 
                 let fullResponseText: String
                 let toolCalls: [ClaudeToolCall]
@@ -1394,6 +1424,7 @@ final class CompanionManager: ObservableObject {
                     answerPlayback.cancel()
                     throw error
                 }
+                AppLog.append("ask: answer \(fullResponseText.count) chars in \(String(format: "%.1f", Date().timeIntervalSince(askStartedAt))) s")
                 var toolOutcomes: [String] = []
                 for call in toolCalls.prefix(2) {
                     switch MacAction.parse(toolName: call.name, arguments: call.arguments) {
@@ -1449,6 +1480,7 @@ final class CompanionManager: ObservableObject {
                         ClickyAnalytics.trackTTSError(error: nsError.localizedDescription)
                     }
                     print("⚠️ TTS via backend failed (\(nsError.localizedDescription)); using the system voice")
+                    AppLog.append("ask: voice failed (\(nsError.code)); using the system voice")
                     if !Task.isCancelled {
                         speakWithSystemVoice(failure.unspokenText.joined(separator: " "))
                         answerSpeaker.voiceFellBack()
@@ -1457,6 +1489,8 @@ final class CompanionManager: ObservableObject {
             } catch is CancellationError {
                 // User spoke again — response was interrupted
             } catch {
+                AppLog.append("ask: failed: \((error as NSError).domain) \((error as NSError).code)")
+                dismissCursorCaption()
                 if Self.isSignInRejection(error) {
                     // The backend refused the token. Try one refresh; if the sign-in is dead the
                     // session signs out, and either way the person hears what to do.
@@ -1827,6 +1861,22 @@ final class CompanionManager: ObservableObject {
 
     private func startOnboardingPromptStream() {
         streamCursorCaption("press control + option and introduce yourself")
+    }
+
+    // MARK: - Ask lane feedback
+
+    /// Set when the recogniser hands over a transcript for the current ⌃⌥ press.
+    private var askHeardSomethingSinceLastPress = false
+    private var askNothingHeardCheck: Task<Void, Never>?
+
+    /// A caption by the pointer for the ask lane (what was heard, "thinking…", a problem), beside
+    /// the mouse when the buddy is docked.
+    private func showAskCaption(_ message: String, holdSeconds: TimeInterval) {
+        if isCursorDocked {
+            showCaptionBesideMouseWhileDocked(message, holdSeconds: holdSeconds)
+        } else {
+            streamCursorCaption(message, holdSeconds: holdSeconds)
+        }
     }
 
     // MARK: - Cursor caption (typewriter text next to the buddy)
