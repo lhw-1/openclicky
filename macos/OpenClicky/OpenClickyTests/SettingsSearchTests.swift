@@ -38,7 +38,7 @@ struct SettingsSearchTests {
             item("c", page: .shortcuts, section: "the companion", title: "hands-free"),
         ]
         let groups = SettingsSectionGroup.groups(items) { "\($0.page.title) › \($0.section)" }
-        #expect(groups.map(\.title) == ["shortcuts › dictation", "shortcuts › the companion"])
+        #expect(groups.map(\.title) == ["keys & shortcuts › dictation", "keys & shortcuts › the companion"])
         #expect(groups.first?.items.count == 2)
     }
 

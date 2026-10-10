@@ -60,7 +60,6 @@ enum Paper {
         static let rowVertical: CGFloat = 12
         static let rowHorizontal: CGFloat = 16
         static let mainRail: CGFloat = 220
-        static let settingsRail: CGFloat = 240
         static let railItemHeight: CGFloat = 32
         static let keyRadius: CGFloat = 5
         static let controlRadius: CGFloat = 7

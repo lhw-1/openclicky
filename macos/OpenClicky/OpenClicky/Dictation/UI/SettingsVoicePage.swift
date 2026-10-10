@@ -302,7 +302,7 @@ private struct MovedToStylesNote: View {
     var body: some View {
         HStack(spacing: 4) {
             Text(settingsHighlighted("looking for polish or language? they moved to", query: searchQuery))
-            Button("styles") { windowModel.section = .styles }
+            Button("styles") { windowModel.open(section: .styles) }
                 .buttonStyle(.plain).foregroundStyle(Paper.accentFill).pointerCursor()
                 .accessibilityHint("opens the styles page")
             Text(settingsHighlighted(", next to the rules the model reads.", query: searchQuery))

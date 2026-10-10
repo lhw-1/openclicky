@@ -2,9 +2,12 @@
 //  DictationWindow.swift
 //  OpenClicky
 //
-//  The main window: a rail on the left (record, history; how it writes: dictionary, shortcuts,
-//  styles; incognito, settings and the account at the foot) and a page on the right. One window,
-//  reopened from the menu bar, the orb's menu or the Dock, remembering its frame.
+//  The main window: one sidebar on the left (record, history; how it writes: dictionary,
+//  shortcuts, styles; settings: a search field and the six settings pages; incognito and the
+//  account pinned at the foot) and a page on the right. Settings used to be a separate mode that
+//  swapped the sidebar for its own rail behind a small "settings ⌘," row, which people missed;
+//  now every page is one click away in the same list. One window, reopened from the menu bar,
+//  the orb's menu or the Dock, remembering its frame.
 //
 
 import AppKit
@@ -38,20 +41,19 @@ enum DictationSettingsPage: String, CaseIterable, Identifiable {
     var title: String {
         switch self {
         case .orb: return "the orb"
+        // The sidebar also lists the spoken "shortcuts" (phrases that expand as you dictate) under
+        // "how it writes"; two rows both called "shortcuts" would read as a duplicate. This page
+        // is the keyboard: the dictation key, cancel, hands-free.
+        case .shortcuts: return "keys & shortcuts"
         default: return rawValue
         }
     }
+}
 
-    var symbol: String {
-        switch self {
-        case .general: return "gearshape"
-        case .shortcuts: return "keyboard"
-        case .orb: return "circle"
-        case .voice: return "waveform"
-        case .privacy: return "lock"
-        case .account: return "person.circle"
-        }
-    }
+/// One row of the window's sidebar: a main page or one of the settings pages.
+enum DictationSidebarRow: Hashable {
+    case section(DictationSection)
+    case settingsPage(DictationSettingsPage)
 }
 
 @MainActor
@@ -60,6 +62,45 @@ final class DictationWindowModel: ObservableObject {
     @Published var settingsPage: DictationSettingsPage = .general
     @Published var pendingHistorySearch: String?
     @Published var isRailCollapsed = false
+    /// What is typed in the sidebar's "search settings" field. While it holds words the main area
+    /// shows matching settings from every page, whatever row is selected; empty shows that row's page.
+    @Published var settingsSearchText = ""
+
+    var trimmedSettingsSearchText: String {
+        settingsSearchText.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    var isSearchingSettings: Bool { !trimmedSettingsSearchText.isEmpty }
+
+    /// The row drawn as selected. None while searching: the results span every page, so
+    /// highlighting one row would claim they belong to it.
+    var selectedSidebarRow: DictationSidebarRow? {
+        guard !isSearchingSettings else { return nil }
+        return section == .settings ? .settingsPage(settingsPage) : .section(section)
+    }
+
+    /// A click on a sidebar row. Clears any search so the chosen page is what shows.
+    func select(_ row: DictationSidebarRow) {
+        settingsSearchText = ""
+        switch row {
+        case .section(let chosenSection):
+            section = chosenSection
+        case .settingsPage(let chosenPage):
+            section = .settings
+            settingsPage = chosenPage
+        }
+    }
+
+    /// Every way into the window (menu bar, HUD, links on the pages) comes through here. A settings
+    /// page wins over a section, and a leftover search is cleared, or it would hide the page asked for.
+    /// With neither, the window just comes forward as it was.
+    func open(section requestedSection: DictationSection? = nil, settingsPage requestedPage: DictationSettingsPage? = nil) {
+        if let requestedPage {
+            select(.settingsPage(requestedPage))
+        } else if let requestedSection {
+            select(.section(requestedSection))
+        }
+    }
 }
 
 @MainActor
@@ -102,8 +143,9 @@ final class DictationWindowController: NSWindowController, NSWindowDelegate {
     }
 
     func show(section: DictationSection? = nil, settingsPage: DictationSettingsPage? = nil) {
-        if let section { model.section = section }
-        if let settingsPage { model.section = .settings; model.settingsPage = settingsPage }
+        model.open(section: section, settingsPage: settingsPage)
+        // The sidebar may have been hidden with its toggle; a request for a page should show where it is.
+        if section != nil || settingsPage != nil { model.isRailCollapsed = false }
         // A menu-bar-only app is not active when the window opens from the status item.
         NSApp.setActivationPolicy(.regular)
         NSApp.activate(ignoringOtherApps: true)
@@ -129,24 +171,38 @@ struct DictationRootView: View {
 
     var body: some View {
         HStack(spacing: 0) {
-            if !model.isRailCollapsed && model.section != .settings {
+            if !model.isRailCollapsed {
                 DictationRailView(model: model, companionManager: companionManager)
                     .frame(width: Paper.Metric.mainRail)
                 Rectangle().fill(Paper.hairline).frame(width: 1)
             }
             Group {
-                switch model.section {
-                case .record: RecordPageView(model: model, companionManager: companionManager)
-                case .history: HistoryPageView(model: model, companionManager: companionManager)
-                case .dictionary: DictionaryPageView(spaceStore: companionManager.dictationSpaceStore)
-                case .shortcuts: ShortcutsPageView(spaceStore: companionManager.dictationSpaceStore)
-                case .styles: StylesPageView(companionManager: companionManager)
-                case .settings: DictationSettingsView(model: model, companionManager: companionManager)
+                if model.isSearchingSettings {
+                    // Search results replace whatever page is open; clearing the field brings it back.
+                    DictationSettingsView(model: model, companionManager: companionManager)
+                } else {
+                    switch model.section {
+                    case .record: RecordPageView(model: model, companionManager: companionManager)
+                    case .history: HistoryPageView(model: model, companionManager: companionManager)
+                    case .dictionary: DictionaryPageView(spaceStore: companionManager.dictationSpaceStore)
+                    case .shortcuts: ShortcutsPageView(spaceStore: companionManager.dictationSpaceStore)
+                    case .styles: StylesPageView(companionManager: companionManager)
+                    case .settings: DictationSettingsView(model: model, companionManager: companionManager)
+                    }
                 }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
         .background(Paper.background)
+        // ⌘, opens general settings. It sits on the root, not on a sidebar row, so it still works
+        // with the sidebar hidden; and AppKit offers a key equivalent to the key window before the
+        // menu bar, whose Settings item would open the app's empty settings scene.
+        .background(
+            Button("settings") { model.select(.settingsPage(.general)) }
+                .keyboardShortcut(",", modifiers: .command)
+                .hidden()
+                .accessibilityHidden(true)
+        )
         .ignoresSafeArea()
     }
 }
@@ -157,7 +213,10 @@ struct DictationRailView: View {
     @ObservedObject private var settings: DictationSettings
     @ObservedObject private var spaceStore: DictationSpaceStore
     @ObservedObject private var authSession = OpenClickyAuthSession.shared
+    // Observed so the per-page hit counts follow items whose relevance depends on it (the fn banner).
+    @ObservedObject private var fnKeyState = FnKeyState.shared
     @State private var historyCount = 0
+    @FocusState private var isSettingsSearchFieldFocused: Bool
 
     init(model: DictationWindowModel, companionManager: CompanionManager) {
         self.model = model
@@ -167,53 +226,57 @@ struct DictationRailView: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 2) {
-            HStack {
-                OpenClickyWordmark()
-                Spacer()
-                Button(action: { model.isRailCollapsed.toggle() }) {
-                    Image(systemName: "sidebar.left").font(.system(size: 13)).foregroundStyle(Paper.inkSecondary)
+        let settingsSearchResults = settingsSearchMatches
+        VStack(alignment: .leading, spacing: 0) {
+            // The list scrolls when it is taller than the window (it is, at the 600 pt minimum);
+            // incognito and the account stay pinned below it.
+            ScrollViewReader { sidebarScroller in
+            ScrollView(showsIndicators: false) {
+                VStack(alignment: .leading, spacing: 2) {
+                    HStack {
+                        OpenClickyWordmark()
+                        Spacer()
+                        Button(action: { model.isRailCollapsed.toggle() }) {
+                            Image(systemName: "sidebar.left").font(.system(size: 13)).foregroundStyle(Paper.inkSecondary)
+                        }
+                        .buttonStyle(.plain).pointerCursor().help("Toggle Sidebar")
+                    }
+                    .padding(.top, 44)
+                    .padding(.horizontal, 10)
+                    .padding(.bottom, 18)
+
+                    railButton(.section(.record), title: DictationSection.record.title) { Keycap(text: settings.dictationKey.keycapLabel) }
+                    railButton(.section(.history), title: DictationSection.history.title) { railCount(historyCount) }
+
+                    railGroupLabel("how it writes")
+                    railButton(.section(.dictionary), title: DictationSection.dictionary.title) { railCount(spaceStore.space.dictionary.count) }
+                    railButton(.section(.shortcuts), title: DictationSection.shortcuts.title) { railCount(spaceStore.space.shortcuts.count) }
+                    railButton(.section(.styles), title: DictationSection.styles.title) { railCount(spaceStore.space.styles.count) }
+
+                    railGroupLabel("settings")
+                    settingsSearchField(resultCount: settingsSearchResults.count)
+                        .padding(.bottom, 6)
+                    ForEach(DictationSettingsPage.allCases) { page in
+                        settingsPageRow(page, hitCount: model.isSearchingSettings ? settingsSearchResults.filter { $0.page == page }.count : nil)
+                    }
                 }
-                .buttonStyle(.plain).pointerCursor().help("Toggle Sidebar")
+                .padding(.bottom, 8)
             }
-            .padding(.top, 44)
-            .padding(.horizontal, 10)
-            .padding(.bottom, 18)
-
-            railButton(.record) { Keycap(text: settings.dictationKey.keycapLabel) }
-            railButton(.history) { railCount(historyCount) }
-            Text("how it writes")
-                .font(Paper.micro).foregroundStyle(Paper.inkTertiary)
-                .padding(.top, 16).padding(.bottom, 4).padding(.leading, 10)
-                .accessibilityAddTraits(.isHeader)
-            railButton(.dictionary) { railCount(spaceStore.space.dictionary.count) }
-            railButton(.shortcuts) { railCount(spaceStore.space.shortcuts.count) }
-            railButton(.styles) { railCount(spaceStore.space.styles.count) }
-
-            Spacer()
+            // At the minimum height "privacy" and "account" sit below the fold; a page opened from
+            // elsewhere (the HUD, the account footer, "change engine") scrolls its row into view.
+            .onAppear { scrollSelectedRowIntoView(with: sidebarScroller) }
+            .onChange(of: model.selectedSidebarRow) { _ in scrollSelectedRowIntoView(with: sidebarScroller) }
+            }
 
             Toggle(isOn: $settings.incognito) {
                 Text("incognito").font(Paper.body(13)).foregroundStyle(Paper.ink)
             }
             .toggleStyle(RailSwitchStyle())
             .help(settings.incognito ? "incognito is on — takes paste but are not saved" : "incognito is off — takes are saved to history on this mac")
+            .overlay(alignment: .top) { Rectangle().fill(Paper.hairline).frame(height: 1) }
+            .padding(.top, 2)
 
-            // ⌘, reaches this button while the window is key: AppKit offers a key equivalent to the
-            // key window before the menu bar, whose Settings item would open the app's empty scene.
-            Button(action: { model.section = .settings }) {
-                HStack {
-                    Text("settings").font(Paper.body(13)).foregroundStyle(Paper.ink)
-                    Spacer()
-                    Text("⌘ ,").font(Paper.micro).foregroundStyle(Paper.inkTertiary)
-                }
-                .padding(.horizontal, 10)
-                .frame(height: Paper.Metric.railItemHeight)
-                .contentShape(Rectangle())
-            }
-            .buttonStyle(.plain).pointerCursor()
-            .keyboardShortcut(",", modifiers: .command)
-
-            Button(action: { model.section = .settings; model.settingsPage = .account }) {
+            Button(action: { model.select(.settingsPage(.account)) }) {
                 HStack(spacing: 10) {
                     ZStack {
                         Circle().fill(Paper.accentSoft)
@@ -242,6 +305,66 @@ struct DictationRailView: View {
         .onReceive(companionManager.dictationTakeController.$historyVersion) { _ in reloadHistoryCount() }
     }
 
+    private func scrollSelectedRowIntoView(with sidebarScroller: ScrollViewProxy) {
+        guard let selectedRow = model.selectedSidebarRow else { return }
+        withAnimation(.easeOut(duration: 0.15)) { sidebarScroller.scrollTo(selectedRow) }
+    }
+
+    /// Every relevant setting the search matches, for the result count and the per-page hit counts.
+    private var settingsSearchMatches: [SettingsItem] {
+        guard model.isSearchingSettings else { return [] }
+        let query = model.trimmedSettingsSearchText
+        return SettingsCatalog(settings: settings, companionManager: companionManager, windowModel: model)
+            .allItems.filter { $0.isRelevant() && $0.matches(query) }
+    }
+
+    /// The small label above a group of rows ("how it writes", "settings").
+    private func railGroupLabel(_ text: String) -> some View {
+        Text(text)
+            .font(Paper.micro).foregroundStyle(Paper.inkTertiary)
+            .padding(.top, 16).padding(.bottom, 4).padding(.leading, 10)
+            .accessibilityAddTraits(.isHeader)
+    }
+
+    private func settingsSearchField(resultCount: Int) -> some View {
+        HStack(spacing: 6) {
+            Image(systemName: "magnifyingglass").font(.system(size: 11)).foregroundStyle(Paper.inkTertiary)
+            TextField("search settings", text: $model.settingsSearchText)
+                .textFieldStyle(.plain)
+                .font(Paper.body(13))
+                .foregroundStyle(Paper.ink)
+                .focused($isSettingsSearchFieldFocused)
+                .onExitCommand { model.settingsSearchText = "" }
+            if model.isSearchingSettings {
+                Button(action: { model.settingsSearchText = "" }) {
+                    Text("\(resultCount) · esc")
+                        .font(Paper.micro).foregroundStyle(Paper.inkTertiary).monospacedDigit()
+                }
+                .buttonStyle(.plain).pointerCursor()
+                .help("\(resultCount) \(resultCount == 1 ? "result" : "results") — clear the search")
+            }
+        }
+        .padding(.horizontal, 10)
+        .frame(height: Paper.Metric.fieldHeight)
+        .background(RoundedRectangle(cornerRadius: Paper.Metric.controlRadius, style: .continuous).fill(Paper.cardRaised))
+        .overlay(RoundedRectangle(cornerRadius: Paper.Metric.controlRadius, style: .continuous)
+            .strokeBorder(isSettingsSearchFieldFocused ? Paper.accentFill : Paper.hairline, lineWidth: isSettingsSearchFieldFocused ? 2 : 1))
+    }
+
+    /// A settings page's row. "general" carries the ⌘, hint; while searching each row carries its
+    /// hit count instead, and a page with no hits is dimmed.
+    private func settingsPageRow(_ page: DictationSettingsPage, hitCount: Int?) -> some View {
+        let isDimmed = hitCount == 0
+        return railButton(.settingsPage(page), title: page.title, isDimmed: isDimmed) {
+            if let hitCount {
+                if hitCount > 0 { railCount(hitCount) }
+            } else if page == .general {
+                Text("⌘ ,").font(Paper.micro).foregroundStyle(Paper.inkTertiary)
+            }
+        }
+        .accessibilityLabel(hitCount.map { "\(page.title), \($0) results" } ?? page.title)
+    }
+
     /// "Prasanth S." — the first name and the initial of the last, or the signed-in address's name.
     private var accountName: String {
         if let email = authSession.accountEmail { return String(email.split(separator: "@").first ?? "") }
@@ -267,11 +390,13 @@ struct DictationRailView: View {
         Text("\(count)").font(Paper.caption).foregroundStyle(Paper.inkTertiary).monospacedDigit()
     }
 
-    private func railButton<Trailing: View>(_ section: DictationSection, @ViewBuilder trailing: () -> Trailing) -> some View {
-        let selected = model.section == section
-        return Button(action: { model.section = section }) {
+    private func railButton<Trailing: View>(_ row: DictationSidebarRow, title: String, isDimmed: Bool = false, @ViewBuilder trailing: () -> Trailing) -> some View {
+        let selected = model.selectedSidebarRow == row
+        return Button(action: { model.select(row) }) {
             HStack(spacing: 8) {
-                Text(section.title).font(Paper.body(13, weight: selected ? .semibold : .regular)).foregroundStyle(Paper.ink)
+                Text(title).font(Paper.body(13, weight: selected ? .semibold : .regular))
+                    .foregroundStyle(isDimmed ? Paper.inkTertiary : Paper.ink)
+                    .lineLimit(1)
                 Spacer()
                 trailing()
             }
@@ -283,6 +408,7 @@ struct DictationRailView: View {
         .buttonStyle(.plain)
         .pointerCursor()
         .accessibilityAddTraits(selected ? .isSelected : [])
+        .id(row)
     }
 }
 

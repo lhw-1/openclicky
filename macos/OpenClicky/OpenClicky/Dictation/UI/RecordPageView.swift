@@ -89,7 +89,7 @@ struct RecordPageView: View {
             Text(unavailableReason?.lowercased() ?? engineSentence)
                 .font(Paper.body(13)).foregroundStyle(unavailableReason == nil ? Paper.ink : Paper.danger)
                 .lineLimit(1)
-            Button("change engine") { model.section = .settings; model.settingsPage = .voice }
+            Button("change engine") { model.open(settingsPage: .voice) }
                 .buttonStyle(.plain).font(Paper.body(13)).foregroundStyle(Paper.accentFill).pointerCursor()
         }
     }

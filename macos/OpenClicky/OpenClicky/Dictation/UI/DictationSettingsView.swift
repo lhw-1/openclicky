@@ -2,8 +2,9 @@
 //  DictationSettingsView.swift
 //  OpenClicky
 //
-//  Settings: its own 240 pt rail in place of the main one ("‹ openclicky" back, search, six
-//  pages, the version at the foot) and one page at a time. Every setting is a `SettingsItem`
+//  Settings' main area: one page at a time, or search results across every page. The pages and
+//  the "search settings" field live in the window's one sidebar (`DictationRailView`), in its
+//  "settings" group; the search text is on `DictationWindowModel`. Every setting is a `SettingsItem`
 //  in `SettingsCatalog` — title, copy, page, section and the control itself — so a page and a
 //  search result draw the very same row, and a control found by search can be changed right
 //  there. The pages' items live in the SettingsPage*.swift files beside this one.
@@ -21,8 +22,6 @@ struct DictationSettingsView: View {
     // re-filtered when they change.
     @ObservedObject private var fnKeyState = FnKeyState.shared
     @ObservedObject private var authSession = OpenClickyAuthSession.shared
-    @State private var searchText = ""
-    @FocusState private var isSearchFieldFocused: Bool
 
     init(model: DictationWindowModel, companionManager: CompanionManager) {
         self.model = model
@@ -34,125 +33,21 @@ struct DictationSettingsView: View {
         SettingsCatalog(settings: settings, companionManager: companionManager, windowModel: model)
     }
 
-    private var trimmedSearchText: String {
-        searchText.trimmingCharacters(in: .whitespacesAndNewlines)
-    }
-
-    private var searchResults: [SettingsItem] {
-        guard !trimmedSearchText.isEmpty else { return [] }
-        return catalog.allItems.filter { $0.isRelevant() && $0.matches(trimmedSearchText) }
-    }
-
     var body: some View {
-        let results = searchResults
-        HStack(spacing: 0) {
-            settingsRail(results: results)
-                .frame(width: Paper.Metric.settingsRail)
-            Rectangle().fill(Paper.hairline).frame(width: 1)
-            Group {
-                if trimmedSearchText.isEmpty {
-                    SettingsPageView(page: model.settingsPage, catalog: catalog)
-                        .id(model.settingsPage)
-                } else {
-                    SettingsSearchResultsView(query: trimmedSearchText, results: results, onSuggestion: { searchText = $0 })
-                }
+        let query = model.trimmedSettingsSearchText
+        Group {
+            if query.isEmpty {
+                SettingsPageView(page: model.settingsPage, catalog: catalog)
+                    .id(model.settingsPage)
+            } else {
+                SettingsSearchResultsView(
+                    query: query,
+                    results: catalog.allItems.filter { $0.isRelevant() && $0.matches(query) },
+                    onSuggestion: { model.settingsSearchText = $0 })
             }
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
         .onAppear { fnKeyState.refresh() }
-    }
-
-    // MARK: rail
-
-    private func settingsRail(results: [SettingsItem]) -> some View {
-        VStack(alignment: .leading, spacing: 0) {
-            Button(action: { model.section = .record }) {
-                HStack(spacing: 6) {
-                    Image(systemName: "chevron.left").font(.system(size: 12, weight: .semibold))
-                    Text("openclicky").font(Paper.body(14, weight: .medium))
-                }
-                .foregroundStyle(Paper.ink)
-                .padding(.horizontal, 10)
-                .frame(height: Paper.Metric.railItemHeight)
-                .contentShape(Rectangle())
-            }
-            .buttonStyle(.plain).pointerCursor()
-            .help("back to openclicky")
-            .padding(.top, 44)
-            .padding(.horizontal, 10)
-
-            searchField(resultCount: results.count)
-                .padding(.horizontal, 12)
-                .padding(.top, 10)
-                .padding(.bottom, 12)
-
-            VStack(alignment: .leading, spacing: 2) {
-                ForEach(DictationSettingsPage.allCases) { page in
-                    railButton(page, hitCount: trimmedSearchText.isEmpty ? nil : results.filter { $0.page == page }.count)
-                }
-            }
-            .padding(.horizontal, 10)
-
-            Spacer()
-            Rectangle().fill(Paper.hairline).frame(height: 1).padding(.horizontal, 12)
-            Text(AppVersion.displayString)
-                .font(Paper.mono(11)).foregroundStyle(Paper.inkTertiary)
-                .textSelection(.enabled)
-                .padding(.horizontal, 20).padding(.vertical, 14)
-        }
-        .frame(maxHeight: .infinity, alignment: .top)
-        .background(Paper.rail)
-    }
-
-    private func searchField(resultCount: Int) -> some View {
-        HStack(spacing: 6) {
-            Image(systemName: "magnifyingglass").font(.system(size: 11)).foregroundStyle(Paper.inkTertiary)
-            TextField("search settings", text: $searchText)
-                .textFieldStyle(.plain)
-                .font(Paper.body(13))
-                .foregroundStyle(Paper.ink)
-                .focused($isSearchFieldFocused)
-                .onExitCommand { searchText = "" }
-            if !trimmedSearchText.isEmpty {
-                Button(action: { searchText = "" }) {
-                    Text("\(resultCount) \(resultCount == 1 ? "result" : "results") · esc")
-                        .font(Paper.micro).foregroundStyle(Paper.inkTertiary)
-                }
-                .buttonStyle(.plain).pointerCursor()
-                .help("clear the search")
-            }
-        }
-        .padding(.horizontal, 10)
-        .frame(height: Paper.Metric.fieldHeight)
-        .background(RoundedRectangle(cornerRadius: Paper.Metric.controlRadius, style: .continuous).fill(Paper.cardRaised))
-        .overlay(RoundedRectangle(cornerRadius: Paper.Metric.controlRadius, style: .continuous)
-            .strokeBorder(isSearchFieldFocused ? Paper.accentFill : Paper.hairline, lineWidth: isSearchFieldFocused ? 2 : 1))
-    }
-
-    /// One page in the rail. While searching it carries its hit count, and a page with no hits is dimmed.
-    private func railButton(_ page: DictationSettingsPage, hitCount: Int?) -> some View {
-        let isSelected = trimmedSearchText.isEmpty && model.settingsPage == page
-        let isDimmed = (hitCount ?? 1) == 0
-        return Button(action: {
-            searchText = ""
-            model.settingsPage = page
-        }) {
-            HStack(spacing: 10) {
-                Image(systemName: page.symbol).font(.system(size: 12, weight: .medium)).frame(width: 16)
-                Text(page.title).font(Paper.body(14, weight: isSelected ? .semibold : .regular))
-                Spacer()
-                if let hitCount, hitCount > 0 {
-                    Text("\(hitCount)").font(Paper.mono(11)).foregroundStyle(Paper.inkSecondary)
-                }
-            }
-            .foregroundStyle(isDimmed ? Paper.inkTertiary.opacity(0.7) : (isSelected ? Paper.ink : Paper.inkSecondary))
-            .padding(.horizontal, 10)
-            .frame(height: Paper.Metric.railItemHeight)
-            .background(RoundedRectangle(cornerRadius: Paper.Metric.railItemRadius, style: .continuous).fill(isSelected ? Paper.selection : Color.clear))
-            .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain).pointerCursor()
-        .accessibilityLabel(hitCount.map { "\(page.title), \($0) results" } ?? page.title)
     }
 }
 
