@@ -363,6 +363,21 @@ struct DictationTakeControllerTests {
         h.capture.deliverPartial(partial)
     }
 
+    @Test @MainActor func whenThePersonPausesTheLastWordIsTypedBeforeRelease() async throws {
+        let h = try Harness()
+        h.controller.liveTypingTiming.pauseSeconds = 0.05
+        h.controller.handle(.dictationPressed)
+        await h.waitUntil { h.controller.state == .listening }
+        speak("this is a test message", in: h)
+        speak("this is a test message", in: h)
+        // These tests hold back two words: "test message" waits while the person is still talking.
+        #expect(h.pasted.typed.joined() == "This is a")
+        // No new partial: after the pause the held-back words go in while fn is still held.
+        await h.waitUntil { h.pasted.typed.joined() == "This is a test message" }
+        #expect(h.pasted.typed.joined() == "This is a test message")
+        #expect(h.controller.state == .listening)
+    }
+
     @Test @MainActor func withoutPolishTheSettledWordsAreTypedWhileSpeakingAndTheRestAtRelease() async throws {
         let h = try Harness()
         h.controller.handle(.dictationPressed)

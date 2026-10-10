@@ -81,6 +81,8 @@ final class DictationTakeController: ObservableObject {
     /// How cautiously live typing commits words. The defaults are the live values; tests that
     /// exercise the algorithm pin their own.
     var liveTypingTiming = StableWordCommitter.Timing()
+    /// Waits out `liveTypingTiming.pauseSeconds` after each partial; a new partial restarts it.
+    private var liveTypingPauseTask: Task<Void, Never>?
 
     enum TakeMode { case dictate, edit }
 
@@ -708,9 +710,29 @@ final class DictationTakeController: ObservableObject {
             }
         }
         liveTyping = session
+        if session.stoppedReason == nil, takeIsStillListening { scheduleLiveTypingPauseCheck(after: partial, takeID: thisTakeID) }
         // The words are already appearing in the app: the orb shows only the listening pill. Once
         // typing has stopped (focus moved, a held key), the untyped words show so nothing is lost.
         orb.liveTranscript = session.stoppedReason == nil ? "" : untypedWords(of: partial, session: session).joined(separator: " ")
+    }
+
+    /// When the person stops talking no new partial comes, so the last word would wait for the
+    /// key's release. After a pause with the partial unchanged, it is typed too.
+    private func scheduleLiveTypingPauseCheck(after partial: String, takeID thisTakeID: UUID) {
+        liveTypingPauseTask?.cancel()
+        let pauseNanoseconds = UInt64(max(0, liveTypingTiming.pauseSeconds) * 1_000_000_000)
+        liveTypingPauseTask = Task { @MainActor [weak self] in
+            try? await Task.sleep(nanoseconds: pauseNanoseconds)
+            guard !Task.isCancelled, let self, self.takeID == thisTakeID,
+                  self.state == .starting || self.state == .listening,
+                  var session = self.liveTyping, session.stoppedReason == nil, session.latestPartial == partial else { return }
+            _ = session.committer.observe(partial: partial, at: self.host.now(), personPaused: true)
+            let pendingWords = Array(session.committer.committedWords.dropFirst(session.typedRawWords.count))
+            if !pendingWords.isEmpty {
+                self.typeLivePhrase(pendingWords, session: &session, takeID: thisTakeID)
+            }
+            self.liveTyping = session
+        }
     }
 
     private func untypedWords(of transcript: String, session: LiveTypingSession) -> [String] {

@@ -256,7 +256,7 @@ struct LiveTypingDecisionTests {
 
 extension StableWordCommitter.Timing {
     /// The values these algorithm tests were written against (two held-back words, 0.6 s).
-    static let algorithmTests = StableWordCommitter.Timing(volatileTailWordCount: 2, requiredStableSeconds: 0.6)
+    static let algorithmTests = StableWordCommitter.Timing(volatileTailWordCount: 2, requiredStableSeconds: 0.6, pauseSeconds: 60)
 }
 
 struct LiveTypingDefaultTimingTests {
@@ -267,5 +267,24 @@ struct LiveTypingDefaultTimingTests {
         _ = committer.observe(partial: "hello there friend", at: start)
         #expect(committer.observe(partial: "hello there friend", at: start.addingTimeInterval(0.2)).isEmpty)
         #expect(committer.observe(partial: "hello there friend", at: start.addingTimeInterval(0.35)) == ["hello", "there"])
+    }
+}
+
+struct LiveTypingPauseTests {
+    private let start = Date(timeIntervalSince1970: 1_000)
+
+    @Test func afterAPauseTheLastWordIsReleasedToo() {
+        var committer = StableWordCommitter()
+        _ = committer.observe(partial: "this is a test message", at: start)
+        #expect(committer.observe(partial: "this is a test message", at: start.addingTimeInterval(0.4)) == ["this", "is", "a", "test"])
+        // No new words for a while: the person has paused, so "message" is settled.
+        #expect(committer.observe(partial: "this is a test message", at: start.addingTimeInterval(1.0), personPaused: true) == ["message"])
+    }
+
+    @Test func aPauseStillWaitsForAWordThatJustChanged() {
+        var committer = StableWordCommitter()
+        _ = committer.observe(partial: "this is a test mess", at: start)
+        _ = committer.observe(partial: "this is a test message", at: start.addingTimeInterval(0.9))
+        #expect(committer.observe(partial: "this is a test message", at: start.addingTimeInterval(1.0), personPaused: true).isEmpty)
     }
 }

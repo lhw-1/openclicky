@@ -48,6 +48,9 @@ struct StableWordCommitter {
     struct Timing: Equatable {
         var volatileTailWordCount: Int = StableWordCommitter.volatileTailWordCount
         var requiredStableSeconds: TimeInterval = StableWordCommitter.requiredStableSeconds
+        /// With no new partial for this long the person has paused, and the held-back last word is
+        /// typed too (without it, "message" in "this is a test message" waited for the key's release).
+        var pauseSeconds: TimeInterval = 0.7
     }
     private let timing: Timing
 
@@ -58,7 +61,9 @@ struct StableWordCommitter {
     }
 
     /// Feeds one partial transcript; returns the words that settled with it (possibly none).
-    mutating func observe(partial: String, at now: Date) -> [String] {
+    /// `personPaused`: no new partial arrived for `Timing.pauseSeconds`, so the last words are not
+    /// held back as still-being-heard (they still need to have been stable for the usual time).
+    mutating func observe(partial: String, at now: Date, personPaused: Bool = false) -> [String] {
         let partialWords = Self.words(of: partial)
         let alignment = TranscriptAlignment.align(finalWords: partialWords, committedWords: committedWords)
         // The partial no longer lines up with what was committed (the engine rewrote typed words):
@@ -79,7 +84,7 @@ struct StableWordCommitter {
 
         if committedWords.isEmpty, couldStillBeASpokenShortcut(partialWords) { return [] }
 
-        let positionsPastTheTail = max(0, uncommittedWords.count - timing.volatileTailWordCount)
+        let positionsPastTheTail = max(0, uncommittedWords.count - (personPaused ? 0 : timing.volatileTailWordCount))
         var settledCount = 0
         while settledCount < positionsPastTheTail,
               now.timeIntervalSince(trackedWords[settledCount].unchangedSince) >= timing.requiredStableSeconds {
