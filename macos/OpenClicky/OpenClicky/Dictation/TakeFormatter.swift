@@ -39,7 +39,9 @@ protocol TakePolisher: Sendable {
 enum TakeFormatter {
 
     /// Long enough for sarvam-105b on a slow afternoon; past this the local result is pasted.
-    static let modelTimeoutSeconds: TimeInterval = 14
+    /// The clean-up must not hold a take up: Sarvam answers in 0.3–1 s, so after 3 s the words go
+    /// in as they are (a slow connection never makes the person wait).
+    static let modelTimeoutSeconds: TimeInterval = 3
 
     /// Only the unmistakable ones: "ah", "er", "eh" and "mm" are words in romanised Indian languages.
     static let fillers: Set<String> = ["um", "umm", "uh", "uhh", "erm", "hmm"]
@@ -137,7 +139,9 @@ enum TakeFormatter {
     static func format(_ raw: String, context: TakeFormattingContext, polisher: (any TakePolisher)?, wantsModel: Bool) async -> FormattedTake {
         var local = formatLocally(raw, context: context)
         guard local.expandedShortcut == nil, !local.text.isEmpty, modelPassWanted(context: context, wantsModel: wantsModel) else { return local }
-        guard let polisher else {
+        // Offline: no clean-up to wait for, the words go in at once.
+        guard let polisher, NetworkReachability.shared.isOnline else {
+            if polisher != nil { AppLog.append("take formatter: offline, words go in without the ai clean-up") }
             local.formattingDegraded = true
             return local
         }

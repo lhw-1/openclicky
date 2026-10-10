@@ -78,6 +78,9 @@ enum DictationEngineResolver {
 
 @MainActor
 final class DictationTakeController: ObservableObject {
+    /// How cautiously live typing commits words. The defaults are the live values; tests that
+    /// exercise the algorithm pin their own.
+    var liveTypingTiming = StableWordCommitter.Timing()
 
     enum TakeMode { case dictate, edit }
 
@@ -675,7 +678,7 @@ final class DictationTakeController: ObservableObject {
         let dictionaryAliases = space.dictionary.flatMap { [$0.written] + $0.heardAs }.map(splitIntoNormalizedWords)
         let shortcutTriggers = space.shortcuts.map { splitIntoNormalizedWords($0.trigger) }
         return LiveTypingSession(
-            committer: StableWordCommitter(protectedPhrases: dictionaryAliases, takeStartTriggers: shortcutTriggers),
+            committer: StableWordCommitter(protectedPhrases: dictionaryAliases, takeStartTriggers: shortcutTriggers, timing: liveTypingTiming),
             focusedTargetAtPress: focusedTarget, formattingContext: context)
     }
 
@@ -698,7 +701,9 @@ final class DictationTakeController: ObservableObject {
             }
         }
         liveTyping = session
-        orb.liveTranscript = untypedWords(of: partial, session: session).joined(separator: " ")
+        // The words are already appearing in the app: the orb shows only the listening pill. Once
+        // typing has stopped (focus moved, a held key), the untyped words show so nothing is lost.
+        orb.liveTranscript = session.stoppedReason == nil ? "" : untypedWords(of: partial, session: session).joined(separator: " ")
     }
 
     private func untypedWords(of transcript: String, session: LiveTypingSession) -> [String] {

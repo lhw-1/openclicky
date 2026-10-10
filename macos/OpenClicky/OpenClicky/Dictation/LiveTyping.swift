@@ -21,10 +21,11 @@ import Foundation
 /// later revises one, the commit stands and new words carry on after it.
 struct StableWordCommitter {
     /// The last words of a partial are still being heard; they never commit from a partial.
-    static let volatileTailWordCount = 2
+    static let volatileTailWordCount = 1
     /// How long a word must stay the same at its position before it is typed. Long enough for the
-    /// engines' usual revisions ("whether" → "weather") to land, short enough to feel live.
-    static let requiredStableSeconds: TimeInterval = 0.6
+    /// engines' usual revisions ("whether" → "weather") to land, short enough to feel live (0.6 s
+    /// felt laggy next to the orb on 2026-10-11).
+    static let requiredStableSeconds: TimeInterval = 0.3
 
     /// Word sequences (normalised) that must not be split across two typed phrases, because the
     /// formatting that rewrites them (a multi-word dictionary alias) only sees one phrase at a time.
@@ -43,7 +44,15 @@ struct StableWordCommitter {
     /// The words after the committed ones, in partial order, with when each last changed.
     private var trackedWords: [TrackedWord] = []
 
-    init(protectedPhrases: [[String]] = [], takeStartTriggers: [[String]] = []) {
+    /// The live values (`volatileTailWordCount`, `requiredStableSeconds`); tests pass their own.
+    struct Timing: Equatable {
+        var volatileTailWordCount: Int = StableWordCommitter.volatileTailWordCount
+        var requiredStableSeconds: TimeInterval = StableWordCommitter.requiredStableSeconds
+    }
+    private let timing: Timing
+
+    init(protectedPhrases: [[String]] = [], takeStartTriggers: [[String]] = [], timing: Timing = Timing()) {
+        self.timing = timing
         self.protectedPhrases = protectedPhrases.filter { $0.count > 1 }
         self.takeStartTriggers = takeStartTriggers.filter { !$0.isEmpty }
     }
@@ -70,10 +79,10 @@ struct StableWordCommitter {
 
         if committedWords.isEmpty, couldStillBeASpokenShortcut(partialWords) { return [] }
 
-        let positionsPastTheTail = max(0, uncommittedWords.count - Self.volatileTailWordCount)
+        let positionsPastTheTail = max(0, uncommittedWords.count - timing.volatileTailWordCount)
         var settledCount = 0
         while settledCount < positionsPastTheTail,
-              now.timeIntervalSince(trackedWords[settledCount].unchangedSince) >= Self.requiredStableSeconds {
+              now.timeIntervalSince(trackedWords[settledCount].unchangedSince) >= timing.requiredStableSeconds {
             settledCount += 1
         }
         settledCount = shrinkSoNoProtectedPhraseIsSplit(settledCount: settledCount, uncommittedWords: uncommittedWords)

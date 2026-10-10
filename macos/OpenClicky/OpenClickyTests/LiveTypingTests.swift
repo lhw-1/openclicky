@@ -17,14 +17,14 @@ struct StableWordCommitterTests {
     private func at(_ seconds: Double) -> Date { start.addingTimeInterval(seconds) }
 
     @Test func nothingCommitsBeforeTheWordsHaveBeenStableLongEnough() {
-        var committer = StableWordCommitter()
+        var committer = StableWordCommitter(timing: .algorithmTests)
         #expect(committer.observe(partial: "hello there my friend", at: at(0)).isEmpty)
         #expect(committer.observe(partial: "hello there my friend", at: at(0.3)).isEmpty)
         #expect(committer.committedWords.isEmpty)
     }
 
     @Test func onlyWordsOlderThanTheVolatileTailCommit() {
-        var committer = StableWordCommitter()
+        var committer = StableWordCommitter(timing: .algorithmTests)
         _ = committer.observe(partial: "hello there my friend", at: at(0))
         let committed = committer.observe(partial: "hello there my friend", at: at(0.7))
         // The last two words of the partial can still be revised; they wait.
@@ -34,7 +34,7 @@ struct StableWordCommitterTests {
     }
 
     @Test func aRevisedWordRestartsItsClock() {
-        var committer = StableWordCommitter()
+        var committer = StableWordCommitter(timing: .algorithmTests)
         _ = committer.observe(partial: "the whether is nice today", at: at(0))
         // "whether" is revised to "weather" at 0.5 s: only "the" has been stable for 0.6 s at 0.7 s.
         _ = committer.observe(partial: "the weather is nice today", at: at(0.5))
@@ -43,7 +43,7 @@ struct StableWordCommitterTests {
     }
 
     @Test func committedWordsAreNeverRetracted() {
-        var committer = StableWordCommitter()
+        var committer = StableWordCommitter(timing: .algorithmTests)
         _ = committer.observe(partial: "send it to bob now please", at: at(0))
         _ = committer.observe(partial: "send it to bob now please", at: at(0.7))
         #expect(committer.committedWords == ["send", "it", "to", "bob"])
@@ -58,7 +58,7 @@ struct StableWordCommitterTests {
     }
 
     @Test func aShorterPartialDoesNotLoseCommittedWords() {
-        var committer = StableWordCommitter()
+        var committer = StableWordCommitter(timing: .algorithmTests)
         _ = committer.observe(partial: "one two three four", at: at(0))
         _ = committer.observe(partial: "one two three four", at: at(0.7))
         #expect(committer.observe(partial: "one", at: at(0.9)).isEmpty)
@@ -66,19 +66,19 @@ struct StableWordCommitterTests {
     }
 
     @Test func aMultiWordDictionaryAliasIsNotSplitAcrossPhrases() {
-        var committer = StableWordCommitter(protectedPhrases: [["aditya", "shatriya"]])
+        var committer = StableWordCommitter(protectedPhrases: [["aditya", "shatriya"]], timing: .algorithmTests)
         _ = committer.observe(partial: "ask aditya shatriya about it", at: at(0))
         // "ask aditya shatriya" are stable and past the tail, so all three commit together.
         #expect(committer.observe(partial: "ask aditya shatriya about it", at: at(0.7)) == ["ask", "aditya", "shatriya"])
 
-        var holding = StableWordCommitter(protectedPhrases: [["aditya", "shatriya"]])
+        var holding = StableWordCommitter(protectedPhrases: [["aditya", "shatriya"]], timing: .algorithmTests)
         _ = holding.observe(partial: "ask aditya shatriya now", at: at(0))
         // Only "ask aditya" is past the tail; "aditya" might begin the alias, so it waits.
         #expect(holding.observe(partial: "ask aditya shatriya now", at: at(0.7)) == ["ask"])
     }
 
     @Test func aTakeThatMightStillBeASpokenShortcutWaits() {
-        var committer = StableWordCommitter(takeStartTriggers: [["my", "sign", "off", "please"]])
+        var committer = StableWordCommitter(takeStartTriggers: [["my", "sign", "off", "please"]], timing: .algorithmTests)
         _ = committer.observe(partial: "my sign off", at: at(0))
         #expect(committer.observe(partial: "my sign off", at: at(0.7)).isEmpty)
         #expect(committer.observe(partial: "my sign off please", at: at(0.75)).isEmpty)
@@ -250,5 +250,22 @@ struct LiveTypingDecisionTests {
         #expect(!LiveTypingModifierGuard.allowsTyping(heldFlags: .maskCommand, dictationKey: .fn))
         #expect(!LiveTypingModifierGuard.allowsTyping(heldFlags: .maskShift, dictationKey: .rightControl))
         #expect(!LiveTypingModifierGuard.allowsTyping(heldFlags: .maskSecondaryFn, dictationKey: .rightCommand))
+    }
+}
+
+
+extension StableWordCommitter.Timing {
+    /// The values these algorithm tests were written against (two held-back words, 0.6 s).
+    static let algorithmTests = StableWordCommitter.Timing(volatileTailWordCount: 2, requiredStableSeconds: 0.6)
+}
+
+struct LiveTypingDefaultTimingTests {
+    private let start = Date(timeIntervalSince1970: 1_000)
+
+    @Test func theLiveTimingHoldsBackOneWordForAThirdOfASecond() {
+        var committer = StableWordCommitter()
+        _ = committer.observe(partial: "hello there friend", at: start)
+        #expect(committer.observe(partial: "hello there friend", at: start.addingTimeInterval(0.2)).isEmpty)
+        #expect(committer.observe(partial: "hello there friend", at: start.addingTimeInterval(0.35)) == ["hello", "there"])
     }
 }

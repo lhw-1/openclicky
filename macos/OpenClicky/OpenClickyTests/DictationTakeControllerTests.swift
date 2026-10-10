@@ -134,6 +134,7 @@ private struct Harness {
         let spaceStore = DictationSpaceStore(directoryURL: FileManager.default.temporaryDirectory.appendingPathComponent("space-\(UUID().uuidString)"))
         let audioStore = TakeAudioStore(directoryURL: FileManager.default.temporaryDirectory.appendingPathComponent("audio-\(UUID().uuidString)"))
         controller = DictationTakeController(settings: settings, spaceStore: spaceStore, takeStore: store, orb: orb, capture: capture, host: host, audioStore: audioStore)
+        controller.liveTypingTiming = .algorithmTests
     }
 
     static let notesProcessID: pid_t = 4242
@@ -341,7 +342,7 @@ struct DictationTakeControllerTests {
     /// Delivers a partial now and again after the stability threshold, so its settled words commit.
     @MainActor private func speak(_ partial: String, in h: Harness) {
         h.capture.deliverPartial(partial)
-        h.pasted.now = h.pasted.now.addingTimeInterval(StableWordCommitter.requiredStableSeconds + 0.1)
+        h.pasted.now = h.pasted.now.addingTimeInterval(h.controller.liveTypingTiming.requiredStableSeconds + 0.1)
         h.capture.deliverPartial(partial)
     }
 
@@ -351,8 +352,8 @@ struct DictationTakeControllerTests {
         await h.waitUntil { h.controller.state == .listening }
         speak("hello there my friend", in: h)
         #expect(h.pasted.typed == ["Hello there"])
-        // The orb shows only what has not been typed yet.
-        #expect(h.orb.liveTranscript == "my friend")
+        // The words are appearing in the app, so the orb shows only the listening pill.
+        #expect(h.orb.liveTranscript == "")
         speak("hello there my friend how are you", in: h)
         // "my friend" had already settled and is now clear of the tail; "how" settles a moment later.
         #expect(h.pasted.typed == ["Hello there", " my friend", " how"])
