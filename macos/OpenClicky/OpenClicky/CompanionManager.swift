@@ -1189,7 +1189,11 @@ final class CompanionManager: ObservableObject {
     /// fn + control tapped twice: always-on listening on or off (Realtime only).
     func toggleHandsFree() {
         guard usesRealtimeVoice else {
-            streamCursorCaption("hands-free needs realtime voice — turn it on in settings", holdSeconds: 6)
+            // Say the real reason: a free account cannot use realtime at all, whatever the switch says.
+            let reason = AccountCapabilities.current().usesRealtime
+                ? "hands-free needs fast voice — turn it on in the hud's settings"
+                : "hands-free needs your own openai key — settings, account"
+            streamCursorCaption(reason, holdSeconds: 6)
             return
         }
         setAlwaysListening(!isAlwaysListening)

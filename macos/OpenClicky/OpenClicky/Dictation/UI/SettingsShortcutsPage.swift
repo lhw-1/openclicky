@@ -68,9 +68,9 @@ extension SettingsCatalog {
                 })),
             SettingsItem(
                 id: "shortcuts.handsFree", page: .shortcuts, section: "the companion",
-                title: "hands-free", detail: "tap \(key) + ⌃ twice for always-on listening with realtime voice. same keys to stop.",
+                title: "hands-free", detail: "tap \(key) + ⌃ twice for always-on listening. same keys to stop. needs your own openai key.",
                 keywords: ["always on", "realtime", "listening", "hands free"],
-                view: AnyView(SettingsRow(title: "hands-free", detail: "tap \(key) + ⌃ twice for always-on listening with realtime voice. same keys to stop.") {
+                view: AnyView(SettingsRow(title: "hands-free", detail: "tap \(key) + ⌃ twice for always-on listening. same keys to stop. needs your own openai key.") {
                     Keycap(text: "\(key) + ⌃ ×2")
                 })),
             SettingsItem(

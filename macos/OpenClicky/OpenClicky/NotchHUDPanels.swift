@@ -1178,14 +1178,21 @@ struct NotchSettingsView: View {
                 .padding(.top, 6)
             VStack(spacing: 0) {
                 languageRow
-                moreToggleRow(title: "realtime voice", detail: "speech-to-speech over openai realtime (fast)", isOn: Binding(
-                    get: { companionManager.isRealtimeVoiceEnabled },
-                    set: { companionManager.setRealtimeVoiceEnabled($0) }
-                ))
-                moreToggleRow(title: "always listening", detail: "hands-free with barge-in (realtime only)", isOn: Binding(
-                    get: { companionManager.isAlwaysListening },
-                    set: { companionManager.setAlwaysListening($0) }
-                ))
+                // Realtime voice and hands-free run on OpenAI Realtime, which only an own OpenAI key
+                // can use. A free account would see switches that do nothing (and a "turn it on"
+                // note while it already looked on), so it gets one plain line instead.
+                if AccountCapabilities.current().usesRealtime {
+                    moreToggleRow(title: "fast voice", detail: "talks back instantly, over openai realtime", isOn: Binding(
+                        get: { companionManager.isRealtimeVoiceEnabled },
+                        set: { companionManager.setRealtimeVoiceEnabled($0) }
+                    ))
+                    moreToggleRow(title: "always listening", detail: "hands-free: just talk, no keys (needs fast voice)", isOn: Binding(
+                        get: { companionManager.isAlwaysListening },
+                        set: { companionManager.setAlwaysListening($0) }
+                    ))
+                } else {
+                    fastVoiceNeedsOwnKeyRow
+                }
                 moreToggleRow(title: "dock the pointer in the notch", detail: "the pointer lives in the hud", isOn: Binding(
                     get: { companionManager.isCursorDocked },
                     set: { companionManager.setCursorDocked($0) }
@@ -1249,6 +1256,27 @@ struct NotchSettingsView: View {
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 8)
+    }
+
+    /// What a free account sees in place of the fast-voice and always-listening switches.
+    private var fastVoiceNeedsOwnKeyRow: some View {
+        HStack {
+            VStack(alignment: .leading, spacing: 1) {
+                Text("fast voice and hands-free").font(.system(size: 13, weight: .semibold)).foregroundColor(DS.HUD.text)
+                Text("need your own openai key. your free account uses the standard voice.").font(.system(size: 11)).foregroundColor(DS.HUD.text3)
+            }
+            Spacer()
+            Button("use my own key") { companionManager.showDictationWindow(settingsPage: .account) }
+                .buttonStyle(.plain)
+                .font(.system(size: 12, weight: .semibold))
+                .foregroundColor(DS.HUD.text)
+                .padding(.horizontal, 10).padding(.vertical, 5)
+                .background(Capsule().fill(DS.HUD.surfaceRaisedSoft))
+                .pointerCursor()
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 8)
+        .overlay(alignment: .top) { Rectangle().fill(DS.HUD.line).frame(height: 1) }
     }
 
     private func moreToggleRow(title: String, detail: String, isOn: Binding<Bool>) -> some View {
