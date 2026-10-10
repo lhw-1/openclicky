@@ -156,15 +156,25 @@ struct OrbLivePreviewPanel: View {
                         .clipShape(UnevenRoundedRectangle(topLeadingRadius: 10, topTrailingRadius: 10))
                     }
                 if settings.orbVisible {
-                    OrbRootView(model: previewModel, settings: settings)
-                        .scaleEffect(0.7, anchor: .bottom)
-                        .allowsHitTesting(false)
+                    // scaleEffect only shrinks the drawing, not the space a view claims: the orb and its
+                    // 380 pt transcript box would still ask for full width and push the panel past its
+                    // column. So the orb is laid out at the size it needs and then scaled down to
+                    // exactly the stage's size.
+                    GeometryReader { stage in
+                        let previewScale = min(0.7, stage.size.width / (OrbMetrics.boxWidth + OrbMetrics.padding * 2))
+                        OrbRootView(model: previewModel, settings: settings)
+                            .frame(width: stage.size.width / previewScale, height: stage.size.height / previewScale, alignment: .bottom)
+                            .scaleEffect(previewScale, anchor: .bottom)
+                            .frame(width: stage.size.width, height: stage.size.height, alignment: .bottom)
+                            .allowsHitTesting(false)
+                    }
                 } else {
                     Text("the orb is hidden — \(settings.dictationKey.keycapLabel) still works.")
                         .font(Paper.caption).foregroundStyle(Color.black.opacity(0.6))
                         .padding(.bottom, 16)
                 }
             }
+            .frame(maxWidth: .infinity)
             .frame(height: 220)
             .clipShape(RoundedRectangle(cornerRadius: 10))
             .accessibilityElement(children: .ignore)

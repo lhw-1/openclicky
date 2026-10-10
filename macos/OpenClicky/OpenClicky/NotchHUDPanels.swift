@@ -1047,7 +1047,7 @@ struct NotchSettingsView: View {
                     summaryCard(title: "DICTATION", rows: [
                         ("hears you", NotchVoiceDestination.listenerName(for: settings.engine)),
                         ("speech-to-text", NotchVoiceDestination.speechToTextName(for: settings.engine)),
-                        ("polish model", polishModelDescription),
+                        ("ai clean-up", polishModelDescription),
                     ]) { companionManager.showDictationWindow(settingsPage: .voice) }
                     summaryCard(title: "BACKEND & ACCOUNT", rows: [
                         ("host", OpenClickyConfiguration.backendHostDescription),
@@ -1095,8 +1095,8 @@ struct NotchSettingsView: View {
     private var polishModelDescription: String {
         guard DictationEngineResolver.wantsModelPolish(settings: settings) else { return "off" }
         let sarvamKey = OpenClickyConfiguration.settings.sarvamKey?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-        if !sarvamKey.isEmpty { return "sarvam-105b" }
-        if OpenClickyConfiguration.isConfigured { return "openclicky" }
+        if !sarvamKey.isEmpty { return "on · sarvam" }
+        if OpenClickyConfiguration.isConfigured { return "on · openclicky" }
         return "none yet"
     }
 

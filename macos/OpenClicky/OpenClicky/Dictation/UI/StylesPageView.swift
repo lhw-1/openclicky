@@ -147,34 +147,22 @@ struct StylesPageView: View {
 
     // MARK: polish
 
-    /// The two polish switches (moved here from settings → voice): one for the engines that send
-    /// audio out anyway, one for takes heard on this Mac, whose words would then leave it.
+    /// One switch for the model cleanup, in plain words. Underneath there are two settings (takes
+    /// heard by an online engine, and takes heard on this Mac); the switch sets both, and shows the
+    /// one that applies to the engine in use.
     private var polishCard: some View {
         let hasModel = DictationEngineResolver.makePolisher() != nil
-        let needsModelNote = hasModel ? "" : " needs a sarvam key or an account (settings → voice, account)."
+        let needsModelNote = hasModel ? "" : " needs a sarvam key or a free openclicky account."
+        let cleanupIsOn = Binding<Bool>(
+            get: { settings.engine == .offline ? settings.polishOfflineTakes : settings.polishWithModel },
+            set: { isOn in
+                settings.polishWithModel = isOn
+                settings.choosePolishOfflineTakes(isOn)
+            })
         return PaperCard {
-            VStack(spacing: 0) {
-                PaperRow(title: "polish with a model", detail: "a model applies punctuation, numbers and the rules below. off: simple local rules only." + needsModelNote) {
-                    PaperToggle(isOn: $settings.polishWithModel)
-                }
-                PaperDivider()
-                HStack(alignment: .center, spacing: 16) {
-                    VStack(alignment: .leading, spacing: 2) {
-                        HStack(spacing: 6) {
-                            Text("also polish takes heard on this mac").font(Paper.rowTitle).foregroundStyle(Paper.ink)
-                            Text("sends text out")
-                                .font(Paper.body(11, weight: .semibold)).foregroundStyle(Paper.danger)
-                                .padding(.horizontal, 5).padding(.vertical, 1)
-                                .background(RoundedRectangle(cornerRadius: 4).fill(Paper.danger.opacity(0.13)))
-                        }
-                        Text("your audio stays here; only the words go to the model for cleanup.").font(Paper.caption).foregroundStyle(Paper.inkSecondary)
-                    }
-                    Spacer(minLength: 12)
-                    PaperToggle(isOn: Binding(get: { settings.polishOfflineTakes }, set: { settings.choosePolishOfflineTakes($0) }))
-                }
-                .padding(.horizontal, Paper.Metric.rowHorizontal)
-                .padding(.vertical, Paper.Metric.rowVertical)
-                .accessibilityElement(children: .combine)
+            PaperRow(title: "clean up my words with ai",
+                     detail: "adds punctuation and fixes numbers. your words are sent online to be tidied, so they appear when you let go. off: words type straight in as you speak." + needsModelNote) {
+                PaperToggle(isOn: cleanupIsOn)
             }
         }
     }
@@ -400,7 +388,7 @@ struct StyleDetailSheet: View {
                     PaperDivider()
                     PaperRow(title: "remove fillers", detail: "um, uh, and friends") { PaperToggle(isOn: $draft.removeFillers) }
                     PaperDivider()
-                    PaperRow(title: "polish with a model", detail: "when a sarvam key or an account is set") { PaperToggle(isOn: $draft.polishWithModel) }
+                    PaperRow(title: "clean up with ai", detail: "for this style, when “clean up my words with ai” is on") { PaperToggle(isOn: $draft.polishWithModel) }
                 }
             }
             VStack(alignment: .leading, spacing: 8) {
