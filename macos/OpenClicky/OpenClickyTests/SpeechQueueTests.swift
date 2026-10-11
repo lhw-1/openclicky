@@ -70,4 +70,65 @@ struct SpeechQueueTests {
         try await playback.value
         #expect(firstAudioCount == 0)
     }
+    // F-10: an interrupted answer must not keep buying audio nobody will hear.
+    @Test func cancellingPlaybackStopsTheRemainingFetches() async throws {
+        var fetched: [String] = []
+        let queue = SpeechQueue(
+            fetchAudio: { text in
+                try await Task.sleep(nanoseconds: 50_000_000)
+                fetched.append(text)
+                return Data(text.utf8)
+            },
+            playAudio: { _ in try await Task.sleep(nanoseconds: 300_000_000) })
+        ["p1", "p2", "p3", "p4", "p5", "p6"].forEach(queue.enqueue)
+        queue.finish()
+        let playback = Task { try await queue.run(onFirstAudio: {}) }
+        try await Task.sleep(nanoseconds: 150_000_000)
+        playback.cancel()
+        _ = try? await playback.value
+        try await Task.sleep(nanoseconds: 1_000_000_000)
+        #expect(fetched.count <= 3)
+    }
+
+    // F-11: a stop that ends the current piece normally (stopPlayback) must not move on to the next
+    // piece once the queue was cancelled.
+    @Test func aCancelledQueuePlaysNothingAfterTheCurrentPiece() async throws {
+        var played: [String] = []
+        var finishCurrentPiece: CheckedContinuation<Void, Never>?
+        let queue = SpeechQueue(
+            fetchAudio: { Data($0.utf8) },
+            playAudio: { data in
+                let pieceText = String(decoding: data, as: UTF8.self)
+                played.append(pieceText)
+                // Only the first piece waits to be stopped; a second one returns at once, so this
+                // test fails instead of hanging when the queue moves on.
+                if pieceText == "one" { await withCheckedContinuation { finishCurrentPiece = $0 } }
+            })
+        queue.enqueue("one")
+        queue.enqueue("two")
+        queue.finish()
+        let playback = Task { try await queue.run(onFirstAudio: {}) }
+        while finishCurrentPiece == nil { try await Task.sleep(nanoseconds: 5_000_000) }
+        queue.cancel()
+        finishCurrentPiece?.resume()
+        _ = try? await playback.value
+        #expect(played == ["one"])
+    }
+
+    @Test func aCancelledSpeakerNeverStartsTheVoiceOrPoints() async throws {
+        var voiceStarts = 0
+        var pointTags: [String] = []
+        let speaker = StreamingAnswerSpeaker(
+            speechQueue: SpeechQueue(fetchAudio: { Data($0.utf8) }, playAudio: { _ in }),
+            onVoiceStarts: { voiceStarts += 1 },
+            onPointTag: { pointTags.append($0) })
+        let playback = Task { try await speaker.play() }
+        speaker.cancel()
+        speaker.receive(accumulatedAnswer: "[POINT:10,20:x] that is the save button. more")
+        speaker.finish(closingSentences: [])
+        speaker.voiceFellBack()
+        _ = try? await playback.value
+        #expect(voiceStarts == 0)
+        #expect(pointTags.isEmpty)
+    }
 }

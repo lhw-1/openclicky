@@ -76,10 +76,6 @@ final class CompanionManager: ObservableObject {
     // Response text is now displayed inline on the cursor overlay via
     // streamingResponseText, so no separate response overlay manager is needed.
 
-    /// Base URL for the OpenClicky backend (the key-holding proxy). All API requests route
-    /// through this so keys never ship in the app binary. Configured in ~/.openclicky/shell.json.
-    private static var workerBaseURL: String { OpenClickyConfiguration.backendBaseURL }
-
     /// Runs the `openclicky` CLI for the agent lane (gate + Codex thread).
     private let openClickyAgentClient = OpenClickyAgentClient()
 
@@ -459,6 +455,7 @@ final class CompanionManager: ObservableObject {
             speakWithSystemVoice(AccountLimitError.notOnPlan.message)
             return
         }
+        stopActiveAnswer()
         currentResponseTask?.cancel()
         openClickyAgentClient.cancel()
         elevenLabsTTSClient.stopPlayback()
@@ -557,12 +554,14 @@ final class CompanionManager: ObservableObject {
         isOverlayVisible = true
     }
 
+    // Both read the backend URL per request: built once from it, they kept asking the old
+    // backend after shell.json changed while everything else followed the new one.
     private lazy var claudeAPI: ClaudeAPI = {
-        return ClaudeAPI(proxyURL: "\(Self.workerBaseURL)/chat", model: selectedModel)
+        return ClaudeAPI(currentProxyURL: { "\(OpenClickyConfiguration.backendBaseURL)/chat" }, model: selectedModel)
     }()
 
     private lazy var elevenLabsTTSClient: ElevenLabsTTSClient = {
-        return ElevenLabsTTSClient(proxyURL: "\(Self.workerBaseURL)/tts")
+        return ElevenLabsTTSClient(currentProxyURL: { "\(OpenClickyConfiguration.backendBaseURL)/tts" })
     }()
 
     /// Conversation history so Claude remembers prior exchanges within a session.
@@ -575,6 +574,21 @@ final class CompanionManager: ObservableObject {
     /// The currently running AI response task, if any. Cancelled when the user
     /// speaks again so a new response can begin immediately.
     private var currentResponseTask: Task<Void, Never>?
+
+    /// The ask lane's answer being spoken, kept so a new question stops it outright. Stopping only
+    /// the player ends the current piece "normally", and the queue went on to the next piece (and
+    /// kept fetching every remaining piece from /tts).
+    private var activeAnswerSpeaker: StreamingAnswerSpeaker?
+    private var activeAnswerPlayback: Task<Void, Error>?
+
+    /// Stops the spoken answer, its remaining /tts fetches, and its pointer — before the player is
+    /// stopped, so the queue cannot move on to the next piece.
+    private func stopActiveAnswer() {
+        activeAnswerSpeaker?.cancel()
+        activeAnswerPlayback?.cancel()
+        activeAnswerSpeaker = nil
+        activeAnswerPlayback = nil
+    }
 
     private var shortcutTransitionCancellable: AnyCancellable?
     private var voiceStateCancellable: AnyCancellable?
@@ -726,6 +740,7 @@ final class CompanionManager: ObservableObject {
         bindVoiceStateObservation()
         bindAudioPowerLevel()
         bindShortcutTransitions()
+        bindAskDictationOutcome()
         applyHearingForAccount()
         // A key or token changed in shell.json: the open Realtime session was minted with the old
         // one, so replace it rather than keep using it until the next relaunch.
@@ -835,6 +850,7 @@ final class CompanionManager: ObservableObject {
         overlayWindowManager.hideOverlay()
         transientHideTask?.cancel()
 
+        stopActiveAnswer()
         currentResponseTask?.cancel()
         currentResponseTask = nil
         shortcutTransitionCancellable?.cancel()
@@ -1161,6 +1177,7 @@ final class CompanionManager: ObservableObject {
             overlayWindowManager.showOverlay(onScreens: NSScreen.screens, companionManager: self)
             isOverlayVisible = true
         }
+        stopActiveAnswer()
         currentResponseTask?.cancel()
         openClickyAgentClient.cancel()
         elevenLabsTTSClient.stopPlayback()
@@ -1228,7 +1245,9 @@ final class CompanionManager: ObservableObject {
             // Don't register push-to-talk while the onboarding video is playing
             guard !showOnboardingVideo else { return }
             AppLog.append("ask: ⌃⌥ pressed, listening")
-            askHeardSomethingSinceLastPress = false
+            // A new press owns the outcome from here: whatever the last release was waiting for is over.
+            askOutcome = .listening
+            askLiveWordsShownSincePress = false
 
             // Cancel any pending transient hide so the overlay stays visible
             transientHideTask?.cancel()
@@ -1246,6 +1265,7 @@ final class CompanionManager: ObservableObject {
             NotificationCenter.default.post(name: .clickyDismissPanel, object: nil)
 
             // Cancel any in-progress response, agent run, and TTS from a previous utterance
+            stopActiveAnswer()
             currentResponseTask?.cancel()
             openClickyAgentClient.cancel()
             elevenLabsTTSClient.stopPlayback()
@@ -1254,6 +1274,9 @@ final class CompanionManager: ObservableObject {
 
             // Dismiss the onboarding prompt / caption if it's showing
             dismissCursorCaption()
+            // Something by the pointer while the key is held: an engine that uploads on release
+            // shows no words until then, and the waveform alone did not read as "listening".
+            showAskCaption("listening…", holdSeconds: 60)
     
 
             ClickyAnalytics.trackPushToTalkStarted()
@@ -1265,12 +1288,16 @@ final class CompanionManager: ObservableObject {
                     updateDraftText: { [weak self] partialTranscript in
                         // The words appear by the pointer as they are heard, so the person can see
                         // it is listening (and what it heard) before letting go.
-                        self?.showAskLiveTranscript(partialTranscript)
+                        guard let self, self.askOutcome != .resolved else { return }
+                        if !partialTranscript.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                            self.askLiveWordsShownSincePress = true
+                        }
+                        self.showAskLiveTranscript(partialTranscript)
                     },
                     submitDraftText: { [weak self] finalTranscript in
                         guard let self else { return }
                         self.lastTranscript = finalTranscript
-                        self.askHeardSomethingSinceLastPress = true
+                        self.askOutcome = .resolved
                         let question = finalTranscript.trimmingCharacters(in: .whitespacesAndNewlines)
                         AppLog.append("ask: heard \(question.count) chars")
                         guard !question.isEmpty else {
@@ -1294,13 +1321,19 @@ final class CompanionManager: ObservableObject {
             pendingKeyboardShortcutStartTask = nil
             buddyDictationManager.stopPushToTalkFromKeyboardShortcut()
             AppLog.append("ask: ⌃⌥ released")
-            // A release that never produces a transcript used to end in silence: say so instead.
-            askNothingHeardCheck?.cancel()
-            askNothingHeardCheck = Task { @MainActor [weak self] in
-                try? await Task.sleep(nanoseconds: 4_000_000_000)
-                guard !Task.isCancelled, let self, !self.askHeardSomethingSinceLastPress else { return }
-                AppLog.append("ask: nothing heard after release")
-                self.showAskCaption("didn't catch that — hold ⌃⌥ and ask again", holdSeconds: 3)
+            guard askOutcome == .listening else { return }
+            if buddyDictationManager.isFinalizingTranscript {
+                // The session decides what was heard (an uploading engine only starts now); the
+                // outcome is shown when it ends (`askDictationSessionEnded`), not guessed on a timer.
+                askOutcome = .transcribing
+                if !askLiveWordsShownSincePress {
+                    showAskCaption("transcribing…", holdSeconds: 30)
+                }
+            } else {
+                // Nothing was recording (a tap, or a start that never got going). An error from the
+                // start lands first and is shown instead (`showAskDictationError`).
+                askOutcome = .transcribing
+                DispatchQueue.main.async { [weak self] in self?.askDictationSessionEnded() }
             }
         case .none:
             break
@@ -1354,6 +1387,7 @@ final class CompanionManager: ObservableObject {
     /// Claude's response may include a [POINT:x,y:label] tag which triggers
     /// the buddy to fly to that element on screen.
     private func sendTranscriptToClaudeWithScreenshot(transcript: String) {
+        stopActiveAnswer()
         currentResponseTask?.cancel()
         elevenLabsTTSClient.stopPlayback()
 
@@ -1363,9 +1397,14 @@ final class CompanionManager: ObservableObject {
 
             do {
                 // Capture all connected screens so the AI has full context (an account sends at most two)
-                let screenCaptures = Self.screensForAsk(
-                    try await CompanionScreenCaptureUtility.captureAllScreensAsJPEG(),
-                    capabilities: AccountCapabilities.current())
+                let allScreenCaptures: [CompanionScreenCapture]
+                do {
+                    allScreenCaptures = try await CompanionScreenCaptureUtility.captureAllScreensAsJPEG()
+                } catch {
+                    // Told apart from a backend failure, so the person is sent to the right place.
+                    throw AskScreenCaptureError(underlyingError: error)
+                }
+                let screenCaptures = Self.screensForAsk(allScreenCaptures, capabilities: AccountCapabilities.current())
 
                 guard !Task.isCancelled else { return }
 
@@ -1418,6 +1457,8 @@ final class CompanionManager: ObservableObject {
                     onPointTag: { [weak self] pointTag in self?.pointAtAnswerTag(pointTag, screenCaptures: screenCaptures) }
                 )
                 let answerPlayback = Task { @MainActor in try await answerSpeaker.play() }
+                activeAnswerSpeaker = answerSpeaker
+                activeAnswerPlayback = answerPlayback
                 let askStartedAt = Date()
                 AppLog.append("ask: sending to claude (\(screenCaptures.count) screen(s))")
 
@@ -1465,11 +1506,21 @@ final class CompanionManager: ObservableObject {
                     print("🎯 Element pointing: \(parseResult.elementLabel ?? "no element")")
                 }
 
-                // Save this exchange to conversation history
-                conversationHistory.append((
-                    userTranscript: transcript,
-                    assistantResponse: spokenText
-                ))
+                if spokenText.isEmpty {
+                    // Nothing to say (an empty answer, or a bare tag): the queue never starts the
+                    // voice, so "thinking…" would stay up in silence. An empty turn is not history.
+                    AppLog.append("ask: empty answer (\(parseResult.coordinate == nil ? "no point" : "point only"))")
+                    dismissCursorCaption()
+                    if parseResult.coordinate == nil {
+                        speakWithSystemVoice(Self.emptyAnswerSentence)
+                    }
+                } else {
+                    // Save this exchange to conversation history
+                    conversationHistory.append((
+                        userTranscript: transcript,
+                        assistantResponse: spokenText
+                    ))
+                }
 
                 // Keep only the last 10 exchanges to avoid unbounded context growth
                 if conversationHistory.count > 10 {
@@ -1499,12 +1550,16 @@ final class CompanionManager: ObservableObject {
                     print("⚠️ TTS via backend failed (\(nsError.localizedDescription)); using the system voice")
                     AppLog.append("ask: voice failed (\(nsError.code)); using the system voice")
                     if !Task.isCancelled {
+                        // The success path dismisses "thinking…" when the voice starts; the system
+                        // voice starts here, so the caption goes now.
+                        dismissCursorCaption()
                         speakWithSystemVoice(failure.unspokenText.joined(separator: " "))
                         answerSpeaker.voiceFellBack()
                     }
                 }
-            } catch is CancellationError {
-                // User spoke again — response was interrupted
+            } catch where Self.isCancellation(error) || Task.isCancelled {
+                // User spoke again — response was interrupted. Cancelling the task that reads the
+                // answer stream ends it with URLError.cancelled, not a CancellationError.
             } catch {
                 AppLog.append("ask: failed: \((error as NSError).domain) \((error as NSError).code)")
                 dismissCursorCaption()
@@ -1522,7 +1577,8 @@ final class CompanionManager: ObservableObject {
                 } else {
                     ClickyAnalytics.trackResponseError(error: error.localizedDescription)
                     print("⚠️ Companion response error: \(error)")
-                    speakCreditsErrorFallback()
+                    speakWithSystemVoice(Self.askFailureSentence(
+                        for: error, screenRecordingAllowed: WindowPositionManager.hasScreenRecordingPermission()))
                 }
             }
 
@@ -1531,6 +1587,50 @@ final class CompanionManager: ObservableObject {
                 scheduleTransientHideIfNeeded()
             }
         }
+    }
+
+    /// The screenshot for a question could not be taken (Screen Recording off, or ScreenCaptureKit
+    /// failing), as opposed to the backend failing.
+    struct AskScreenCaptureError: Error {
+        let underlyingError: Error
+    }
+
+    static let emptyAnswerSentence = "i didn't get an answer — please ask again."
+
+    /// An interrupted request: Swift's CancellationError, or URLSession's own (-999) when the task
+    /// reading the answer stream was cancelled by a new question.
+    nonisolated static func isCancellation(_ error: Error) -> Bool {
+        if error is CancellationError { return true }
+        if let urlError = error as? URLError, urlError.code == .cancelled { return true }
+        let nsError = error as NSError
+        return nsError.domain == NSURLErrorDomain && nsError.code == NSURLErrorCancelled
+    }
+
+    /// What the companion says when a question fails for a reason that is not the account's
+    /// (sign-in and limits have their own sentences). The token sentence is kept for the backend
+    /// refusing the token; a capture failure or a dropped connection says what actually happened.
+    static func askFailureSentence(for error: Error, screenRecordingAllowed: Bool) -> String {
+        if error is AskScreenCaptureError {
+            return screenRecordingAllowed
+                ? "i couldn't see your screen just now — please ask again."
+                : "screen recording is off for openclicky — turn it on in system settings, privacy and security, screen recording."
+        }
+        if let urlError = error as? URLError {
+            switch urlError.code {
+            case .notConnectedToInternet, .networkConnectionLost, .timedOut, .cannotFindHost, .cannotConnectToHost, .dnsLookupFailed:
+                return "i couldn't reach openclicky — check your internet and ask again."
+            default:
+                break
+            }
+        }
+        let nsError = error as NSError
+        if nsError.domain == "ClaudeAPI" && (nsError.code == 401 || nsError.code == 403) {
+            return "something went wrong talking to the openclicky backend. check the backend and your token in the settings file."
+        }
+        if nsError.domain == "ClaudeAPI" && nsError.code == ClaudeAPI.midStreamErrorCode {
+            return "the answer stopped partway — please ask again."
+        }
+        return "something went wrong getting your answer — please ask again."
     }
 
     // MARK: - Realtime push-to-talk
@@ -1548,6 +1648,7 @@ final class CompanionManager: ObservableObject {
                 isOverlayVisible = true
             }
             NotificationCenter.default.post(name: .clickyDismissPanel, object: nil)
+            stopActiveAnswer()
             currentResponseTask?.cancel()
             openClickyAgentClient.cancel()
             elevenLabsTTSClient.stopPlayback()
@@ -1767,14 +1868,11 @@ final class CompanionManager: ObservableObject {
         if !isCursorDocked { scheduleTransientHideIfNeeded() }
     }
 
-    /// Speaks a hardcoded error message using macOS system TTS when API
-    /// credits run out. Uses NSSpeechSynthesizer so it works even when
-    /// ElevenLabs is down.
+    /// Speaks a hardcoded error message with the system voice when the agent lane fails. It uses
+    /// the synthesizer every new question stops: a separate NSSpeechSynthesizer used to keep
+    /// talking over the next question.
     private func speakCreditsErrorFallback() {
-        let utterance = "Something went wrong talking to the OpenClicky backend. Check the backend and your token in the settings file."
-        let synthesizer = NSSpeechSynthesizer()
-        synthesizer.startSpeaking(utterance)
-        voiceState = .responding
+        speakWithSystemVoice("something went wrong talking to the openclicky backend. check the backend and your token in the settings file.")
     }
 
     // MARK: - Point Tag Parsing
@@ -1796,53 +1894,69 @@ final class CompanionManager: ObservableObject {
     /// onboarding demo puts it last). Returns the spoken text (tag removed) and the optional
     /// coordinate + label + screen number.
     static func parsePointingCoordinates(from responseText: String) -> PointingParseResult {
-        // A leading tag is moved to the end and read there. Only when text follows it: a tag on its
-        // own is already "at the end", and moving it again would recurse forever.
+        // No recursion: a leading tag is cut off, then the trailing tag is looked for once in what is
+        // left. Moving the leading tag to the end and parsing again recursed forever (and crashed the
+        // app) when two tags stood with nothing else between them.
+        var leadingTag: String?
+        var textAfterLeadingTag = responseText
         if let leadingTagRange = responseText.range(of: #"^\s*\[POINT:[^\]]*\]"#, options: .regularExpression) {
-            let leadingTag = responseText[leadingTagRange].trimmingCharacters(in: .whitespacesAndNewlines)
-            let textAfterTag = responseText[leadingTagRange.upperBound...].trimmingCharacters(in: .whitespacesAndNewlines)
-            if !textAfterTag.isEmpty {
-                return parsePointingCoordinates(from: textAfterTag + " " + leadingTag)
-            }
-        }
-        // Match [POINT:none] or [POINT:123,456:label] or [POINT:123,456:label:screen2]
-        let pattern = #"\[POINT:(?:none|(\d+)\s*,\s*(\d+)(?::([^\]:\s][^\]:]*?))?(?::screen(\d+))?)\]\s*$"#
-
-        guard let regex = try? NSRegularExpression(pattern: pattern, options: []),
-              let match = regex.firstMatch(in: responseText, range: NSRange(responseText.startIndex..., in: responseText)) else {
-            // No tag found at all
-            return PointingParseResult(spokenText: responseText, coordinate: nil, elementLabel: nil, screenNumber: nil)
+            leadingTag = responseText[leadingTagRange].trimmingCharacters(in: .whitespacesAndNewlines)
+            textAfterLeadingTag = String(responseText[leadingTagRange.upperBound...])
         }
 
-        // Remove the tag from the spoken text
-        let tagRange = Range(match.range, in: responseText)!
-        let spokenText = String(responseText[..<tagRange.lowerBound]).trimmingCharacters(in: .whitespacesAndNewlines)
-
-        // Check if it's [POINT:none]
-        guard match.numberOfRanges >= 3,
-              let xRange = Range(match.range(at: 1), in: responseText),
-              let yRange = Range(match.range(at: 2), in: responseText),
-              let x = Double(responseText[xRange]),
-              let y = Double(responseText[yRange]) else {
-            return PointingParseResult(spokenText: spokenText, coordinate: nil, elementLabel: "none", screenNumber: nil)
+        var trailingTag: String?
+        var spokenText = textAfterLeadingTag
+        if let trailingMatch = pointTagRegex(anchoredAtEnd: true).firstMatch(
+            in: textAfterLeadingTag, range: NSRange(textAfterLeadingTag.startIndex..., in: textAfterLeadingTag)),
+           let trailingTagRange = Range(trailingMatch.range, in: textAfterLeadingTag) {
+            trailingTag = textAfterLeadingTag[trailingTagRange].trimmingCharacters(in: .whitespacesAndNewlines)
+            spokenText = String(textAfterLeadingTag[..<trailingTagRange.lowerBound])
         }
+        spokenText = spokenText.trimmingCharacters(in: .whitespacesAndNewlines)
 
-        var elementLabel: String? = nil
-        if match.numberOfRanges >= 4, let labelRange = Range(match.range(at: 3), in: responseText) {
-            elementLabel = String(responseText[labelRange]).trimmingCharacters(in: .whitespaces)
+        // The first tag that reads as one decides where to point (the prompt puts it first).
+        let firstReadableTag = [leadingTag, trailingTag].compactMap { $0 }.lazy.compactMap(readPointTag).first
+        guard let firstReadableTag else {
+            // No tag found at all (a malformed leading tag is still never spoken)
+            return PointingParseResult(spokenText: leadingTag == nil ? responseText : spokenText, coordinate: nil, elementLabel: nil, screenNumber: nil)
         }
-
-        var screenNumber: Int? = nil
-        if match.numberOfRanges >= 5, let screenRange = Range(match.range(at: 4), in: responseText) {
-            screenNumber = Int(responseText[screenRange])
-        }
-
         return PointingParseResult(
             spokenText: spokenText,
-            coordinate: CGPoint(x: x, y: y),
-            elementLabel: elementLabel,
-            screenNumber: screenNumber
+            coordinate: firstReadableTag.coordinate,
+            elementLabel: firstReadableTag.elementLabel,
+            screenNumber: firstReadableTag.screenNumber
         )
+    }
+
+    /// Matches [POINT:none] or [POINT:123,456:label] or [POINT:123,456:label:screen2]: at the end
+    /// of the text (with trailing whitespace), or as the whole string.
+    private static func pointTagRegex(anchoredAtEnd: Bool) -> NSRegularExpression {
+        let tagPattern = #"\[POINT:(?:none|(\d+)\s*,\s*(\d+)(?::([^\]:\s][^\]:]*?))?(?::screen(\d+))?)\]"#
+        let pattern = anchoredAtEnd ? tagPattern + #"\s*$"# : "^" + tagPattern + "$"
+        return try! NSRegularExpression(pattern: pattern, options: [])
+    }
+
+    /// One tag on its own, read: nil when it is not a well-formed tag; a nil coordinate for [POINT:none].
+    private static func readPointTag(_ pointTag: String) -> (coordinate: CGPoint?, elementLabel: String?, screenNumber: Int?)? {
+        guard let match = pointTagRegex(anchoredAtEnd: false).firstMatch(in: pointTag, range: NSRange(pointTag.startIndex..., in: pointTag)) else {
+            return nil
+        }
+        // Check if it's [POINT:none]
+        guard let xRange = Range(match.range(at: 1), in: pointTag),
+              let yRange = Range(match.range(at: 2), in: pointTag),
+              let x = Double(pointTag[xRange]),
+              let y = Double(pointTag[yRange]) else {
+            return (coordinate: nil, elementLabel: "none", screenNumber: nil)
+        }
+        var elementLabel: String? = nil
+        if let labelRange = Range(match.range(at: 3), in: pointTag) {
+            elementLabel = String(pointTag[labelRange]).trimmingCharacters(in: .whitespaces)
+        }
+        var screenNumber: Int? = nil
+        if let screenRange = Range(match.range(at: 4), in: pointTag) {
+            screenNumber = Int(pointTag[screenRange])
+        }
+        return (coordinate: CGPoint(x: x, y: y), elementLabel: elementLabel, screenNumber: screenNumber)
     }
 
     // MARK: - Onboarding
@@ -1882,9 +1996,45 @@ final class CompanionManager: ObservableObject {
 
     // MARK: - Ask lane feedback
 
-    /// Set when the recogniser hands over a transcript for the current ⌃⌥ press.
-    private var askHeardSomethingSinceLastPress = false
-    private var askNothingHeardCheck: Task<Void, Never>?
+    /// Where the current ⌃⌥ press is: held, waiting for the session's final words, or settled (a
+    /// question was handed over, or "didn't catch that" / an error was shown). Only an unsettled
+    /// press reacts to the dictation manager, which the fn lane shares.
+    enum AskOutcome { case resolved, listening, transcribing }
+    private var askOutcome: AskOutcome = .resolved
+    private var askLiveWordsShownSincePress = false
+    private var askDictationOutcomeCancellables: Set<AnyCancellable> = []
+
+    /// Follows the dictation session for the ask lane: its end without a question means nothing was
+    /// heard, and its error message (microphone or speech denied, an engine failure) is the reason.
+    private func bindAskDictationOutcome() {
+        // Delivered on the next main-queue turn: the manager publishes "no longer finalizing" just
+        // before it hands over the final words in the same call, so the question is in by then.
+        buddyDictationManager.$isFinalizingTranscript
+            .removeDuplicates()
+            .filter { !$0 }
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] _ in self?.askDictationSessionEnded() }
+            .store(in: &askDictationOutcomeCancellables)
+        buddyDictationManager.$lastErrorMessage
+            .compactMap { $0 }
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] errorMessage in self?.showAskDictationError(errorMessage) }
+            .store(in: &askDictationOutcomeCancellables)
+    }
+
+    private func askDictationSessionEnded() {
+        guard askOutcome == .transcribing else { return }
+        askOutcome = .resolved
+        AppLog.append("ask: nothing heard")
+        showAskCaption("didn't catch that — hold ⌃⌥ and ask again", holdSeconds: 3)
+    }
+
+    private func showAskDictationError(_ errorMessage: String) {
+        guard askOutcome != .resolved else { return }
+        askOutcome = .resolved
+        AppLog.append("ask: dictation failed: \(errorMessage)")
+        showAskCaption(errorMessage, holdSeconds: 6)
+    }
 
     /// A caption by the pointer for the ask lane (what was heard, "thinking…", a problem), beside
     /// the mouse when the buddy is docked.
