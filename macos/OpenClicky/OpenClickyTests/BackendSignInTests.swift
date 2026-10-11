@@ -165,7 +165,9 @@ struct BackendSignInTests {
         let polisher = AccountTakePolisher(purpose: "polish", send: { sent in
             await recorder.noteSent(sent)
             return await recorder.sentAuthorizations.count == 1 ? answer(401, Self.backendRefusal) : answer(200, Data(#"{"text":"Hi."}"#.utf8))
-        }, signIn: signIn(recorder, outcome: .tryAgain))
+        }, signIn: signIn(recorder, outcome: .tryAgain),
+        // Its own token: CI has none stored, and a request without one is never refreshed.
+        authorize: { $0.setValue("Bearer old-token", forHTTPHeaderField: "Authorization") })
         #expect(try await polisher.polish(system: "s", user: "hi") == "Hi.")
     }
 

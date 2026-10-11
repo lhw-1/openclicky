@@ -98,9 +98,13 @@ struct TakeStoreTests {
         defer { sqlite3_close(otherConnection) }
         #expect(sqlite3_exec(otherConnection, "BEGIN IMMEDIATE", nil, nil, nil) == SQLITE_OK)
         let lockHolder = otherConnection
-        DispatchQueue.global().asyncAfter(deadline: .now() + 0.3) {
+        // A thread of its own: on a busy CI runner a global-queue block could start after the
+        // store's 2 s busy timeout ran out, and the insert would fail for the test's sake.
+        let releaser = Thread {
+            Thread.sleep(forTimeInterval: 0.3)
             sqlite3_exec(lockHolder, "COMMIT", nil, nil, nil)
         }
+        releaser.start()
         try store.insert(TakeRecord(rawText: "while locked", formattedText: "While locked."))
         #expect(try store.recent().first?.rawText == "while locked")
     }
