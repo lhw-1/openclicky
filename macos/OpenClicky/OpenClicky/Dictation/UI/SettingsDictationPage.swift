@@ -264,7 +264,7 @@ private struct MovedToStylesNote: View {
     var body: some View {
         HStack(spacing: 3) {
             Text(settingsHighlighted("Language, script and AI clean-up live in", query: searchQuery))
-            Button("Styles") { companionManager.showDictationWindow(section: .styles) }
+            Button("Styles") { companionManager.showDictationWindow(section: .writing) }
                 .buttonStyle(.link)
                 .accessibilityHint("opens Styles")
             Text(settingsHighlighted(", next to the rules the model reads.", query: searchQuery))

@@ -2,10 +2,11 @@
 //  DictationWindow.swift
 //  OpenClicky
 //
-//  OpenClicky's one window. A native sidebar on the left lists your words (record, history; how
-//  it writes: dictionary, snippets, styles) and then Settings (eight pages: general, dictation,
-//  keyboard, clicky, the orb, privacy & security, account, about), with a search field that
-//  filters every setting; incognito and the account sit at its foot. Every way in (⌘,, the menu
+//  OpenClicky's one window. A native sidebar lists one group, Settings: your words (what you
+//  dictated: try it, this week, every take), how it writes (dictionary, snippets, styles), then the
+//  eight settings pages (general, dictation, keyboard, clicky, the orb, privacy & security,
+//  account, about), every page drawn the same native way, with a search field that filters every
+//  setting; incognito and the account sit at its foot. Every way in (⌘,, the menu
 //  bar, the island, the orb's menu, the Dock) opens this window at the page it asks for. It is
 //  reopened rather than recreated, and remembers its frame.
 //
@@ -14,39 +15,32 @@ import AppKit
 import Combine
 import SwiftUI
 
-/// The window's own pages: your words.
+/// The window's own pages, listed first under Settings and drawn like the settings pages.
 enum DictationSection: String, CaseIterable, Identifiable {
-    case record, history, dictionary, shortcuts, styles
+    /// What you dictated: try it here, this week, and every take (record and history, merged).
+    case words
+    /// Dictionary, snippets and styles on one page.
+    case writing
     var id: String { rawValue }
 
-    var title: String {
+    var sidebarTitle: String {
         switch self {
-        // Spoken text expansions, renamed so they are never confused with keyboard shortcuts.
-        case .shortcuts: return "snippets"
-        default: return rawValue
+        case .words: return "Your words"
+        case .writing: return "How it writes"
         }
     }
 
-    /// The sidebar's name for the page ("Snippets").
-    var sidebarTitle: String { title.prefix(1).uppercased() + title.dropFirst() }
-
     var symbol: String {
         switch self {
-        case .record: return "mic.fill"
-        case .history: return "clock.fill"
-        case .dictionary: return "character.book.closed.fill"
-        case .shortcuts: return "text.bubble.fill"
-        case .styles: return "paintbrush.pointed.fill"
+        case .words: return "text.quote"
+        case .writing: return "character.book.closed.fill"
         }
     }
 
     var tint: Color {
         switch self {
-        case .record: return Color(red: 0.824, green: 0.306, blue: 0.165)
-        case .history: return Color(red: 0.345, green: 0.337, blue: 0.839)
-        case .dictionary: return Color(red: 0.686, green: 0.322, blue: 0.871)
-        case .shortcuts: return Color(red: 0.188, green: 0.69, blue: 0.78)
-        case .styles: return Color(red: 1.0, green: 0.176, blue: 0.333)
+        case .words: return Color(red: 0.824, green: 0.306, blue: 0.165)
+        case .writing: return Color(red: 0.686, green: 0.322, blue: 0.871)
         }
     }
 }
@@ -59,7 +53,7 @@ enum DictationDestination: Hashable {
 
 @MainActor
 final class DictationWindowModel: ObservableObject {
-    @Published var destination: DictationDestination = .section(.record)
+    @Published var destination: DictationDestination = .section(.words)
     @Published var pendingHistorySearch: String?
     /// While this holds words the window shows matching settings from every page.
     @Published var searchText = ""
@@ -200,16 +194,9 @@ struct DictationRootView: View {
                 get: { model.isSearching ? nil : model.destination },
                 set: { chosen in if let chosen { model.select(chosen) } }
             )) {
-                Section {
-                    sectionRow(.record)
-                    sectionRow(.history, count: historyCount)
-                }
-                Section("How it writes") {
-                    sectionRow(.dictionary, count: spaceStore.space.dictionary.count)
-                    sectionRow(.shortcuts, count: spaceStore.space.shortcuts.count)
-                    sectionRow(.styles, count: spaceStore.space.styles.count)
-                }
                 Section("Settings") {
+                    sectionRow(.words, count: historyCount)
+                    sectionRow(.writing)
                     ForEach(DictationSettingsPage.allCases) { page in
                         SidebarIconLabel(title: page.title, symbol: page.symbol, tint: page.tint)
                             .opacity(model.isSearching && !matches.contains { $0.page == page } ? 0.35 : 1)
@@ -265,7 +252,6 @@ struct DictationRootView: View {
             case .section(let section):
                 sectionPage(section)
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
-                    .background(Paper.background)
                     .navigationTitle(section.sidebarTitle)
             }
         }
@@ -274,11 +260,8 @@ struct DictationRootView: View {
     @ViewBuilder
     private func sectionPage(_ section: DictationSection) -> some View {
         switch section {
-        case .record: RecordPageView(model: model, companionManager: companionManager)
-        case .history: HistoryPageView(model: model, companionManager: companionManager)
-        case .dictionary: DictionaryPageView(spaceStore: companionManager.dictationSpaceStore)
-        case .shortcuts: ShortcutsPageView(spaceStore: companionManager.dictationSpaceStore)
-        case .styles: StylesPageView(companionManager: companionManager)
+        case .words: WordsPageView(model: model, companionManager: companionManager)
+        case .writing: WritingPageView(companionManager: companionManager)
         }
     }
 
@@ -364,29 +347,4 @@ private struct SidebarFooter: View {
     }
 
     private var accountInitial: String { String(accountName.prefix(1)).uppercased() }
-}
-
-/// A page's scrolling body with the standard margins.
-struct PageScaffold<Content: View>: View {
-    let title: String
-    var trailing: AnyView?
-    @ViewBuilder var content: Content
-
-    var body: some View {
-        ScrollView(showsIndicators: true) {
-            VStack(alignment: .leading, spacing: 22) {
-                HStack(alignment: .center) {
-                    PaperHeading(text: title)
-                    Spacer()
-                    if let trailing { trailing }
-                }
-                .padding(.top, Paper.Metric.windowTop)
-                content
-            }
-            .padding(.horizontal, Paper.Metric.windowSides)
-            .padding(.bottom, 40)
-            .frame(maxWidth: 900, alignment: .leading)
-            .frame(maxWidth: .infinity, alignment: .leading)
-        }
-    }
 }

@@ -209,7 +209,7 @@ struct WritingPageView: View {
                     Text("Auto-detect").tag(true)
                     Text("Pin one").tag(false)
                 }
-                .pickerStyle(.segmented).labelsHidden().fixedSize()
+                .pickerStyle(.segmented).labelsHidden().fixedSize().tint(SettingsLook.accent)
                 .pointerCursor()
                 .accessibilityLabel("Language")
 

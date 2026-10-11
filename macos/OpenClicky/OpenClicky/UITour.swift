@@ -101,7 +101,7 @@ final class UITour {
             // The record page at the window's narrowest: its two columns stack.
             let fullFrame = window.frame
             window.setContentSize(DictationWindowController.minimumSize)
-            companionManager.showDictationWindow(section: .record)
+            companionManager.showDictationWindow(section: .words)
             await shoot("window-\(appearanceName)-00-record-narrow", window: window)
             window.setFrame(fullFrame, display: true)
         }

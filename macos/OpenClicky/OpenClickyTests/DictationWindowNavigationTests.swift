@@ -25,7 +25,7 @@ struct DictationWindowNavigationTests {
 
     @Test func aSettingsPageWinsOverASection() {
         let model = DictationWindowModel()
-        model.open(section: .history, settingsPage: .dictation)
+        model.open(section: .words, settingsPage: .dictation)
         #expect(model.destination == .settings(.dictation))
     }
 
@@ -55,10 +55,10 @@ struct DictationWindowNavigationTests {
         #expect(model.trimmedSearchText == "key")
     }
 
-    @Test func spokenExpansionsAreCalledSnippets() {
-        // "shortcuts" read as keyboard shortcuts; the keyboard lives in Settings → Keyboard.
-        #expect(DictationSection.shortcuts.title == "snippets")
-        #expect(DictationSection.shortcuts.sidebarTitle == "Snippets")
+    @Test func yourPagesAreTwoAndOpenOnYourWords() {
+        // Record and history are one page; dictionary, snippets and styles are another.
+        #expect(DictationSection.allCases.map(\.sidebarTitle) == ["Your words", "How it writes"])
+        #expect(DictationWindowModel().destination == .section(.words))
     }
 
     @Test func thereAreEightSettingsPages() {

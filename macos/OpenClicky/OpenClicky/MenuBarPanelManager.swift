@@ -98,7 +98,7 @@ final class MenuBarPanelManager: NSObject {
 
     @objc private func toggleAgentMode() { companionManager.setAgentModeEnabled(!companionManager.isAgentModeEnabled) }
     @objc private func toggleDock() { companionManager.setCursorDocked(!companionManager.isCursorDocked) }
-    @objc private func openWindow() { companionManager.showDictationWindow(section: .record) }
+    @objc private func openWindow() { companionManager.showDictationWindow(section: .words) }
     @objc private func openIsland() { companionManager.notchHUDManager.openPanel() }
     @objc private func openSettings() { companionManager.showSettings() }
     @objc private func replayWelcome() { companionManager.firstRunTour.replay() }
