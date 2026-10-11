@@ -199,6 +199,11 @@ final class CompanionAppDelegate: NSObject, NSApplicationDelegate {
 
         menuBarPanelManager = MenuBarPanelManager(companionManager: companionManager)
         companionManager.start()
+        #if DEBUG
+        if let tourIndex = launchArguments.firstIndex(of: "--openclicky-ui-tour"), tourIndex + 1 < launchArguments.count {
+            UITour(companionManager: companionManager, logPath: launchArguments[tourIndex + 1]).run()
+        }
+        #endif
         // Auto-open the panel only for a first run (the intro copy and the Start button).
         // Missing permissions are asked for by the island's permission cards instead.
         if !companionManager.hasCompletedOnboarding {
