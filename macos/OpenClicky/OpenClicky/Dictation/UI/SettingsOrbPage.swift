@@ -125,6 +125,9 @@ private struct OrbSizePicker: View {
 
 /// The orb as it will look, in a pretend app, in four moments of a take.
 struct OrbLivePreviewPanel: View {
+    /// The panel's width when it sits beside the settings, on a page at least 900 pt wide.
+    static let wideLayoutWidth: CGFloat = 300
+
     @ObservedObject var settings: DictationSettings
     @StateObject private var previewModel = OrbModel()
     @State private var moment: PreviewMoment = .resting

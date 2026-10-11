@@ -188,13 +188,17 @@ struct SettingsPageView: View {
             // The orb's page keeps its live preview beside the settings when there is room.
             GeometryReader { proxy in
                 if proxy.size.width >= 900 {
-                    HStack(alignment: .top, spacing: 0) {
-                        scrollingPage(groups: groups, includesPreview: false)
-                        OrbLivePreviewPanel(settings: catalog.settings)
-                            .frame(width: 300)
-                            .padding(.top, 44 + 52)
-                            .padding(.trailing, Paper.Metric.windowSides)
-                    }
+                    // One scroll view across the whole page, its scroll bar at the window's edge; the
+                    // settings leave room on the right for the preview, which floats there unscrolled.
+                    // Beside the preview, the settings' own scroll bar drew a full-height track
+                    // between the two columns.
+                    scrollingPage(groups: groups, includesPreview: false, trailingRoom: OrbLivePreviewPanel.wideLayoutWidth + Paper.Metric.windowSides)
+                        .overlay(alignment: .topTrailing) {
+                            OrbLivePreviewPanel(settings: catalog.settings)
+                                .frame(width: OrbLivePreviewPanel.wideLayoutWidth)
+                                .padding(.top, 44 + 52)
+                                .padding(.trailing, Paper.Metric.windowSides)
+                        }
                 } else {
                     scrollingPage(groups: groups, includesPreview: true)
                 }
@@ -204,7 +208,8 @@ struct SettingsPageView: View {
         }
     }
 
-    private func scrollingPage(groups: [SettingsSectionGroup], includesPreview: Bool) -> some View {
+    /// `trailingRoom` keeps the settings clear of something drawn over the page's right side.
+    private func scrollingPage(groups: [SettingsSectionGroup], includesPreview: Bool, trailingRoom: CGFloat = 0) -> some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 12) {
                 SettingsPageHeader(title: page.title, onReset: catalog.resetAction(for: page))
@@ -216,6 +221,7 @@ struct SettingsPageView: View {
             .padding(.bottom, 40)
             .frame(maxWidth: 760, alignment: .leading)
             .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.trailing, trailingRoom)
         }
     }
 }

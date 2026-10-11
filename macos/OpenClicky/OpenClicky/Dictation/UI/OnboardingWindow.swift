@@ -32,6 +32,7 @@ enum OnboardingChapter: Int, CaseIterable {
 final class OnboardingWindowController: NSWindowController, NSWindowDelegate {
     private let companionManager: CompanionManager
     let model = OnboardingModel()
+    private var appearanceSubscription: AnyCancellable?
 
     init(companionManager: CompanionManager) {
         self.companionManager = companionManager
@@ -46,6 +47,8 @@ final class OnboardingWindowController: NSWindowController, NSWindowDelegate {
         // The window keeps its own size; the view fills it (SwiftUI would otherwise grow the window to its ideal height).
         hosting.sizingOptions = []
         window.contentView = hosting
+        // Light or dark as the "appearance" setting says, like the main window.
+        appearanceSubscription = window.followAppearanceSetting(of: companionManager.dictationSettings)
         window.center()
     }
 
