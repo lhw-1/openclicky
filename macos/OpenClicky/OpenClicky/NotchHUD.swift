@@ -81,6 +81,8 @@ enum NotchHUDExpansion: Equatable {
     case permission
     /// The text composer (control tapped twice): a one-line field to type a request.
     case composer
+    /// The first-run tour's card: one step at a time, after the permission cards.
+    case tour
     case full
 }
 
@@ -131,6 +133,15 @@ final class NotchHUDModel: ObservableObject {
 
     /// The permission card to show, if any; set by `PermissionPromptController`.
     @Published var permissionPrompt: PermissionPrompt?
+
+    /// The first-run tour's card, if the tour is on; set by `FirstRunTourController`.
+    @Published var tourCard: FirstRunTourCard?
+    var tourWidth: CGFloat { placement.isSideDrawer ? 360 : 512 }
+    var tourHeight: CGFloat {
+        // A side drawer is narrower, so the copy wraps onto more lines.
+        let statusRoom: CGFloat = tourCard?.status == nil ? 0 : (tourCard?.offersMicrophoneChange == true ? 56 : 38)
+        return cardTopInset + (placement.isSideDrawer ? 168 : 116) + statusRoom
+    }
 
     /// Text typed out in the compact strip (the Home tab's (i) while the buddy is docked); nil = none.
     @Published private(set) var captionText: String?
@@ -189,7 +200,7 @@ final class NotchHUDModel: ObservableObject {
         // The tab row, the body's top padding, the content, and room under the last control.
         case .home: return tabBarHeight + DS.HUD.bodyTopPadding + (placement.isSideDrawer ? 324 : 200)
         case .agents: return tabBarHeight + DS.HUD.bodyTopPadding + 352
-        case .settings: return tabBarHeight + DS.HUD.bodyTopPadding + (placement.isSideDrawer ? 374 : 258)
+        case .settings: return tabBarHeight + DS.HUD.bodyTopPadding + (placement.isSideDrawer ? 432 : 316)
         }
     }
 
@@ -200,6 +211,7 @@ final class NotchHUDModel: ObservableObject {
         case .connect: return connectWidth
         case .permission: return permissionWidth
         case .composer: return composerWidth
+        case .tour: return tourWidth
         case .full: return fullWidth
         }
     }
@@ -211,6 +223,7 @@ final class NotchHUDModel: ObservableObject {
         case .connect: return connectHeight
         case .permission: return permissionHeight
         case .composer: return composerHeight
+        case .tour: return tourHeight
         case .full: return fullHeight
         }
     }
@@ -376,6 +389,16 @@ final class NotchHUDModel: ObservableObject {
         reconcile(immediately: prompt != nil)
     }
 
+    /// Shows (or clears) the tour card. It yields to the busy strip while a take or a question is
+    /// under way (that is the step being tried), and comes back when it ends.
+    func setTourCard(_ card: FirstRunTourCard?) {
+        guard tourCard != card else { return }
+        let sizeChanged = tourCard?.status != card?.status || tourCard?.step != card?.step || tourCard?.offersMicrophoneChange != card?.offersMicrophoneChange
+        tourCard = card
+        reconcile(immediately: true)
+        if sizeChanged && expansion == .tour { onLayoutChanged?() }
+    }
+
     /// Shows (or clears) the permission card. Nothing the app can do works without these, so the
     /// card outranks every other island state until the last permission lands.
     func setPermissionPrompt(_ prompt: PermissionPrompt?) {
@@ -387,6 +410,7 @@ final class NotchHUDModel: ObservableObject {
     /// The state the island should be in once every hover grace period has run out.
     private var restingExpansion: NotchHUDExpansion {
         if permissionPrompt != nil { return .permission }
+        if tourCard != nil && !isBusy { return .tour }
         if connectPrompt != nil { return .connect }
         if isBusy || captionText != nil { return .compact }
         return .collapsed
@@ -406,6 +430,9 @@ final class NotchHUDModel: ObservableObject {
             target = .permission
         } else if isPinnedOpen {
             target = .full
+        } else if tourCard != nil && !isBusy {
+            // Like the connect card: hovering it must not swap it for the panel.
+            target = .tour
         } else if connectPrompt != nil {
             // Hovering the connect card must not swap it for the full panel while the user is
             // reaching for its buttons; a click on the island still pins the full panel open.
@@ -415,7 +442,7 @@ final class NotchHUDModel: ObservableObject {
         } else {
             target = restingExpansion
         }
-        if target == .full || target == .connect || target == .permission || target == .composer || immediately {
+        if target == .full || target == .connect || target == .permission || target == .composer || target == .tour || immediately {
             setExpansion(target)
             return
         }
@@ -695,6 +722,13 @@ final class NotchHUDManager {
     }
     private var connectPrompt: AppConnectPrompt?
 
+    /// Shows the tour card on every screen's island (nil hides it).
+    func setTourCard(_ card: FirstRunTourCard?) {
+        tourCard = card
+        instances.forEach { $0.model.setTourCard(card) }
+    }
+    private var tourCard: FirstRunTourCard?
+
     /// Shows the permission card on every screen's island (nil hides it).
     func setPermissionPrompt(_ prompt: PermissionPrompt?) {
         permissionPrompt = prompt
@@ -727,6 +761,7 @@ final class NotchHUDManager {
             model.setCursorDocked(companionManager.isCursorDocked)
             model.setConnectPrompt(connectPrompt)
             model.setPermissionPrompt(permissionPrompt)
+            model.setTourCard(tourCard)
             let hudWindow = NotchHUDWindow()
             // The window frame must stay authoritative. An NSHostingView used directly as the
             // content view re-fits the window to SwiftUI's fitting size (the hidden full panel),
@@ -936,7 +971,7 @@ struct NotchHUDView: View {
                 // Collapsed, the black is the notch itself.
                 islandBackground
                     .frame(width: model.width + topCornerFlare * 2, height: expansion == .collapsed ? notchHeight : model.height)
-                    .onTapGesture { if expansion != .connect && expansion != .permission && expansion != .composer { model.togglePinned() } }
+                    .onTapGesture { if expansion != .connect && expansion != .permission && expansion != .composer && expansion != .tour { model.togglePinned() } }
             }
 
             // Only the active layer lives in the hierarchy: hidden layers with fixed frames would
@@ -1005,6 +1040,12 @@ struct NotchHUDView: View {
                         topInset: model.cardTopInset
                     )
                         .frame(width: model.permissionWidth, height: model.permissionHeight)
+                        .transition(.opacity.combined(with: .scale(scale: 0.92, anchor: .top)))
+                }
+            case .tour:
+                if let tourCard = model.tourCard {
+                    FirstRunTourCardView(card: tourCard, controller: companionManager.firstRunTour, topInset: model.cardTopInset)
+                        .frame(width: model.tourWidth, height: model.tourHeight)
                         .transition(.opacity.combined(with: .scale(scale: 0.92, anchor: .top)))
                 }
             case .full:

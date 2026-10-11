@@ -74,6 +74,14 @@ enum MacActionOutcome: Equatable {
     case permissionDenied(MacActionLocation)
     case failed(String)
 
+    /// True when the action did what was asked (the tour counts it as a task handed over).
+    var didSomething: Bool {
+        switch self {
+        case .openedApp, .createdFolder, .folderAlreadyExists, .revealed, .openedURL, .volumeSet, .mediaControlled: return true
+        default: return false
+        }
+    }
+
     var spokenSentence: String {
         switch self {
         case .openedApp(let applicationName):

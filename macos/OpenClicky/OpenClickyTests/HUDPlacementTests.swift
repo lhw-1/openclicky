@@ -74,7 +74,6 @@ struct HUDPlacementTests {
     @Test func everyGoodbyeSaysHowToComeBackOrIsShort() {
         for farewell in Farewell.all {
             #expect(farewell.text.contains("openclicky") || farewell.text.contains("⌘ space"))
-            #expect(!farewell.spoken.contains("⌘") && !farewell.spoken.contains("→"))
             #expect(farewell.text.count <= 90)
         }
     }

@@ -12,7 +12,7 @@ import AVFoundation
 import Foundation
 
 enum DictationEarcon: CaseIterable {
-    case start, stop, complete, blocked, error, notify
+    case start, stop, complete, blocked, error, notify, goodbye
 
     /// Notes in Hz with their durations; played one after the other.
     fileprivate var notes: [(frequency: Double, seconds: Double)] {
@@ -23,6 +23,8 @@ enum DictationEarcon: CaseIterable {
         case .blocked: return [(330, 0.12)]
         case .error: return [(392, 0.1), (294, 0.14)]
         case .notify: return [(988, 0.09)]
+        // Quitting: three falling notes, a "see you" rather than an alarm.
+        case .goodbye: return [(1047, 0.08), (784, 0.08), (523, 0.18)]
         }
     }
 }

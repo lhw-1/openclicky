@@ -202,9 +202,11 @@ final class PermissionPromptController: ObservableObject {
         setPrompt(nil)
     }
 
-    /// The gear on the card: the menu bar panel, for settings and Quit.
+    /// The gear on the card: the window's settings (quit is in the menu bar menu and on the island).
+    var openSettings: () -> Void = {}
+
     func openPanel() {
-        NotificationCenter.default.post(name: .clickyShowPanel, object: nil)
+        openSettings()
     }
 
     // MARK: Private
@@ -345,7 +347,7 @@ struct PermissionPromptView: View {
         .padding(.bottom, 16)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
         .overlay(alignment: .topTrailing) {
-            // The menu bar panel, for settings and quit, while nothing else on the island works.
+            // Settings, while nothing else on the island works.
             Button(action: { controller.openPanel() }) {
                 Image(systemName: "gearshape.fill")
                     .font(.system(size: 10, weight: .semibold))

@@ -3,8 +3,8 @@
 //  OpenClicky
 //
 //  Debug builds only: `--openclicky-ui-tour <file>` walks every screen of the app (the window's
-//  sections and settings pages, scrolled top to bottom, in light and dark; the onboarding
-//  chapters; the island in each placement and state; the menu bar panel; the orb) and appends one
+//  sections and settings pages, scrolled top to bottom, in light and dark; the first-run tour's
+//  island cards; the island in each placement and state; the orb) and appends one
 //  line per shot to <file>: `SHOT <name> <windowNumber>`. A script outside the app captures each
 //  window by number (`screencapture -l`), so a design review gets every screen without anyone
 //  clicking through them and without anything else on the desktop in the pictures.
@@ -36,19 +36,17 @@ final class UITour {
             if ProcessInfo.processInfo.environment["CFFIXED_USER_HOME"] != nil { seedDemoTakes() }
             // Let the launch finish (island, orb, permission checks) before the first shot.
             try? await Task.sleep(nanoseconds: 4_000_000_000)
-            // OPENCLICKY_TOUR_ONLY=island,orb (window, onboarding, island, menubar, orb) runs a part.
+            // A Debug build often lacks permissions; its cards would cover every island shot.
+            companionManager.permissionPromptController.dismiss()
+            // OPENCLICKY_TOUR_ONLY=island,orb (window, firstrun, island, orb) runs a part.
             let only = ProcessInfo.processInfo.environment["OPENCLICKY_TOUR_ONLY"].map { Set($0.split(separator: ",").map(String.init)) }
             func includes(_ part: String) -> Bool { only?.contains(part) ?? true }
             if includes("window") {
                 await tourWindow(appearanceName: "light", appearance: .light, scrolls: true)
                 await tourWindow(appearanceName: "dark", appearance: .dark, scrolls: false)
             }
-            if includes("onboarding") {
-                await tourOnboarding()
-                closeTitledWindows()
-            }
+            if includes("firstrun") { await tourFirstRunCards() }
             if includes("island") { await tourIsland() }
-            if includes("menubar") { await tourMenuBarPanel() }
             if includes("orb") { await tourOrb() }
             log("DONE")
             try? await Task.sleep(nanoseconds: 1_000_000_000)
@@ -118,22 +116,26 @@ final class UITour {
         NSApp.windows.first { $0.windowController is DictationWindowController && $0.isVisible }
     }
 
-    // MARK: Onboarding
+    // MARK: First-run tour (the island's cards)
 
-    private func tourOnboarding() async {
-        companionManager.showDictationOnboarding(replay: true)
-        guard let controller = NSApp.windows.compactMap({ $0.windowController as? OnboardingWindowController }).first else { return }
-        for chapter in OnboardingChapter.allCases {
-            controller.model.chapter = chapter
-            await shoot(String(format: "onboarding-%02d-%@", chapter.rawValue + 1, String(describing: chapter)), window: controller.window)
+    private func tourFirstRunCards() async {
+        let tour = companionManager.firstRunTour
+        let hud = companionManager.notchHUDManager
+        hud.debugCloseAll()
+        let cards: [(String, FirstRunTourStep, String?, Bool)] = [
+            ("01-meet", .meet, nil, false),
+            ("02-dictate", .dictate, nil, false),
+            ("03-dictate-heard", .dictate, "✓ heard you: “hello openclicky, this is my first take”", true),
+            ("04-dictate-nothing", .dictate, "didn’t catch any words. try again — or pick another microphone.", false),
+            ("05-talk", .talk, nil, false),
+            ("06-act", .act, nil, false),
+            ("07-done", .done, nil, false),
+        ]
+        for (name, step, status, isGood) in cards {
+            tour.debugShow(step, status: status, isGood: isGood, companionManager: companionManager)
+            await shoot("tour-\(name)", window: hud.debugPrimaryWindow)
         }
-        controller.close()
-    }
-
-    private func closeTitledWindows() {
-        for window in NSApp.windows where window.styleMask.contains(.titled) && window.isVisible {
-            window.close()
-        }
+        tour.debugShow(nil, companionManager: companionManager)
     }
 
     // MARK: Island
@@ -182,13 +184,7 @@ final class UITour {
         }
     }
 
-    // MARK: Menu bar panel and orb
-
-    private func tourMenuBarPanel() async {
-        NotificationCenter.default.post(name: .clickyShowPanel, object: nil)
-        await shoot("menubar-panel", window: NSApp.windows.first { String(describing: type(of: $0)) == "KeyablePanel" && $0.isVisible })
-        NotificationCenter.default.post(name: .clickyDismissPanel, object: nil)
-    }
+    // MARK: Orb
 
     private func tourOrb() async {
         let settings = companionManager.dictationSettings

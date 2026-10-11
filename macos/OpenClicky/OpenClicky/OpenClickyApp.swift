@@ -204,11 +204,6 @@ final class CompanionAppDelegate: NSObject, NSApplicationDelegate {
             UITour(companionManager: companionManager, logPath: launchArguments[tourIndex + 1]).run()
         }
         #endif
-        // Auto-open the panel only for a first run (the intro copy and the Start button).
-        // Missing permissions are asked for by the island's permission cards instead.
-        if !companionManager.hasCompletedOnboarding {
-            menuBarPanelManager?.showPanelOnLaunch()
-        }
         // OpenClicky: launching at login is opt-in (`registerAsLoginItem` in ~/.openclicky/shell.json).
         if OpenClickyConfiguration.settings.registerAsLoginItem == true {
             registerAsLoginItemIfNeeded()
