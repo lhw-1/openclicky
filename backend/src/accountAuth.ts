@@ -10,6 +10,11 @@ import { GoTrue, GoTrueError, type GoTrueSession } from "./gotrue.js";
  * an email that already has a confirmed account gets a 6-digit code instead. The caps live here and
  * in Postgres, which is why the app never talks to GoTrue for these.
  *
+ * A Mac can also start with no email at all (/auth/guest): a guest made from the device hash alone,
+ * on the same guest allowance, which is pooled per device (oc_spend_summary sums every guest with
+ * the Mac's hash), so reinstalling never refills it. The email comes later, if ever, through
+ * /auth/start, whose new guest replaces this one and keeps the Mac's allowance.
+ *
  * Guest farming (deep test F-38): a device hash is whatever the client sends, so the guest caps are
  * per address and per network (oc_signup_room), and an address or a guest pool that is full gets a
  * sign-up code instead of a guest: that still lets a newcomer in, but only with a real mailbox.
@@ -267,6 +272,51 @@ export function registerAccountAuth(app: Hono<any>) {
       return c.json({ status: "signed_in", session: clientSession(session), confirmed: false });
     } catch (e) {
       return failed(c, "auth/start", e);
+    }
+  });
+
+  app.post("/auth/guest", async (c) => {
+    const k = clients(c);
+    if (!k) return notConfigured(c);
+    const req = await body(c);
+    if (!isDeviceHash(req.device)) return c.json({ error: "bad_request" }, 400);
+    const device = req.device;
+    const { env, db, gt } = k;
+    const from = await hashedAddress(k, c);
+    const wait = await attempts.wait(db, [{ key: `guest:ip:${from.host}`, perHour: START_PER_ADDRESS }]);
+    if (wait) return slowDown(c, wait);
+    try {
+      if (env.ACCOUNTS_OPEN !== "true") return accountsFull(c);
+      let room: Room;
+      try { room = await signupRoom(db, env, from, device); }
+      catch (e) { return accountsUnavailable(c, "auth/guest", e); }
+      if (!room.accounts) return accountsFull(c);
+      // This address, its network or the whole guest pool has enough: the app asks for an email,
+      // and /auth/start lets a real mailbox in with a code.
+      if (!room.guests) return c.json({ error: "email_needed" }, 402);
+      const session = await gt.signUpAnonymously();
+      let recorded = false;
+      for (let attempt = 1; attempt <= 2 && !recorded; attempt++) {
+        recorded = await db.insert("oc_accounts", { user_id: session.user.id, email: null, device_hash: device, ip_hash: from.host, net_hash: from.net }).then(() => true, (e) => {
+          console.error(`auth/guest: oc_accounts insert (try ${attempt}): ${(e as Error).message}`);
+          return false;
+        });
+      }
+      if (!recorded) {
+        await gt.deleteUser(session.user.id).catch((e) => console.error(`auth/guest: delete new guest: ${(e as Error).message}`));
+        return c.json({ error: "auth_unavailable" }, 502);
+      }
+      // An earlier email-less guest on this Mac (an app reinstalled, its tokens gone) is replaced;
+      // its spend stays counted against the Mac. Guests that gave an email are left alone.
+      const earlier = (await db.select<Row>("oc_accounts", `device_hash=eq.${device}&select=user_id,email,confirmed_at,replaced_at`))
+        .filter((r) => r.user_id !== session.user.id && !r.email && !r.confirmed_at && !r.replaced_at);
+      for (const guest of earlier) {
+        await db.update("oc_accounts", `user_id=eq.${enc(guest.user_id)}`, { replaced_at: nowIso() }).catch((e) => console.error(`auth/guest: mark replaced guest: ${(e as Error).message}`));
+        await gt.deleteUser(guest.user_id).catch((e) => console.error(`auth/guest: delete replaced guest: ${(e as Error).message}`));
+      }
+      return c.json({ status: "signed_in", session: clientSession(session), confirmed: false });
+    } catch (e) {
+      return failed(c, "auth/guest", e);
     }
   });
 

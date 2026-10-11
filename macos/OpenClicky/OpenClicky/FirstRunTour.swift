@@ -6,9 +6,11 @@
 //  pointer flies out of the notch to the mouse and introduces itself; then one card at a time
 //  shows the keys (animated, pressed and held) for each thing OpenClicky does (dictate, ask, hand
 //  over a task) and moves on only when it has seen that thing work: a take with words, a spoken
-//  answer, an agent task or quick action. Speech recognition is asked for before the first take,
-//  and someone with no key and no account gets a free account from an email field on the island
-//  before asking. A step that still cannot run says why and offers a skip. The step is kept in
+//  answer, an agent task or quick action. Speech recognition is asked for before the first take.
+//  Nobody types anything to start: a Mac with no key and no account gets a guest account on
+//  OpenClicky's credits (no email), and only at the end may the person add an email, or skip it.
+//  Before asking, Clicky shows how: it points at something on the screen and says a few words.
+//  Each card's line is narrated from a bundled recording (RecordedVoice). The step is kept in
 //  UserDefaults, so the Screen Recording relaunch picks the tour up where it was.
 //
 
@@ -18,7 +20,7 @@ import Speech
 import SwiftUI
 
 enum FirstRunTourStep: String {
-    case meet, dictate, account, talk, act, done
+    case meet, dictate, talk, act, account, done
 
     /// The three practice steps get a progress dash each.
     var practiceIndex: Int? {
@@ -176,7 +178,7 @@ final class FirstRunTourController: ObservableObject {
         // A real first take: a sentence (one word like "no" is what silence turns into) from a
         // microphone that heard a voice.
         if take.status == .complete && wordCount >= 2 && loudestLevelThisTake >= Self.voiceLevel {
-            succeed(with: "✓ heard you: “\(words.prefix(60))\(words.count > 60 ? "…" : "")”")
+            succeed(with: "✓ heard you: “\(words.prefix(60))\(words.count > 60 ? "…" : "")”", saying: .tourDictateDone)
         } else if take.status == .complete && wordCount < 2 && loudestLevelThisTake >= Self.voiceLevel {
             status = "i only got “\(words)”. say a whole sentence, like the one above."
             statusIsGood = false
@@ -229,6 +231,7 @@ final class FirstRunTourController: ObservableObject {
     private func takeStateChanged(_ takeState: DictationTakeController.TakeState) {
         guard step == .dictate else { return }
         if takeState == .listening {
+            companionManager?.recordedVoice.stop()
             speechWasUndeterminedAtTakeStart = speechNeedsAllowing
             isWatchingForSilence = true
             loudestLevelThisTake = 0
@@ -254,9 +257,10 @@ final class FirstRunTourController: ObservableObject {
 
     private func voiceStateChanged(_ voiceState: CompanionVoiceState) {
         defer { previousVoiceState = voiceState }
+        if voiceState == .listening { companionManager?.recordedVoice.stop() }
         // An answer was spoken and finished: that is asking Clicky, working.
         if step == .talk && previousVoiceState == .responding && voiceState == .idle && companionManager?.lastQuestionFailed != true {
-            succeed(with: "✓ that’s asking clicky. it can point at things too.")
+            succeed(with: "✓ that’s asking clicky. it can point at things too.", saying: .tourTalkDone)
         }
     }
 
@@ -266,7 +270,7 @@ final class FirstRunTourController: ObservableObject {
         case .signedIn:
             ShellSettingsRevision.shared.noteChanged()
             fieldText = ""
-            succeed(with: "✓ you’re in. answers are on, free.")
+            succeed(with: "✓ saved. there’s a code in your inbox to confirm it whenever you like.")
         case .needsCode(let email):
             fieldText = ""
             status = "that email has an account. type the 6-digit code i sent to \(email)."
@@ -286,10 +290,18 @@ final class FirstRunTourController: ObservableObject {
         }
     }
 
-    /// No key and no account, and the backend takes new accounts: the account step comes first.
-    private var needsAccountStep: Bool {
-        !OpenClickyConfiguration.isConfigured && OpenClickyAuthSession.shared.accountsOpen != false
+    /// The tour's last question, which can be skipped: an email for the free account. Asked of a
+    /// guest without one (or anyone the guest start could not cover), never at the start.
+    private var needsEmailStep: Bool {
+        guard !OpenClickyConfiguration.usesOwnKeys else { return false }
+        return OpenClickyAuthSession.shared.accountEmail == nil && OpenClickyAuthSession.shared.accountsOpen != false
     }
+
+    /// Clicky is pointing at something and talking about it before the talk step's "your turn".
+    private var isShowingDemo = false
+    /// The step "set up" left from (asking or a task with nothing set up), to come back to once
+    /// the email gave the Mac an account.
+    private var stepAfterAccount: FirstRunTourStep?
 
     private func focusField() {
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) { [weak self] in
@@ -299,15 +311,16 @@ final class FirstRunTourController: ObservableObject {
 
     private func taskStarted() {
         guard step == .act else { return }
-        succeed(with: "✓ on it. results show up in the island.")
+        succeed(with: "✓ on it. results show up in the island.", saying: .tourActDone)
     }
 
     // MARK: Moving through the steps
 
-    private func succeed(with message: String) {
+    private func succeed(with message: String, saying line: RecordedVoice.Line? = nil) {
         status = message
         statusIsGood = true
         offersMicrophoneChange = false
+        if let line { companionManager?.recordedVoice.play(line) }
         publish()
         scheduleAdvance(after: 2.6)
     }
@@ -322,10 +335,13 @@ final class FirstRunTourController: ObservableObject {
     private func advance() {
         switch step {
         case .meet: go(to: .dictate)
-        case .dictate: go(to: needsAccountStep ? .account : .talk)
-        case .account: go(to: .talk)
+        case .dictate: go(to: .talk)
         case .talk: go(to: .act)
-        case .act: go(to: .done)
+        case .act: go(to: needsEmailStep ? .account : .done)
+        case .account:
+            let next = stepAfterAccount ?? .done
+            stepAfterAccount = nil
+            go(to: next)
         case .done, .none: finish()
         }
     }
@@ -337,14 +353,43 @@ final class FirstRunTourController: ObservableObject {
         statusIsGood = false
         offersMicrophoneChange = false
         UserDefaults.standard.set(newStep.rawValue, forKey: Self.stepKey)
-        if newStep == .meet {
+        isShowingDemo = false
+        switch newStep {
+        case .meet:
             companionManager?.hasCompletedOnboarding = true
             companionManager?.introducePointerForTour()
-        }
-        if newStep == .account {
+            // Nothing to type to get going: a Mac with no key and no account starts as a guest on
+            // OpenClicky's credits, so asking and tasks work in this very tour.
+            if !OpenClickyConfiguration.isConfigured {
+                Task { [weak self] in
+                    await OpenClickyAuthSession.shared.startGuestWithoutEmail()
+                    self?.publish()
+                }
+            }
+        case .dictate:
+            if companionManager?.dictationSettings.dictationKey == .fn && !speechNeedsAllowing {
+                companionManager?.recordedVoice.play(.tourDictate)
+            }
+        case .talk:
+            if OpenClickyConfiguration.isConfigured, let companionManager {
+                // Watch first: Clicky points at something and says a few words, then it's your turn.
+                isShowingDemo = true
+                companionManager.performTourDemo { [weak self] in
+                    guard let self, self.step == .talk, self.isShowingDemo else { return }
+                    self.isShowingDemo = false
+                    companionManager.recordedVoice.play(.tourTalk)
+                    self.publish()
+                }
+            }
+        case .act:
+            if OpenClickyConfiguration.isConfigured { companionManager?.recordedVoice.play(.tourAct) }
+        case .account:
             fieldText = ""
             OpenClickyAuthSession.shared.forgetSettledFlow()
+            companionManager?.recordedVoice.play(.tourAccount)
             focusField()
+        case .done:
+            companionManager?.recordedVoice.play(.tourDone)
         }
         publish()
     }
@@ -389,6 +434,7 @@ final class FirstRunTourController: ObservableObject {
         case .talk, .act:
             guard !OpenClickyConfiguration.isConfigured else { return }
             if OpenClickyAuthSession.shared.accountsOpen != false {
+                stepAfterAccount = step
                 go(to: .account)
             } else {
                 companionManager.showSettings(.account)
@@ -447,6 +493,15 @@ final class FirstRunTourController: ObservableObject {
         publish()
     }
 
+    /// What to try on the task step. The agent (your own keys) can work in apps; a free account
+    /// has the quick actions (folders, apps, sites, volume).
+    private var taskExamples: String {
+        if AccountCapabilities.current().usesAgent {
+            return "hold control + option and say “add a note to my notes: buy milk”, or “organize my downloads folder so it’s easier to find things”."
+        }
+        return "hold control + option and say “make a folder on my desktop called hello clicky”, or “open notes”."
+    }
+
     /// fn is the dictation key but macOS still opens the emoji picker with it.
     private var needsFnFreed: Bool {
         companionManager?.dictationSettings.dictationKey == .fn && !FnKeyGuard.isFnFree
@@ -487,25 +542,28 @@ final class FirstRunTourController: ObservableObject {
         case .account:
             let needsCode: Bool = { if case .needsCode = OpenClickyAuthSession.shared.emailFlow { return true } else { return false } }()
             return FirstRunTourCard(
-                step: .account, title: "want answers too?",
-                detail: "type your email for a free openclicky account. no password, no key. dictation stays free either way.",
+                step: .account, title: "keep your free account?",
+                detail: "add your email so your free allowance stays yours. no password. you can skip this.",
                 symbol: "envelope.fill", status: status, statusIsGood: statusIsGood,
                 field: needsCode ? .code : .email,
                 primaryTitle: needsCode ? "confirm" : "start", secondaryTitle: "skip")
+        case .talk where isShowingDemo:
+            return FirstRunTourCard(
+                step: .talk, title: "watch this",
+                detail: "i’m looking at your screen. i’ll point at something and tell you about it.",
+                symbol: "eye.fill", secondaryTitle: "skip")
         case .talk:
             return FirstRunTourCard(
-                step: .talk, title: canAsk ? "now ask me something" : "asking me needs a free account",
+                step: .talk, title: canAsk ? "your turn: ask me something" : "asking me needs a free account",
                 detail: canAsk
-                    ? "hold control + option and ask “what’s on my screen?” i answer out loud and point."
-                    : "dictation works on its own. for questions, set up a free account with just your email.",
+                    ? "hold control + option and ask “what’s this?” about anything on your screen. i answer out loud and point."
+                    : "dictation works on its own. for questions, add your email for a free account.",
                 keys: ["⌃", "⌥"], status: status, statusIsGood: statusIsGood,
                 primaryTitle: canAsk ? nil : "set up", secondaryTitle: "skip")
         case .act:
             return FirstRunTourCard(
                 step: .act, title: canAsk ? "hand me a task" : "tasks need a free account too",
-                detail: canAsk
-                    ? "hold control + option and say “make a folder on my desktop called hello clicky”."
-                    : "with a free account i can open apps, make folders and run agents for you.",
+                detail: canAsk ? taskExamples : "with a free account i can open apps, make folders and more for you.",
                 keys: ["⌃", "⌥"], status: status, statusIsGood: statusIsGood,
                 primaryTitle: canAsk ? nil : "set up", secondaryTitle: "skip")
         case .done:

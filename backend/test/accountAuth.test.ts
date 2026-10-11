@@ -292,6 +292,59 @@ describe("POST /auth/start: guest farming (F-38)", () => {
   });
 });
 
+describe("POST /auth/guest (try it with no email)", () => {
+  const guest = (body: unknown, ip?: string, e: Record<string, string> = env) => createApp({ log: null }).request("/auth/guest", post(body, ip), e);
+
+  it("makes an anonymous guest from the device hash alone and records it with no email", async () => {
+    const sb = supabase();
+    const res = await guest({ device });
+    expect(res.status).toBe(200);
+    const json = await res.json();
+    expect(json.status).toBe("signed_in");
+    expect(json.confirmed).toBe(false);
+    expect(sb.rows).toEqual([expect.objectContaining({ user_id: "u-new", email: null, device_hash: device })]);
+    expect(sb.calls.some((c) => c.url.includes("/auth/v1/user"))).toBe(false); // no email attached
+  });
+
+  it("replaces an earlier email-less guest on the Mac, never one that gave an email", async () => {
+    const sb = supabase({
+      rows: [
+        { user_id: "u-old", email: null, device_hash: device, confirmed_at: null, replaced_at: null },
+        { user_id: "u-mail", email: "a@b.co", device_hash: device, confirmed_at: null, replaced_at: null },
+      ],
+      users: { "u-old": { is_anonymous: true }, "u-mail": { is_anonymous: true } },
+    });
+    expect((await guest({ device })).status).toBe(200);
+    expect(sb.rows.find((r) => r.user_id === "u-old")?.replaced_at).toBeTruthy();
+    expect(sb.users["u-old"]).toBeUndefined();
+    expect(sb.rows.find((r) => r.user_id === "u-mail")?.replaced_at).toBeNull();
+  });
+
+  it("is 402 email_needed when the guest pool is full, and accounts_full when closed", async () => {
+    supabase({ guestsFull: true });
+    const full = await guest({ device });
+    expect(full.status).toBe(402);
+    expect((await full.json()).error).toBe("email_needed");
+    vi.unstubAllGlobals();
+    supabase();
+    const closed = await guest({ device }, undefined, { ...env, ACCOUNTS_OPEN: "false" });
+    expect(closed.status).toBe(402);
+  });
+
+  it("rejects a missing or malformed device hash before any call", async () => {
+    const sb = supabase();
+    expect((await guest({})).status).toBe(400);
+    expect((await guest({ device: "nope" })).status).toBe(400);
+    expect(sb.calls.length).toBe(0);
+  });
+
+  it("a failed row insert deletes the new user and answers 502", async () => {
+    const sb = supabase({ insertFails: 2 });
+    expect((await guest({ device })).status).toBe(502);
+    expect(sb.users["u-new"]).toBeUndefined();
+  });
+});
+
 describe("POST /auth/code", () => {
   const code = (body: unknown, ip?: string) => createApp({ log: null }).request("/auth/code", post(body, ip), env);
   it("verifies, stamps confirmation on the row, and returns the session", async () => {

@@ -228,6 +228,35 @@ final class OpenClickyAuthSession: ObservableObject {
         await run(request, email: trimmed, inFlight: .sending, returnTo: resendingCode ? emailFlow : nil)
     }
 
+    /// Try it with no email: a guest made from this Mac's device hash alone, on OpenClicky's
+    /// credits (the allowance is per Mac, so reinstalling does not refill it). The email can come
+    /// later through `start(email:)`, whose guest replaces this one. False when the backend wants
+    /// an email after all (its guest room is full) or cannot be reached.
+    @discardableResult
+    func startGuestWithoutEmail() async -> Bool {
+        guard !OpenClickyConfiguration.isConfigured, let device = DeviceIdentity.current,
+              let request = Self.post(OpenClickyConfiguration.backendBaseURL, "/auth/guest", ["device": device]) else { return false }
+        do {
+            let (data, response) = try await URLSession.shared.data(for: request)
+            let status = (response as? HTTPURLResponse)?.statusCode ?? 0
+            guard case .signedIn(let session, _) = Self.outcome(status: status, body: data, email: "") else {
+                AppLog.append("sign-in: no guest without an email (status \(status))")
+                return false
+            }
+            store(session, email: "")
+            AccountProfileStore.shared.refresh()
+            ShellSettingsRevision.shared.noteChanged()
+            AppLog.append("sign-in: started a guest with no email")
+            return true
+        } catch {
+            AppLog.append("sign-in: guest request failed: \(Self.describe(error))")
+            return false
+        }
+    }
+
+    /// Signed in as a guest that has not given an email yet.
+    var isGuestWithoutEmail: Bool { OpenClickyConfiguration.hasAccountToken && accountEmail == nil }
+
     func submitCode(_ code: String) async {
         guard case .needsCode(let email) = emailFlow,
               let request = Self.codeRequest(backendBaseURL: OpenClickyConfiguration.backendBaseURL, email: email, code: code.filter(\.isNumber), device: DeviceIdentity.current) else { return }
