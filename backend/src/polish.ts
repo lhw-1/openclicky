@@ -24,6 +24,8 @@ export async function polishTake(c: Context, ledger: SpendLedger | undefined): P
   if (text.length > MAX_TEXT || system.length > MAX_SYSTEM) return c.json({ error: "take too long to polish" }, 413);
 
   const keys = resolveProviderKeys(c.req.raw.headers, env);
+  // An own OpenAI key never borrows the backend's Anthropic key: polish needs the person's own one too.
+  if (keys.byok && !keys.anthropicKey) return c.json({ error: "byok_missing_anthropic_key" }, 402);
   if (!keys.anthropicKey) return c.json({ error: "backend missing ANTHROPIC_API_KEY" }, 502);
   const model = modelFor(req.purpose, env);
   const body = {

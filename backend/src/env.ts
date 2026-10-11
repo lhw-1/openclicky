@@ -83,6 +83,10 @@ export type Env = {
   MAX_ACCOUNTS_PER_DEVICE?: string;
   /** Key for the hashes of sign-up addresses and emails kept for the guest caps (default: SUPABASE_SERVICE_KEY). */
   IP_HASH_SALT?: string;
+  /** Model calls per minute per address for an own key with no account (default 60; ownKey.ts). */
+  OWN_KEY_REQUESTS_PER_MINUTE?: string;
+  /** /tts pieces per minute per address for an own key with no account (default 180). */
+  OWN_KEY_TTS_PER_MINUTE?: string;
 };
 
 /**

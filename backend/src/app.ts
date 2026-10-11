@@ -1,5 +1,6 @@
 import { Hono, type Context, type MiddlewareHandler } from "hono";
 import { getEnv } from "./env.js";
+import { requireAuthOrOwnKey } from "./ownKey.js";
 import { requireAuth, verifySupabaseJwt, issueSessionToken, bearerFrom, AuthError, type Principal } from "./auth.js";
 import { proxyOpenAI, proxyAnthropic, createRealtimeSession, transcribeAudio, synthesizeSpeech, assemblyAiToken } from "./proxy.js";
 import { SKILLS_MANIFEST } from "./skillsManifest.js";
@@ -151,12 +152,15 @@ history.replaceState(null, "", location.pathname);
     }
   });
 
-  // Everything else under /agent/*, /v1/*, /skills/* and the native-shell routes needs a Supabase JWT or a session token.
-  app.use("/agent/*", requireAuth);
-  app.use("/v1/*", requireAuth);
-  app.use("/skills/*", requireAuth);
-  app.use("/chat", requireAuth);
-  app.use("/tts", requireAuth);
+  // Everything else under /agent/*, /v1/*, /skills/* and the native-shell routes needs a Supabase JWT
+  // or a session token — or, for the model routes, the person's own OpenAI key with no token at all
+  // (an own key needs no account; ownKey.ts). Those run only on the person's keys and are never metered.
+  app.use("/agent/*", requireAuthOrOwnKey);
+  app.use("/v1/*", requireAuthOrOwnKey);
+  app.use("/skills/*", requireAuthOrOwnKey);
+  app.use("/chat", requireAuthOrOwnKey);
+  app.use("/tts", requireAuthOrOwnKey);
+  // Mints an AssemblyAI credential on the backend's own key, which an own key does not cover: account only.
   app.use("/transcribe-token", requireAuth);
 
   // Every model route passes the credits gate (a no-op for BYOK requests and unmetered backends).

@@ -16,11 +16,11 @@ import { GoTrue, GoTrueError, type GoTrueSession } from "./gotrue.js";
  */
 const HOUR = 3_600_000;
 
-/** Seconds until `key` may try again (0 when this attempt is allowed and counted), over the last hour. */
-function waitSeconds(hits: Map<string, number[]>, key: string, limit: number, now = Date.now()): number {
-  for (const [k, v] of hits) { const live = v.filter((t) => now - t < HOUR); if (live.length) hits.set(k, live); else hits.delete(k); }
+/** Seconds until `key` may try again (0 when this attempt is allowed and counted), over the last `windowMs` (an hour). */
+export function waitSeconds(hits: Map<string, number[]>, key: string, limit: number, now = Date.now(), windowMs = HOUR): number {
+  for (const [k, v] of hits) { const live = v.filter((t) => now - t < windowMs); if (live.length) hits.set(k, live); else hits.delete(k); }
   const mine = hits.get(key) ?? [];
-  if (mine.length >= limit) return Math.max(1, Math.ceil((mine[0] + HOUR - now) / 1000));
+  if (mine.length >= limit) return Math.max(1, Math.ceil((mine[0] + windowMs - now) / 1000));
   hits.set(key, [...mine, now]);
   return 0;
 }
@@ -65,7 +65,7 @@ function ipv6Groups(ip: string): string[] | null {
 }
 
 /** A keyed hash, so neither addresses nor emails are stored, and a leaked table cannot be reversed by brute force. */
-async function keyedHash(secret: string, value: string): Promise<string> {
+export async function keyedHash(secret: string, value: string): Promise<string> {
   const key = await crypto.subtle.importKey("raw", new TextEncoder().encode(secret), { name: "HMAC", hash: "SHA-256" }, false, ["sign"]);
   const mac = new Uint8Array(await crypto.subtle.sign("HMAC", key, new TextEncoder().encode(value)));
   return Array.from(mac, (b) => b.toString(16).padStart(2, "0")).join("");
@@ -108,7 +108,7 @@ class AttemptCounter {
 type Row = { user_id: string; email: string | null; confirmed_at: string | null; replaced_at: string | null; code_signed_in_at?: string | null };
 type Room = { accounts: boolean; guests: boolean };
 const clientSession = (s: GoTrueSession) => ({ access_token: s.access_token, refresh_token: s.refresh_token, expires_in: s.expires_in });
-const ipOf = (c: Context) => c.req.header("x-forwarded-for")?.split(",")[0]?.trim() || c.req.header("x-real-ip") || "unknown";
+export const ipOf = (c: Context) => c.req.header("x-forwarded-for")?.split(",")[0]?.trim() || c.req.header("x-real-ip") || "unknown";
 const enc = encodeURIComponent;
 const nowIso = () => new Date().toISOString();
 const guestDays = (env: Env) => Number(env.GUEST_DAYS) || 14;
