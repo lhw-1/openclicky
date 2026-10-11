@@ -44,7 +44,8 @@ done
 # A print that reports a failure sits next to an AppLog.append, so it reaches the log the person
 # can send (F-37). The print stays for the smoke runs.
 for name in BuddyDictationManager.swift AppleSpeechTranscriptionProvider.swift \
-            OpenAIAudioTranscriptionProvider.swift AssemblyAIStreamingTranscriptionProvider.swift; do
+            OpenAIAudioTranscriptionProvider.swift AssemblyAIStreamingTranscriptionProvider.swift \
+            OpenClickyAuthSession.swift BillingStatus.swift AccountCapabilities.swift OpenClickyConfiguration.swift; do
   file="$(source_file "$name")" || continue
   grep -q 'AppLog.append(' "$file" || fail "$name never writes to the app log"
   while IFS= read -r problem; do
