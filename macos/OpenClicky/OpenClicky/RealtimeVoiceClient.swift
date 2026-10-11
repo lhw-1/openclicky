@@ -31,6 +31,19 @@ struct RealtimeScreenContext {
     let capture: CompanionScreenCapture
 }
 
+/// The part of `URLSessionWebSocketTask` the client uses, so a test can stand in a socket that
+/// behaves like one whose handshake has not finished yet (it refuses every send).
+nonisolated protocol RealtimeSocket: AnyObject, Sendable {
+    var response: URLResponse? { get }
+    func resume()
+    func send(_ message: URLSessionWebSocketTask.Message, completionHandler: @escaping @Sendable (Error?) -> Void)
+    func receive(completionHandler: @escaping @Sendable (Result<URLSessionWebSocketTask.Message, Error>) -> Void)
+    func sendPing(pongReceiveHandler: @escaping @Sendable (Error?) -> Void)
+    func cancel(with closeCode: URLSessionWebSocketTask.CloseCode, reason: Data?)
+}
+
+extension URLSessionWebSocketTask: RealtimeSocket {}
+
 @MainActor
 final class RealtimeVoiceClient: NSObject, ObservableObject {
     enum TurnMode {
@@ -112,7 +125,11 @@ final class RealtimeVoiceClient: NSObject, ObservableObject {
     /// The prompt this client was created with; providers compose their skills block onto it.
     var baseInstructions: String { instructions }
 
-    private var webSocketTask: URLSessionWebSocketTask?
+    private var webSocketTask: RealtimeSocket?
+    /// True once the server's first event arrived on `webSocketTask`. Until then `send` refuses:
+    /// a message written while the WebSocket handshake is still in flight can fail with "Socket is
+    /// not connected", and a failed send tears the socket down (issue #1).
+    private var isSocketOpen = false
     private lazy var urlSession = URLSession(configuration: .default)
     private var connectTask: Task<Void, Error>?
     private var keepWarmTask: Task<Void, Never>?
@@ -286,7 +303,7 @@ final class RealtimeVoiceClient: NSObject, ObservableObject {
     }
 
     /// A pong within two seconds, or the socket is treated as gone.
-    private static func ping(_ socketTask: URLSessionWebSocketTask) async -> Bool {
+    private static func ping(_ socketTask: RealtimeSocket) async -> Bool {
         final class ResumeOnce: @unchecked Sendable {
             private let lock = NSLock()
             private var continuation: CheckedContinuation<Bool, Never>?
@@ -339,6 +356,7 @@ final class RealtimeVoiceClient: NSObject, ObservableObject {
         audio.release()
         webSocketTask?.cancel(with: .normalClosure, reason: nil)
         webSocketTask = nil
+        isSocketOpen = false
         if isConnected { isConnected = false }
         responseInProgress = false
         needsContinuationAfterResponse = false
@@ -388,26 +406,51 @@ final class RealtimeVoiceClient: NSObject, ObservableObject {
         }
         var socketRequest = URLRequest(url: socketRequestURL)
         socketRequest.setValue("Bearer \(clientSecret)", forHTTPHeaderField: "Authorization")
-        let task = urlSession.webSocketTask(with: socketRequest)
-        webSocketTask = task
-        task.resume()
-        receiveLoop(task)
+        try await startSession(
+            on: urlSession.webSocketTask(with: socketRequest),
+            model: model,
+            mode: mode,
+            instructions: connectInstructions,
+            whileWaitingForHandshake: {
+                // Push-to-talk only opens the microphone while the shortcut is held; always-on keeps
+                // it open. The graph is built once here (and released right away) so key-down is a
+                // fast engine restart. Nothing is forwarded yet: that starts with a press or with
+                // `startListeningContinuously`, both after the connect returns.
+                try await self.startAudioIfNeeded()
+                if mode == .pushToTalk { self.audio.pause() }
+            })
+    }
+
+    /// Opens `socket` and brings the session up, in this order: resume, wait for the server's first
+    /// event (normally `session.created`), then `session.update`, then connected. `session.update`
+    /// used to go out right after `resume()`, while the WebSocket handshake could still be in
+    /// flight; on the reporter's Mac that first send failed with "Socket is not connected" and the
+    /// fresh socket was torn down (issue #1). `whileWaitingForHandshake` overlaps the audio warm-up
+    /// with the handshake and must not send — `send` refuses until the first event anyway.
+    /// Not `private` so a test can drive it with a fake socket.
+    func startSession(
+        on socket: RealtimeSocket,
+        model: String,
+        mode: TurnMode,
+        instructions connectInstructions: String,
+        whileWaitingForHandshake: () async throws -> Void
+    ) async throws {
+        webSocketTask = socket
+        isSocketOpen = false
+        socket.resume()
+        receiveLoop(socket)
         currentMode = mode
-        // Push-to-talk only opens the microphone while the shortcut is held; always-on keeps it open.
-        // The graph is built once here (and released right away) so key-down is a fast engine restart.
-        try await startAudioIfNeeded()
-        if mode == .pushToTalk { audio.pause() }
-        try send(sessionUpdate(mode: mode, instructions: connectInstructions))
-        sentInstructions = connectInstructions
-        // Connected means OpenAI accepted the socket, not that `resume()` returned. `isConnected`
-        // used to be set here unconditionally, so a refused handshake (a 401) looked like success
-        // to the press, every send after it failed silently, and the turn hung on "processing".
+        // Connected means OpenAI accepted the socket, not that `resume()` returned. A refused
+        // handshake (a 401) fails the wait with its status, so the press says what was refused.
         do {
-            try await awaitHandshake(on: task)
+            try await whileWaitingForHandshake()
+            try await awaitHandshake(on: socket)
         } catch {
             closeConnection()
             throw error
         }
+        try send(sessionUpdate(mode: mode, instructions: connectInstructions))
+        sentInstructions = connectInstructions
         connectedAt = Date()
         lastServerEventAt = Date()
         isConnected = true
@@ -416,12 +459,14 @@ final class RealtimeVoiceClient: NSObject, ObservableObject {
 
     /// Waits for the server's first event on `task` (normally `session.created`), for up to ten
     /// seconds. The receive loop resolves it; the socket's first error fails it.
-    private func awaitHandshake(on task: URLSessionWebSocketTask) async throws {
+    private func awaitHandshake(on task: RealtimeSocket) async throws {
         if let refusal = handshakeFailureBeforeWaiting {
             handshakeFailureBeforeWaiting = nil
             throw RealtimeVoiceError.backend(refusal)
         }
-        if lastServerEventAt != nil, webSocketTask === task { return }
+        // The first event may already be in (it arrived during the audio warm-up). Not judged by
+        // `lastServerEventAt`: waking from sleep sets that to `.distantPast`, mid-connect too.
+        if isSocketOpen, webSocketTask === task { return }
         try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
             handshakeContinuation = continuation
             Task { @MainActor [weak self] in
@@ -791,7 +836,11 @@ final class RealtimeVoiceClient: NSObject, ObservableObject {
 
     private func startAudioIfNeeded() async throws {
         let microphoneAuthorization = AVCaptureDevice.authorizationStatus(for: .audio)
-        if !isAudioWired { log("microphone authorization: \(microphoneAuthorization.rawValue) (3 = authorized)") }
+        if !isAudioWired {
+            log(Self.microphoneAuthorizationDescription(
+                captureAuthorization: microphoneAuthorization,
+                recordPermission: AVAudioApplication.shared.recordPermission))
+        }
         guard microphoneAuthorization != .denied, microphoneAuthorization != .restricted else {
             throw RealtimeVoiceError.audio("microphone access is denied for OpenClicky (System Settings → Privacy & Security → Microphone)")
         }
@@ -803,9 +852,7 @@ final class RealtimeVoiceClient: NSObject, ObservableObject {
                         guard let self else { return }
                         self.inputLevel = level
                         guard self.isForwardingMicrophone else { return }
-                        self.microphoneAppends += 1
-                        self.pushToTalkTurnAudioBytes += pcm16.count
-                        try? self.send(["type": "input_audio_buffer.append", "audio": pcm16.base64EncodedString()])
+                        self.forwardMicrophoneAudio(pcm16: pcm16)
                     }
                 },
                 onPlaybackActiveChanged: { [weak self] isPlaying in
@@ -830,9 +877,45 @@ final class RealtimeVoiceClient: NSObject, ObservableObject {
     /// produced it, through the same forwarding path.
     func injectMicrophoneAudio(pcm16: Data) {
         guard isForwardingMicrophone else { return }
+        forwardMicrophoneAudio(pcm16: pcm16)
+    }
+
+    /// Counts a frame only once it was handed to an open socket, so "appends sent" in the smoke
+    /// summary and the push-to-talk turn's audio total mean audio the server can have received —
+    /// the reporter's summary of issue #1 said "appends sent 30" for a socket that was already gone.
+    private func forwardMicrophoneAudio(pcm16: Data) {
+        do {
+            try send(["type": "input_audio_buffer.append", "audio": pcm16.base64EncodedString()])
+        } catch {
+            return
+        }
         microphoneAppends += 1
         pushToTalkTurnAudioBytes += pcm16.count
-        try? send(["type": "input_audio_buffer.append", "audio": pcm16.base64EncodedString()])
+    }
+
+    /// The microphone line in the log. Run straight from a terminal (`--openclicky-smoke-talk`),
+    /// macOS attributes the microphone to the terminal, so this process reads "not determined"
+    /// while audio is captured fine; the line said "0 (3 = authorized)", which looked like a fault.
+    nonisolated static func microphoneAuthorizationDescription(
+        captureAuthorization: AVAuthorizationStatus,
+        recordPermission: AVAudioApplication.recordPermission
+    ) -> String {
+        let captureWords: String
+        switch captureAuthorization {
+        case .authorized: captureWords = "authorized"
+        case .denied: captureWords = "denied"
+        case .restricted: captureWords = "restricted"
+        case .notDetermined: captureWords = "not determined for this process (launched from a terminal? then the terminal's permission applies)"
+        @unknown default: captureWords = "unknown (\(captureAuthorization.rawValue))"
+        }
+        let recordWords: String
+        switch recordPermission {
+        case .granted: recordWords = "granted"
+        case .denied: recordWords = "denied"
+        case .undetermined: recordWords = "undetermined"
+        @unknown default: recordWords = "unknown"
+        }
+        return "microphone authorization: \(captureWords); record permission: \(recordWords)"
     }
 
     private func stopForwardingMicrophone() {
@@ -856,7 +939,7 @@ final class RealtimeVoiceClient: NSObject, ObservableObject {
     // MARK: - Socket plumbing
 
     private func send(_ object: [String: Any]) throws {
-        guard let webSocketTask else { throw RealtimeVoiceError.notConnected }
+        guard let webSocketTask, isSocketOpen else { throw RealtimeVoiceError.notConnected }
         let data = try JSONSerialization.data(withJSONObject: object)
         let sendingTask = webSocketTask
         webSocketTask.send(.string(String(decoding: data, as: UTF8.self))) { [weak self] error in
@@ -871,7 +954,7 @@ final class RealtimeVoiceClient: NSObject, ObservableObject {
         }
     }
 
-    private func receiveLoop(_ task: URLSessionWebSocketTask) {
+    private func receiveLoop(_ task: RealtimeSocket) {
         task.receive { [weak self] result in
             Task { @MainActor in
                 guard let self, self.webSocketTask === task else { return }
@@ -892,6 +975,7 @@ final class RealtimeVoiceClient: NSObject, ObservableObject {
                     self.markConnectionLost(reason)
                 case .success(let message):
                     self.lastServerEventAt = Date()
+                    self.isSocketOpen = true
                     if let pendingHandshake = self.handshakeContinuation {
                         self.handshakeContinuation = nil
                         pendingHandshake.resume()
@@ -907,6 +991,7 @@ final class RealtimeVoiceClient: NSObject, ObservableObject {
         let wasConnected = isConnected
         isConnected = false
         webSocketTask = nil
+        isSocketOpen = false
         connectedAt = nil
         stopForwardingMicrophone()
         responseInProgress = false
