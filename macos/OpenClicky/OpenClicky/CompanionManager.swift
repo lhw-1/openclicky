@@ -141,6 +141,50 @@ final class CompanionManager: ObservableObject {
         UserDefaults.standard.set(visible, forKey: "isOpenClickyMenuBarIconVisible")
     }
 
+    /// Where the island lives: the notch, a side drawer, or hidden while idle.
+    @Published private(set) var hudPlacement: HUDPlacement = .stored
+
+    func setHUDPlacement(_ placement: HUDPlacement) {
+        hudPlacement = placement
+        UserDefaults.standard.set(placement.rawValue, forKey: HUDPlacement.defaultsKey)
+        notchHUDManager.setPlacement(placement)
+        // With the island hidden the menu bar icon is the way into the panel and the window.
+        if placement == .hidden { setMenuBarIconVisible(true) }
+    }
+
+    #if DEBUG
+    /// The UI tour shows the busy strip without talking.
+    func debugSetVoiceState(_ state: CompanionVoiceState) { voiceState = state }
+    #endif
+
+    // MARK: - Quitting
+
+    private var isQuitting = false
+
+    /// Quits with a goodbye: a line typed into the island (and said by the system voice) that
+    /// tells how to bring OpenClicky back, then the app terminates. A second quit while the
+    /// goodbye plays quits at once.
+    func quitWithFarewell() {
+        guard !isQuitting else {
+            NSApp.terminate(nil)
+            return
+        }
+        isQuitting = true
+        let farewell = Farewell.random()
+        notchHUDManager.closeTextComposer()
+        notchHUDManager.showGoodbye(farewell.text)
+        let utterance = AVSpeechUtterance(string: farewell.spoken)
+        utterance.rate = AVSpeechUtteranceDefaultSpeechRate
+        systemSpeechSynthesizer.stopSpeaking(at: .immediate)
+        systemSpeechSynthesizer.speak(utterance)
+        // Long enough to type the line (30 ms a character) and read it, never long enough to feel stuck.
+        let typingSeconds = Double(farewell.text.count) * 0.03
+        let lingerSeconds = min(max(typingSeconds + 1.6, 2.6), 4.5)
+        DispatchQueue.main.asyncAfter(deadline: .now() + lingerSeconds) {
+            NSApp.terminate(nil)
+        }
+    }
+
     let realtimeVoiceClient = RealtimeVoiceClient()
     /// The user's skill library (~/.openclicky/skills) plus the bundled app-teaching skills.
     let skillLibraryStore = SkillLibraryStore()

@@ -1,0 +1,258 @@
+//
+//  UITour.swift
+//  OpenClicky
+//
+//  Debug builds only: `--openclicky-ui-tour <file>` walks every screen of the app (the window's
+//  sections and settings pages, scrolled top to bottom, in light and dark; the onboarding
+//  chapters; the island in each placement and state; the menu bar panel; the orb) and appends one
+//  line per shot to <file>: `SHOT <name> <windowNumber>`. A script outside the app captures each
+//  window by number (`screencapture -l`), so a design review gets every screen without anyone
+//  clicking through them and without anything else on the desktop in the pictures.
+//  scripts/capture-ui-tour.sh drives it.
+//
+
+#if DEBUG
+import AppKit
+
+@MainActor
+final class UITour {
+    private let companionManager: CompanionManager
+    private let logURL: URL
+    /// How long a step gets to draw before its shot is announced, and how long the capture gets.
+    private let settleNanoseconds: UInt64 = 1_400_000_000
+    private let captureNanoseconds: UInt64 = 1_100_000_000
+
+    init(companionManager: CompanionManager, logPath: String) {
+        self.companionManager = companionManager
+        self.logURL = URL(fileURLWithPath: logPath)
+    }
+
+    func run() {
+        FileManager.default.createFile(atPath: logURL.path, contents: nil)
+        Task { @MainActor in
+            // Run under a throwaway home (CFFIXED_USER_HOME, which scripts/capture-ui-tour.sh
+            // sets), the history is empty: fill it with made-up takes so the pages look used
+            // without showing anyone's real dictations. Never under the real home.
+            if ProcessInfo.processInfo.environment["CFFIXED_USER_HOME"] != nil { seedDemoTakes() }
+            // Let the launch finish (island, orb, permission checks) before the first shot.
+            try? await Task.sleep(nanoseconds: 4_000_000_000)
+            // OPENCLICKY_TOUR_ONLY=island,orb (window, onboarding, island, menubar, orb) runs a part.
+            let only = ProcessInfo.processInfo.environment["OPENCLICKY_TOUR_ONLY"].map { Set($0.split(separator: ",").map(String.init)) }
+            func includes(_ part: String) -> Bool { only?.contains(part) ?? true }
+            if includes("window") {
+                await tourWindow(appearanceName: "light", appearance: .light, scrolls: true)
+                await tourWindow(appearanceName: "dark", appearance: .dark, scrolls: false)
+            }
+            if includes("onboarding") {
+                await tourOnboarding()
+                closeTitledWindows()
+            }
+            if includes("island") { await tourIsland() }
+            if includes("menubar") { await tourMenuBarPanel() }
+            if includes("orb") { await tourOrb() }
+            log("DONE")
+            try? await Task.sleep(nanoseconds: 1_000_000_000)
+            exit(0)
+        }
+    }
+
+    // MARK: Demo history
+
+    private func seedDemoTakes() {
+        let demoTakes: [(String, String, String, Double)] = [
+            ("Can we move the design review to Thursday at 3? I want the new settings layout in front of everyone first.", "Slack", "com.tinyspeck.slackmacgap", 0.2),
+            ("Thanks for the notes. I've folded them into the draft and flagged the two open questions in yellow.", "Mail", "com.apple.mail", 0.6),
+            ("Add a retry button next to the failed upload so people don't have to start over.", "Linear", "com.linear", 1.1),
+            ("Remember to book the meeting room for Friday's demo.", "Notes", "com.apple.Notes", 2.0),
+            ("The onboarding should explain the shortcuts before it asks for permissions.", "Notion", "notion.id", 3.5),
+            ("Ship it once the tests pass and the changelog is updated.", "Terminal", "com.apple.Terminal", 5.0),
+            ("Lunch at the usual place? I can be there by half past twelve.", "Messages", "com.apple.MobileSMS", 7.5),
+            ("Please summarise the attached report in three bullet points for the newsletter.", "Safari", "com.apple.Safari", 26),
+            ("Rename the function to make it clear it only reads the file and never writes it.", "Xcode", "com.apple.dt.Xcode", 28),
+            ("Happy birthday! Hope the year ahead is a good one.", "Messages", "com.apple.MobileSMS", 50),
+            ("Draft a short reply saying we'd love to join the panel and asking for the schedule.", "Mail", "com.apple.mail", 52),
+            ("Grocery list: oat milk, coffee beans, lemons, and something for dinner on Sunday.", "Reminders", "com.apple.reminders", 75),
+            ("Let's keep the island black and make the settings window feel like System Settings.", "Slack", "com.tinyspeck.slackmacgap", 98),
+            ("Move the quit button somewhere people can find it without scrolling.", "Linear", "com.linear", 120),
+        ]
+        let now = Date()
+        for (text, appName, bundleID, hoursAgo) in demoTakes {
+            let take = TakeRecord(
+                createdAt: now.addingTimeInterval(-hoursAgo * 3600),
+                rawText: text, formattedText: text, appBundleID: bundleID, appName: appName,
+                language: "en", engine: "apple", durationSeconds: Double(text.count) / 14,
+                pasteOutcome: .verified)
+            try? companionManager.dictationTakeStore?.insert(take)
+        }
+    }
+
+    // MARK: Main window
+
+    private func tourWindow(appearanceName: String, appearance: DictationAppearance, scrolls: Bool) async {
+        let settings = companionManager.dictationSettings
+        let originalAppearance = settings.appearance
+        settings.appearance = appearance
+        defer { settings.appearance = originalAppearance }
+        var index = 0
+        for section in DictationSection.allCases where section != .settings {
+            index += 1
+            companionManager.showDictationWindow(section: section)
+            await shootWindow(named: String(format: "window-%@-%02d-%@", appearanceName, index, section.rawValue), window: mainWindow, scrolls: scrolls)
+        }
+        for page in DictationSettingsPage.allCases {
+            index += 1
+            companionManager.showDictationWindow(settingsPage: page)
+            await shootWindow(named: String(format: "window-%@-%02d-settings-%@", appearanceName, index, page.rawValue), window: mainWindow, scrolls: scrolls)
+        }
+    }
+
+    private var mainWindow: NSWindow? {
+        NSApp.windows.first { $0.windowController is DictationWindowController && $0.isVisible }
+    }
+
+    // MARK: Onboarding
+
+    private func tourOnboarding() async {
+        companionManager.showDictationOnboarding(replay: true)
+        guard let controller = NSApp.windows.compactMap({ $0.windowController as? OnboardingWindowController }).first else { return }
+        for chapter in OnboardingChapter.allCases {
+            controller.model.chapter = chapter
+            await shoot(String(format: "onboarding-%02d-%@", chapter.rawValue + 1, String(describing: chapter)), window: controller.window)
+        }
+        controller.close()
+    }
+
+    private func closeTitledWindows() {
+        for window in NSApp.windows where window.styleMask.contains(.titled) && window.isVisible {
+            window.close()
+        }
+    }
+
+    // MARK: Island
+
+    private func tourIsland() async {
+        let hud = companionManager.notchHUDManager
+        let originalPlacement = companionManager.hudPlacement
+        hud.debugKeepsPanelsOpen = true
+        defer {
+            hud.debugKeepsPanelsOpen = false
+            companionManager.setHUDPlacement(originalPlacement)
+        }
+
+        for placement in [HUDPlacement.notch, .right, .left] {
+            companionManager.setHUDPlacement(placement)
+            let prefix = "island-\(placement.rawValue)"
+            hud.debugCloseAll()
+            await shoot("\(prefix)-01-collapsed", window: hud.debugPrimaryWindow)
+            hud.debugOpenPrimaryPanel()
+            for (number, tab) in [(2, NotchHUDTab.home), (3, .agents), (4, .settings)] {
+                hud.debugSelect(tab)
+                if tab == .settings {
+                    await shootWindow(named: "\(prefix)-0\(number)-\(tab.rawValue)", window: hud.debugPrimaryWindow, scrolls: true)
+                } else {
+                    await shoot("\(prefix)-0\(number)-\(tab.rawValue)", window: hud.debugPrimaryWindow)
+                }
+            }
+            hud.debugSelect(.home)
+            hud.debugCloseAll()
+            if placement != .notch { continue }
+
+            companionManager.debugSetVoiceState(.listening)
+            await shoot("\(prefix)-05-busy-listening", window: hud.debugPrimaryWindow)
+            companionManager.debugSetVoiceState(.processing)
+            await shoot("\(prefix)-06-busy-thinking", window: hud.debugPrimaryWindow)
+            companionManager.debugSetVoiceState(.idle)
+
+            hud.openTextComposer()
+            await shoot("\(prefix)-07-text-composer", window: hud.debugPrimaryWindow)
+            hud.closeTextComposer()
+
+            hud.showCaption(Farewell.all[0].text, holdSeconds: 6)
+            try? await Task.sleep(nanoseconds: UInt64(Farewell.all[0].text.count) * 30_000_000)
+            await shoot("\(prefix)-08-goodbye-caption", window: hud.debugPrimaryWindow)
+            hud.clearCaption()
+        }
+    }
+
+    // MARK: Menu bar panel and orb
+
+    private func tourMenuBarPanel() async {
+        NotificationCenter.default.post(name: .clickyShowPanel, object: nil)
+        await shoot("menubar-panel", window: NSApp.windows.first { String(describing: type(of: $0)) == "KeyablePanel" && $0.isVisible })
+        NotificationCenter.default.post(name: .clickyDismissPanel, object: nil)
+    }
+
+    private func tourOrb() async {
+        let settings = companionManager.dictationSettings
+        let wasVisible = settings.orbVisible
+        settings.orbVisible = true
+        defer { settings.orbVisible = wasVisible }
+        await shoot("orb-idle", window: NSApp.windows.first { String(describing: type(of: $0)) == "OrbWindow" && $0.isVisible })
+    }
+
+    // MARK: Shots
+
+    /// One shot, or (with `scrolls`) one shot per screenful of the window's largest scroll view.
+    private func shootWindow(named name: String, window: NSWindow?, scrolls: Bool) async {
+        try? await Task.sleep(nanoseconds: settleNanoseconds)
+        guard scrolls, let window, let scrollView = Self.largestScrollableView(in: window.contentView) else {
+            await shoot(name, window: window)
+            return
+        }
+        let visibleHeight = scrollView.contentView.bounds.height
+        let documentHeight = scrollView.documentView?.bounds.height ?? visibleHeight
+        let step = max(120, visibleHeight - 80)
+        var offset: CGFloat = 0
+        var part = 1
+        while true {
+            Self.scroll(scrollView, toTopOffset: offset, documentHeight: documentHeight)
+            await shoot(part == 1 ? name : "\(name)-part\(part)", window: window, settles: part > 1)
+            if offset + visibleHeight >= documentHeight - 1 || part >= 8 { break }
+            offset = min(offset + step, documentHeight - visibleHeight)
+            part += 1
+        }
+        Self.scroll(scrollView, toTopOffset: 0, documentHeight: documentHeight)
+    }
+
+    private func shoot(_ name: String, window: NSWindow?, settles: Bool = true) async {
+        if settles { try? await Task.sleep(nanoseconds: settleNanoseconds) }
+        guard let window else {
+            log("MISSING \(name)")
+            return
+        }
+        log("SHOT \(name) \(window.windowNumber)")
+        try? await Task.sleep(nanoseconds: captureNanoseconds)
+    }
+
+    private func log(_ line: String) {
+        guard let handle = try? FileHandle(forWritingTo: logURL) else { return }
+        handle.seekToEndOfFile()
+        handle.write(Data((line + "\n").utf8))
+        try? handle.close()
+    }
+
+    private static func largestScrollableView(in view: NSView?) -> NSScrollView? {
+        guard let view else { return nil }
+        var best: NSScrollView?
+        var stack: [NSView] = [view]
+        while let next = stack.popLast() {
+            if let scrollView = next as? NSScrollView,
+               let documentView = scrollView.documentView,
+               documentView.bounds.height > scrollView.contentView.bounds.height + 4 {
+                let area = scrollView.frame.width * scrollView.frame.height
+                if area > (best.map { $0.frame.width * $0.frame.height } ?? 0) { best = scrollView }
+            }
+            stack.append(contentsOf: next.subviews)
+        }
+        return best
+    }
+
+    private static func scroll(_ scrollView: NSScrollView, toTopOffset offset: CGFloat, documentHeight: CGFloat) {
+        let isFlipped = scrollView.documentView?.isFlipped ?? true
+        let visibleHeight = scrollView.contentView.bounds.height
+        let y = isFlipped ? offset : max(0, documentHeight - visibleHeight - offset)
+        scrollView.contentView.scroll(to: NSPoint(x: 0, y: y))
+        scrollView.reflectScrolledClipView(scrollView.contentView)
+    }
+}
+#endif

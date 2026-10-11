@@ -20,6 +20,13 @@ extension SettingsCatalog {
                 keywords: ["light", "dark", "match the mac", "theme", "mode", "colour", "color"],
                 view: AnyView(AppearancePicker(settings: settings))),
             SettingsItem(
+                id: "general.hudPlacement", page: .general, section: "appearance",
+                title: "where openclicky lives", detail: "the notch, a drawer on the left or right edge, or hidden until you use a shortcut.",
+                keywords: ["notch", "island", "hud", "side", "edge", "drawer", "hide", "hidden", "position", "placement", "shortcuts only"],
+                view: AnyView(SettingsRow(title: "where openclicky lives", detail: "the notch, a drawer on the left or right edge, or hidden until you use a shortcut.") {
+                    HUDPlacementPicker(companionManager: companionManager)
+                })),
+            SettingsItem(
                 id: "general.openAtLogin", page: .general, section: "behavior",
                 title: "open at login", detail: "start openclicky when you log in, so \(dictationKeyName) always works.",
                 keywords: ["startup", "launch", "restart", "login item", "boot"],
@@ -72,6 +79,22 @@ extension SettingsCatalog {
 }
 
 // MARK: - appearance
+
+private struct HUDPlacementPicker: View {
+    @ObservedObject var companionManager: CompanionManager
+
+    var body: some View {
+        Picker("", selection: Binding(
+            get: { companionManager.hudPlacement },
+            set: { companionManager.setHUDPlacement($0) }
+        )) {
+            ForEach(HUDPlacement.allCases) { placement in Text(placement.title).tag(placement) }
+        }
+        .labelsHidden()
+        .pickerStyle(.menu)
+        .frame(width: 140)
+    }
+}
 
 private struct AppearancePicker: View {
     @ObservedObject var settings: DictationSettings

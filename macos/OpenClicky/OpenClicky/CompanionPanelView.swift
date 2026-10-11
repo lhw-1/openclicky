@@ -418,7 +418,7 @@ struct CompanionPanelView: View {
             .pointerCursor()
             Spacer()
             Button(action: {
-                NSApp.terminate(nil)
+                companionManager.quitWithFarewell()
             }) {
                 HStack(spacing: 6) {
                     Image(systemName: "power")

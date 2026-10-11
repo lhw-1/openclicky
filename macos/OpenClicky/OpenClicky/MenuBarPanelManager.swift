@@ -105,6 +105,7 @@ final class MenuBarPanelManager: NSObject {
         guard let statusItem else { return }
         let menu = NSMenu()
         menu.addItem(withTitle: "open openclicky", action: #selector(openWindow), keyEquivalent: "").target = self
+        menu.addItem(withTitle: "open the island", action: #selector(openIsland), keyEquivalent: "").target = self
         menu.addItem(withTitle: "history", action: #selector(openHistory), keyEquivalent: "").target = self
         let dictationItem = NSMenuItem(title: companionManager.dictationSettings.orbVisible ? "hide the orb" : "show the orb", action: #selector(toggleOrb), keyEquivalent: "")
         dictationItem.target = self
@@ -125,12 +126,13 @@ final class MenuBarPanelManager: NSObject {
     }
 
     @objc private func openWindow() { companionManager.showDictationWindow(section: .record) }
+    @objc private func openIsland() { companionManager.notchHUDManager.openPanel() }
     @objc private func openHistory() { companionManager.showDictationWindow(section: .history) }
     @objc private func openSettings() { companionManager.showDictationWindow(settingsPage: .general) }
     @objc private func toggleOrb() { companionManager.dictationSettings.orbVisible.toggle() }
     @objc private func toggleIncognito() { companionManager.dictationSettings.incognito.toggle() }
     @objc private func checkForUpdates() { AppUpdater.shared.start(); AppUpdater.shared.checkNow() }
-    @objc private func quit() { NSApp.terminate(nil) }
+    @objc private func quit() { companionManager.quitWithFarewell() }
 
     /// The mark, as a template image: the ring and its pointer, matching the app icon.
     private func makeClickyMenuBarIcon() -> NSImage {

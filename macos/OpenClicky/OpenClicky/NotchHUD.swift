@@ -13,6 +13,8 @@
 //                comes to the front for the first time (never / not now / connect + example prompts)
 //    full      — the notch app that opens on hover or click: home, agents, settings tabs
 //  The cursor buddy can dock here: it flies into the notch and lives in the HUD as a glowing badge.
+//  `HUDPlacement` moves the island: the notch (above), a drawer on the left or right screen edge
+//  (collapsed to a vertical handle), or hidden while idle (shortcuts only).
 //
 
 import AppKit
@@ -28,6 +30,8 @@ struct NotchGeometry: Equatable {
     let hasHardwareNotch: Bool
     let notchWidth: CGFloat
     let notchHeight: CGFloat
+    /// The screen minus the menu bar and Dock: where a side drawer may hang.
+    var visibleFrame: CGRect = .zero
 
     var notchRect: CGRect {
         CGRect(x: screenFrame.midX - notchWidth / 2, y: screenFrame.maxY - notchHeight, width: notchWidth, height: notchHeight)
@@ -44,9 +48,16 @@ struct NotchGeometry: Equatable {
            let leftAuxiliaryArea = screen.auxiliaryTopLeftArea,
            let rightAuxiliaryArea = screen.auxiliaryTopRightArea {
             let hardwareNotchWidth = screen.frame.width - leftAuxiliaryArea.width - rightAuxiliaryArea.width
-            return NotchGeometry(screenFrame: screen.frame, hasHardwareNotch: true, notchWidth: hardwareNotchWidth, notchHeight: topSafeAreaInset)
+            return NotchGeometry(screenFrame: screen.frame, hasHardwareNotch: true, notchWidth: hardwareNotchWidth, notchHeight: topSafeAreaInset, visibleFrame: screen.visibleFrame)
         }
         return virtualNotch(screenFrame: screen.frame, visibleFrame: screen.visibleFrame)
+    }
+
+    /// The geometry the island is laid out in for a placement. A side drawer has no notch band to
+    /// clear, so its cards start at the top of the island like on a display without a notch.
+    static func forScreen(_ screen: NSScreen, placement: HUDPlacement) -> NotchGeometry {
+        guard placement.isSideDrawer else { return forScreen(screen) }
+        return NotchGeometry(screenFrame: screen.frame, hasHardwareNotch: false, notchWidth: 190, notchHeight: 0, visibleFrame: screen.visibleFrame)
     }
 
     /// A display without a hardware notch hangs the island from its menu bar band. A display that
@@ -55,7 +66,7 @@ struct NotchGeometry: Equatable {
     /// is no band and the island starts at the very top edge, like HeyClicky's.
     static func virtualNotch(screenFrame: CGRect, visibleFrame: CGRect) -> NotchGeometry {
         let menuBarBandHeight = max(0, screenFrame.maxY - visibleFrame.maxY)
-        return NotchGeometry(screenFrame: screenFrame, hasHardwareNotch: false, notchWidth: 190, notchHeight: menuBarBandHeight)
+        return NotchGeometry(screenFrame: screenFrame, hasHardwareNotch: false, notchWidth: 190, notchHeight: menuBarBandHeight, visibleFrame: visibleFrame)
     }
 }
 
@@ -83,6 +94,7 @@ final class NotchHUDModel: ObservableObject {
     @Published private(set) var expansion: NotchHUDExpansion = .collapsed
     @Published var activeTab: NotchHUDTab = .home
     @Published var geometry: NotchGeometry
+    @Published var placement: HUDPlacement = .notch
 
     // Sizes from the refinement sheet: every card and the open panel are 512 pt wide, the Home
     // panel 512 × 232 pt and the Agents panel 512 × 392 pt, including the menu-bar band the island
@@ -124,9 +136,11 @@ final class NotchHUDModel: ObservableObject {
     /// True while the busy strip has a line to show under its status (the agent's progress, or
     /// what was asked while the answer is spoken); set by the HUD manager.
     @Published private(set) var hasCompactDetailLine = false
+    /// The goodbye on quit: its caption shows even over a busy strip, and nothing opens after it.
+    @Published private(set) var isSayingGoodbye = false
 
-    /// The caption strip shows only while nothing busier needs the island.
-    var isShowingCaption: Bool { captionText != nil && !isBusy }
+    /// The caption strip shows only while nothing busier needs the island (the goodbye excepted).
+    var isShowingCaption: Bool { captionText != nil && (!isBusy || isSayingGoodbye) }
 
     /// True while the cursor buddy is docked; mirrored from CompanionManager by the HUD manager.
     @Published private(set) var isCursorDocked = false
@@ -136,8 +150,21 @@ final class NotchHUDModel: ObservableObject {
     /// Displays without a notch show only the handle line, flush with the top edge of the screen
     /// (inside the menu bar band, where the notch would be), like HeyClicky's.
     let handleStripHeight: CGFloat = 12
+    /// A side drawer collapses to a vertical handle this tall against the screen edge.
+    let sideHandleLength: CGFloat = 64
+    var collapsedWidth: CGFloat {
+        switch placement {
+        case .notch: return geometry.notchWidth
+        case .left, .right: return handleStripHeight
+        case .hidden: return 0
+        }
+    }
     var collapsedHeight: CGFloat {
-        return geometry.hasHardwareNotch ? geometry.notchHeight + collapsedLipHeight : handleStripHeight
+        switch placement {
+        case .notch: return geometry.hasHardwareNotch ? geometry.notchHeight + collapsedLipHeight : handleStripHeight
+        case .left, .right: return sideHandleLength
+        case .hidden: return 0
+        }
     }
     var compactHeight: CGFloat { geometry.notchHeight + compactContentHeight }
     /// Where a card's content starts: under the notch band on a notch screen; elsewhere the island
@@ -164,7 +191,7 @@ final class NotchHUDModel: ObservableObject {
 
     var width: CGFloat {
         switch expansion {
-        case .collapsed: return geometry.notchWidth
+        case .collapsed: return collapsedWidth
         case .compact: return compactWidth
         case .connect: return connectWidth
         case .permission: return permissionWidth
@@ -183,6 +210,52 @@ final class NotchHUDModel: ObservableObject {
         case .full: return fullHeight
         }
     }
+
+    /// How far the window reaches past the island on its open sides, so the hover margin and the
+    /// opening spring are not clipped.
+    let windowMargin: CGFloat = 16
+
+    /// The island's rectangle on screen (AppKit coordinates) for a size: centred under the notch,
+    /// or against the chosen screen edge with its top a fifth of the way down (lifted when a tall
+    /// panel would run past the bottom of the screen).
+    func islandFrame(width: CGFloat, height: CGFloat) -> CGRect {
+        switch placement {
+        case .notch, .hidden:
+            return CGRect(x: geometry.notchRect.midX - width / 2, y: geometry.screenFrame.maxY - height, width: width, height: height)
+        case .left, .right:
+            let area = geometry.visibleFrame.isEmpty ? geometry.screenFrame : geometry.visibleFrame
+            let top = min(area.maxY, max(area.maxY - area.height * 0.2, area.minY + height))
+            let x = placement == .left ? area.minX : area.maxX - width
+            return CGRect(x: x, y: top - height, width: width, height: height)
+        }
+    }
+
+    var islandFrame: CGRect { islandFrame(width: width, height: height) }
+
+    /// Where the docked buddy "lives": under the notch, or just inside a side drawer's handle.
+    var dockPoint: CGPoint {
+        guard placement.isSideDrawer else { return geometry.dockPoint }
+        let handle = islandFrame(width: collapsedWidth, height: collapsedHeight)
+        return CGPoint(x: placement == .left ? handle.maxX + 6 : handle.minX - 6, y: handle.midY)
+    }
+
+    /// The window around the island: the island plus `windowMargin` on every side that does not
+    /// touch the screen edge it hangs from.
+    var windowFrame: CGRect {
+        let island = islandFrame
+        let margin = windowMargin
+        switch placement {
+        case .notch, .hidden:
+            return CGRect(x: island.minX - margin, y: island.minY - margin, width: island.width + margin * 2, height: island.height + margin)
+        case .left:
+            return CGRect(x: island.minX, y: island.minY - margin, width: island.width + margin, height: island.height + margin * 2)
+        case .right:
+            return CGRect(x: island.minX - margin, y: island.minY - margin, width: island.width + margin, height: island.height + margin * 2)
+        }
+    }
+
+    /// Hidden and idle, the island is nothing at all: no hover zone, no click target.
+    var isInvisible: Bool { placement == .hidden && expansion == .collapsed }
 
     /// Called whenever the expansion or tab changes so the window can resize itself.
     var onLayoutChanged: (() -> Void)?
@@ -257,6 +330,23 @@ final class NotchHUDModel: ObservableObject {
         reconcile()
     }
 
+    /// Opens the full panel and keeps it open until a click elsewhere (the menu bar's "open the
+    /// island", the only way in when the island is hidden).
+    func openPinned() {
+        isPinnedOpen = true
+        reconcile(immediately: true)
+    }
+
+    /// The goodbye caption takes the island over and nothing else opens until the app quits.
+    func beginGoodbye() {
+        isSayingGoodbye = true
+        isPinnedOpen = false
+        isHovering = false
+        isComposerOpen = false
+        reconcile(immediately: true)
+        onLayoutChanged?()
+    }
+
     func close() {
         isPinnedOpen = false
         isHovering = false
@@ -301,7 +391,10 @@ final class NotchHUDModel: ObservableObject {
     private func reconcile(immediately: Bool = false) {
         collapseTask?.cancel()
         let target: NotchHUDExpansion
-        if isComposerOpen {
+        if isSayingGoodbye {
+            setExpansion(.compact)
+            return
+        } else if isComposerOpen {
             // The composer has the keyboard: nothing swaps it out until it is closed.
             target = .composer
         } else if permissionPrompt != nil {
@@ -389,6 +482,10 @@ final class NotchHUDManager {
     }
 
     private var instances: [Instance] = []
+    #if DEBUG
+    /// The UI tour keeps a pinned panel open through clicks elsewhere on the desktop.
+    var debugKeepsPanelsOpen = false
+    #endif
     private weak var companionManager: CompanionManager?
     private var isShown = false
     private var isBusy = false
@@ -397,6 +494,8 @@ final class NotchHUDManager {
     private var clickOutsideMonitor: Any?
     private var hoverPollTimer: Timer?
     private var busyCancellables = Set<AnyCancellable>()
+    /// Where the islands live (Settings → general → "where openclicky lives").
+    private(set) var placement = HUDPlacement.stored
 
     /// The screen the primary HUD lives on: the one with a hardware notch, else the menu-bar screen.
     /// (`NSScreen.main` follows keyboard focus and can be an external display.)
@@ -413,7 +512,7 @@ final class NotchHUDManager {
     }
 
     /// Where the docked buddy lives (primary screen).
-    var dockPoint: CGPoint { dockGeometry.dockPoint }
+    var dockPoint: CGPoint { primaryInstance?.model.dockPoint ?? dockGeometry.dockPoint }
 
     /// The display the buddy docks on (AppKit global frame), so a flight from another display
     /// can be split at the display edges.
@@ -557,6 +656,34 @@ final class NotchHUDManager {
         instances.forEach { $0.window.orderOut(nil) }
     }
 
+    /// Moves every island to `placement` (notch, a side drawer, or hidden while idle).
+    func setPlacement(_ placement: HUDPlacement) {
+        guard self.placement != placement else { return }
+        self.placement = placement
+        for instance in instances {
+            instance.model.close()
+            instance.model.placement = placement
+            if let screen = NSScreen.screens.first(where: { Self.screenID(of: $0) == instance.screenID }) {
+                instance.model.geometry = NotchGeometry.forScreen(screen, placement: placement)
+            }
+            // Jump straight to the new spot: a delayed shrink would leave the old frame on screen.
+            instance.window.setFrame(instance.model.windowFrame, display: true)
+            fitHostingViewToWindow(instance)
+            instance.window.ignoresMouseEvents = instance.model.isInvisible
+        }
+    }
+
+    /// Opens the full panel on the island under the pointer and keeps it open.
+    func openPanel() {
+        instanceUnderPointer?.model.openPinned()
+    }
+
+    /// Types the goodbye into every island, over whatever it was showing.
+    func showGoodbye(_ message: String) {
+        instances.forEach { $0.model.beginGoodbye() }
+        showCaption(message, holdSeconds: 30)
+    }
+
     /// Shows the "Connect <app> to OpenClicky" card on every screen's island (nil hides it).
     func setConnectPrompt(_ prompt: AppConnectPrompt?) {
         connectPrompt = prompt
@@ -583,12 +710,13 @@ final class NotchHUDManager {
 
         for screen in screens {
             let screenID = Self.screenID(of: screen)
-            let geometry = NotchGeometry.forScreen(screen)
+            let geometry = NotchGeometry.forScreen(screen, placement: placement)
             if let existing = instances.first(where: { $0.screenID == screenID }) {
                 if existing.model.geometry != geometry { existing.model.geometry = geometry }
                 continue
             }
             let model = NotchHUDModel(geometry: geometry)
+            model.placement = placement
             model.hostsDockedCursor = Self.primaryScreen.map(Self.screenID(of:)) == screenID
             model.setBusy(isBusy)
             model.setCompactDetailLine(hasCompactDetailLine)
@@ -669,6 +797,9 @@ final class NotchHUDManager {
         clickOutsideMonitor = NSEvent.addGlobalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown]) { [weak self] _ in
             Task { @MainActor in
                 guard let self else { return }
+                #if DEBUG
+                if self.debugKeepsPanelsOpen { return }
+                #endif
                 for instance in self.instances where instance.model.expansion == .full {
                     instance.model.close()
                 }
@@ -687,46 +818,33 @@ final class NotchHUDManager {
                 let mouseLocation = NSEvent.mouseLocation
                 for instance in self.instances {
                     let model = instance.model
-                    let geometry = model.geometry
+                    guard !model.isInvisible else {
+                        model.setHovering(false)
+                        continue
+                    }
                     let hoverMargin: CGFloat = model.expansion == .collapsed ? 6 : 14
-                    let islandRect = NSRect(
-                        x: geometry.notchRect.midX - model.width / 2 - hoverMargin,
-                        y: geometry.screenFrame.maxY - model.height - hoverMargin,
-                        width: model.width + hoverMargin * 2,
-                        height: model.height + hoverMargin
-                    )
-                    model.setHovering(islandRect.contains(mouseLocation))
+                    let hoverRect = model.islandFrame.insetBy(dx: -hoverMargin, dy: -hoverMargin)
+                    model.setHovering(hoverRect.contains(mouseLocation))
                 }
             }
         }
     }
 
-    private func targetFrame(for model: NotchHUDModel) -> NSRect {
-        let geometry = model.geometry
-        let hoverMargin: CGFloat = 16
-        let width = model.width + hoverMargin * 2
-        let height = model.height + hoverMargin
-        return NSRect(
-            x: geometry.notchRect.midX - width / 2,
-            y: geometry.screenFrame.maxY - height,
-            width: width,
-            height: height
-        )
-    }
-
     private func resizeWindow(_ instance: Instance) {
         let window = instance.window
-        let frame = targetFrame(for: instance.model)
+        let frame = instance.model.windowFrame
         let isGrowing = frame.width >= window.frame.width && frame.height >= window.frame.height
         if isGrowing {
             window.setFrame(frame, display: true)
             fitHostingViewToWindow(instance)
+            window.ignoresMouseEvents = instance.model.isInvisible
         } else {
             // Shrink after the closing animation so the content is not clipped mid-spring.
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.45) { [weak self, weak instance] in
                 guard let self, let instance else { return }
-                instance.window.setFrame(self.targetFrame(for: instance.model), display: true)
+                instance.window.setFrame(instance.model.windowFrame, display: true)
                 self.fitHostingViewToWindow(instance)
+                instance.window.ignoresMouseEvents = instance.model.isInvisible
             }
         }
     }
@@ -740,6 +858,20 @@ final class NotchHUDManager {
         instance.hostingView.layoutSubtreeIfNeeded()
     }
 }
+
+#if DEBUG
+// MARK: - UI tour hooks (UITour.swift)
+
+extension NotchHUDManager {
+    var debugPrimaryWindow: NSWindow? { primaryInstance?.window }
+
+    func debugSelect(_ tab: NotchHUDTab) { primaryInstance?.model.select(tab) }
+
+    func debugCloseAll() { instances.forEach { $0.model.close() } }
+
+    func debugOpenPrimaryPanel() { primaryInstance?.model.openPinned() }
+}
+#endif
 
 // MARK: - Root view
 
@@ -758,17 +890,47 @@ struct NotchHUDView: View {
         }
     }
     /// How far the top corners curve outward into the menu bar (measured from HeyClicky: ~6 pt).
-    private let topCornerFlare: CGFloat = 6
+    /// A side drawer hangs from a screen edge instead, so it has none.
+    private var topCornerFlare: CGFloat { model.placement.isSideDrawer ? 0 : 6 }
+
+    /// Where the island sits in its window: centred at the top under the notch, or against the
+    /// screen edge a side drawer hangs from (the window's margin is on the other three sides).
+    private var islandAlignment: Alignment {
+        switch model.placement {
+        case .notch, .hidden: return .top
+        case .left: return .topLeading
+        case .right: return .topTrailing
+        }
+    }
+
+    /// The island's outline: the notch shape, or a drawer whose screen-side corners are square.
+    @ViewBuilder
+    private var islandBackground: some View {
+        if model.placement.isSideDrawer {
+            let radius = bottomCornerRadius
+            let isLeft = model.placement == .left
+            UnevenRoundedRectangle(
+                topLeadingRadius: isLeft ? 0 : radius,
+                bottomLeadingRadius: isLeft ? 0 : radius,
+                bottomTrailingRadius: isLeft ? radius : 0,
+                topTrailingRadius: isLeft ? radius : 0,
+                style: .continuous
+            )
+            .fill(DS.HUD.island)
+        } else {
+            NotchIslandShape(bottomCornerRadius: bottomCornerRadius, topCornerFlare: topCornerFlare)
+                .fill(DS.HUD.island)
+        }
+    }
 
     var body: some View {
         ZStack(alignment: .top) {
             // Solid black, no border, no shadow: the island reads as part of the notch. On a display
             // without a notch nothing is drawn while collapsed (no fake notch over the menu bar): only
             // the thin handle below marks where to hover.
-            if expansion != .collapsed || model.geometry.hasHardwareNotch {
+            if expansion != .collapsed || (model.placement == .notch && model.geometry.hasHardwareNotch) {
                 // Collapsed, the black is the notch itself.
-                NotchIslandShape(bottomCornerRadius: bottomCornerRadius, topCornerFlare: topCornerFlare)
-                    .fill(DS.HUD.island)
+                islandBackground
                     .frame(width: model.width + topCornerFlare * 2, height: expansion == .collapsed ? notchHeight : model.height)
                     .onTapGesture { if expansion != .connect && expansion != .permission && expansion != .composer { model.togglePinned() } }
             }
@@ -778,7 +940,19 @@ struct NotchHUDView: View {
             // content inside the smaller window.
             switch expansion {
             case .collapsed:
-                if model.geometry.hasHardwareNotch {
+                if model.placement == .hidden {
+                    // Shortcuts only: nothing on screen until something happens.
+                    EmptyView()
+                } else if model.placement.isSideDrawer {
+                    // The drawer's handle: a short vertical line against the screen edge.
+                    Capsule()
+                        .fill(Color.black.opacity(0.7))
+                        .frame(width: 6, height: 44)
+                        .overlay(Capsule().fill(Color.white.opacity(0.75)).frame(width: 2, height: 36))
+                        .frame(width: model.width, height: model.height)
+                        .allowsHitTesting(false)
+                        .transition(.opacity)
+                } else if model.geometry.hasHardwareNotch {
                     // The island is exactly the notch: no lip, no handle. Hovering the notch opens it.
                     EmptyView()
                 } else {
@@ -835,7 +1009,8 @@ struct NotchHUDView: View {
                     .transition(.opacity.combined(with: .scale(scale: 0.96, anchor: .top)))
             }
         }
-        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+        .padding(.top, model.placement.isSideDrawer ? model.windowMargin : 0)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: islandAlignment)
         .contentShape(Rectangle())
         .animation(.spring(response: 0.42, dampingFraction: 0.84), value: expansion)
         .animation(.spring(response: 0.42, dampingFraction: 0.84), value: model.activeTab)

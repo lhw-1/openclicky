@@ -81,6 +81,9 @@ struct NotchTabBar: View {
                 bandIconButton(systemImage: "gearshape.fill", help: "settings", isSelected: model.activeTab == .settings) {
                     model.select(model.activeTab == .settings ? .home : .settings)
                 }
+                bandIconButton(systemImage: "power", help: "quit openclicky", isSelected: false) {
+                    companionManager.quitWithFarewell()
+                }
             }
             .frame(maxWidth: sideClusterWidth, alignment: .trailing)
         }
@@ -284,7 +287,7 @@ struct NotchPointerCard: View {
 
             HStack(spacing: 8) {
                 Button(action: { companionManager.setCursorDocked(!isDocked) }) {
-                    Text(isDocked ? "release the pointer" : "dock in the notch")
+                    Text(isDocked ? "release the pointer" : (model.placement.isSideDrawer ? "dock in the drawer" : "dock in the notch"))
                         .font(.system(size: 14, weight: .semibold))
                         .foregroundColor(.black)
                         .frame(maxWidth: .infinity)
@@ -332,7 +335,7 @@ struct NotchPointerCard: View {
     /// What the pointer is doing now, from the dock state, the "show the pointer" switch and the
     /// "the pointer shows" setting.
     private var pointerStateText: String {
-        if companionManager.isCursorDocked { return "pointer is docked under the notch" }
+        if companionManager.isCursorDocked { return model.placement.isSideDrawer ? "pointer is docked in the drawer" : "pointer is docked under the notch" }
         if !companionManager.isClickyCursorEnabled { return "pointer shows only while you talk" }
         switch companionManager.pointerPresence {
         case .always: return "pointer is following your mouse"
@@ -1181,6 +1184,7 @@ struct NotchSettingsView: View {
                 .padding(.top, 6)
             VStack(spacing: 0) {
                 languageRow
+                placementRow
                 // Realtime voice and hands-free run on OpenAI Realtime, which only an own OpenAI key
                 // can use. A free account would see switches that do nothing (and a "turn it on"
                 // note while it already looked on), so it gets one plain line instead.
@@ -1228,7 +1232,7 @@ struct NotchSettingsView: View {
                 moreActionRow(systemImage: "ladybug", title: "report a bug", detail: "opens the project's issue tracker") {
                     if let url = URL(string: "https://github.com/prasanthsasikumar/openclicky/issues") { NSWorkspace.shared.open(url) }
                 }
-                moreActionRow(systemImage: "power", title: "quit openclicky", detail: nil) { NSApp.terminate(nil) }
+                moreActionRow(systemImage: "power", title: "quit openclicky", detail: nil) { companionManager.quitWithFarewell() }
             }
             .background(RoundedRectangle(cornerRadius: 12, style: .continuous).fill(DS.HUD.surface))
         }
@@ -1259,6 +1263,30 @@ struct NotchSettingsView: View {
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 8)
+    }
+
+    /// Where the island lives: the notch, a drawer on either screen edge, or hidden (shortcuts only).
+    private var placementRow: some View {
+        HStack {
+            VStack(alignment: .leading, spacing: 1) {
+                Text("where openclicky lives").font(.system(size: 13, weight: .semibold)).foregroundColor(DS.HUD.text)
+                Text(companionManager.hudPlacement.detail).font(.system(size: 11)).foregroundColor(DS.HUD.text3).lineLimit(2)
+            }
+            Spacer()
+            Picker("", selection: Binding(
+                get: { companionManager.hudPlacement },
+                set: { companionManager.setHUDPlacement($0) }
+            )) {
+                ForEach(HUDPlacement.allCases) { placement in Text(placement.title).tag(placement) }
+            }
+            .labelsHidden()
+            .pickerStyle(.menu)
+            .frame(width: 120)
+            .pointerCursor()
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 8)
+        .overlay(alignment: .top) { Rectangle().fill(DS.HUD.line).frame(height: 1) }
     }
 
     /// What a free account sees in place of the fast-voice and always-listening switches.
