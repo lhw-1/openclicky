@@ -5,7 +5,7 @@ import { proxyOpenAI, proxyAnthropic, createRealtimeSession, transcribeAudio, sy
 import { SKILLS_MANIFEST } from "./skillsManifest.js";
 import { createSkill } from "./skillsCreate.js";
 import { requestLogger, type LogSink } from "./log.js";
-import { SupabaseBillingStore, type BillingStore, type BillingContext } from "./billing.js";
+import { SupabaseBillingStore, requireCredits, type BillingStore, type BillingContext } from "./billing.js";
 import { SupabaseRest } from "./db.js";
 import { registerAccountAuth, signupRoom } from "./accountAuth.js";
 import { requireAccount, accountSummary, ledgerUnavailable, type AccountContext } from "./account.js";
@@ -76,6 +76,11 @@ export function createApp(options: AppOptions = {}) {
       console.error("billing: SUPABASE_URL is set but SUPABASE_SERVICE_KEY is missing; refusing metered requests");
       return c.json({ error: "billing is not configured on this backend" }, 503);
     }
+    // A backend that sells Stripe plans and is not on the grant enforces them. The 2026-10-08 grant work
+    // swapped this gate out for requireAccount everywhere, which left those plans unenforced and
+    // their usage unrecorded (deep test F-43). Without a Stripe key it stays unmetered, as documented.
+    const store = !grantMode(c) && getEnv(c).STRIPE_SECRET_KEY ? storeFor(c) : undefined;
+    if (store) return requireCredits(store)(c, next);
     return requireAccount(ledgerFor)(c, next);
   };
   const withStore = (handler: (c: Context, store: BillingStore) => Promise<Response>) => (c: Context) => {

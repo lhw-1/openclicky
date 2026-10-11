@@ -101,7 +101,7 @@ the legacy Stripe path reads it); delete them from the file. `/auth/config` no l
 
 | Setting | Effect |
 |---|---|
-| `GRANT_ACCOUNTS=true` | Requests without the user's own key are metered by the spend ledger and limited to Claude and ElevenLabs. **Without it the backend is unmetered** (every capability, nothing counted) even when Supabase is configured. This keeps the local launchd backend and any self-hosted backend as they were. With no service key (no ledger) metered requests get a 503 rather than being given away. |
+| `GRANT_ACCOUNTS=true` | Requests without the user's own key are metered by the spend ledger and limited to Claude and ElevenLabs. **Without it the backend is unmetered** (every capability, nothing counted) even when Supabase is configured, unless it also has `STRIPE_SECRET_KEY`: a backend that sells Stripe plans enforces their monthly credits (`402 credits_exhausted`) and records usage. This keeps the local launchd backend and any self-hosted backend as they were. With no service key (no ledger) metered requests get a 503 rather than being given away. |
 | `ACCOUNTS_OPEN=true` | New emails can become guests. Closed: `/auth/start` for a new email answers `accounts_full`; existing confirmed accounts still get their code and keep working. |
 | `oc_settings.max_accounts` | Cap on confirmed accounts (default 100, `admin max-accounts N`). |
 | `oc_settings.max_guests` | Cap on live guests (unconfirmed, not replaced, younger than `GUEST_DAYS`; default 300). Past it newcomers get a sign-up code instead of a guest. Change it in SQL. |
