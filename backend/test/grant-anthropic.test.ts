@@ -197,6 +197,25 @@ describe("proxyAnthropicOnGrant", () => {
     expect(s.spentTodayMicro).toBe(1000 * 2 + 100 * 10); // Sonnet 5.5: 3000 micro-dollars
   });
 
+  it("logs a mid-stream error event and passes it through, so a silent answer can be traced", async () => {
+    const err = vi.spyOn(console, "error").mockImplementation(() => {});
+    const broken = SSE.split("data: {\"type\":\"message_delta\"")[0] + 'event: error\ndata: {"type":"error","error":{"type":"overloaded_error","message":"Overloaded"}}\n\n';
+    const res = await post(appWith(new MemorySpendLedger(), broken));
+    expect(await res.text()).toContain("overloaded_error");
+    await new Promise((r) => setTimeout(r, 10));
+    expect(JSON.stringify(err.mock.calls)).toContain("overloaded_error");
+    err.mockRestore();
+  });
+
+  it("logs an answer cut off at max_tokens", async () => {
+    const err = vi.spyOn(console, "error").mockImplementation(() => {});
+    const cut = SSE.replace('"type":"message_delta",', '"type":"message_delta","delta":{"stop_reason":"max_tokens"},');
+    await (await post(appWith(new MemorySpendLedger(), cut))).text();
+    await new Promise((r) => setTimeout(r, 10));
+    expect(JSON.stringify(err.mock.calls)).toContain("max_tokens");
+    err.mockRestore();
+  });
+
   it("a cancelled stream still settles", async () => {
     const ledger = new MemorySpendLedger();
     const res = await appWith(ledger, SSE).request("/chat", { method: "POST", body: JSON.stringify({ max_tokens: 500, messages: [{ role: "user", content: "hi" }] }) }, { ANTHROPIC_API_KEY: "sk-grant" });

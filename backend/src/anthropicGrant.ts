@@ -143,6 +143,11 @@ export async function proxyAnthropicOnGrant(c: Context, ledger: SpendLedger, pur
     return c.json({ error: `the assistant is unavailable (${upstream.status})` }, 502);
   }
   return settleStream(upstream, (text) => {
+    // Both reach the app as a normal-looking stream (it hears silence, or a cut-off answer read as
+    // complete), so they are logged here where they can be traced (deep test F-43).
+    const streamError = /"type"\s*:\s*"error"\s*,\s*"error"\s*:\s*\{\s*"type"\s*:\s*"([\w-]+)"/.exec(text);
+    if (streamError) console.error(`grant ${route}: the stream ended with an upstream ${streamError[1]} event`);
+    if (/"stop_reason"\s*:\s*"max_tokens"/.test(text)) console.error(`grant ${route}: the answer stopped at max_tokens (${String(prepared.max_tokens)})`);
     const usage = parseAnthropicUsage(text);
     // The final usage arrives in message_delta; a stream that ended (or was cancelled) before it is charged the hold in full.
     const complete = usage !== undefined && /"type"\s*:\s*"message_delta"/.test(text);
