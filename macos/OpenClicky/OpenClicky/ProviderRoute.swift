@@ -77,8 +77,9 @@ nonisolated struct ProviderCredentials: Equatable, Sendable {
 }
 
 nonisolated enum ProviderRouter {
-    static let needsOpenAIKeySentence = "this needs your own openai key (openaiApiKey in shell.json) or an openclicky account."
-    static let needsAnthropicKeySentence = "this needs your own anthropic key (anthropicApiKey in shell.json) or an openclicky account."
+    /// No key and no account: the free account is the way in for most people, so it comes first.
+    static let needsOpenAIKeySentence = "this needs a free openclicky account: open settings, account, and type your email. or add your own openai key."
+    static let needsAnthropicKeySentence = "asking me needs a free openclicky account: open settings, account, and type your email. or add your own anthropic key."
     /// The backend's own-key path answers `byok_missing_anthropic_key` here; this is that, said plainly.
     static let claudeNeedsAnthropicKeyTooSentence = "the claude lanes need your anthropic key too: add anthropicApiKey to shell.json. your openai key covers the rest."
     static let assemblyAINeedsAccountSentence = "assemblyai runs on openclicky's own key, so it needs an openclicky account. pick openai or offline dictation instead."

@@ -127,6 +127,8 @@ final class UITour {
             ("02-dictate", .dictate, nil, false),
             ("03-dictate-heard", .dictate, "✓ heard you: “hello openclicky, this is my first take”", true),
             ("04-dictate-nothing", .dictate, "didn’t catch any words. try again, or pick another microphone.", false),
+            ("04b-account", .account, nil, false),
+            ("04c-account-code", .account, "that email has an account. type the 6-digit code i sent to you@example.com.", false),
             ("05-talk", .talk, nil, false),
             ("06-act", .act, nil, false),
             ("07-done", .done, nil, false),

@@ -139,7 +139,7 @@ final class NotchHUDModel: ObservableObject {
     var tourWidth: CGFloat { placement.isSideDrawer ? 360 : 512 }
     var tourHeight: CGFloat {
         // A side drawer is narrower, so the copy wraps onto more lines.
-        let statusRoom: CGFloat = (tourCard?.status == nil ? 0 : 38) + (tourCard?.microphoneName == nil ? 0 : 20)
+        let statusRoom: CGFloat = (tourCard?.status == nil ? 0 : 38) + (tourCard?.microphoneName == nil ? 0 : 20) + (tourCard?.field == nil ? 0 : 38)
         return cardTopInset + (placement.isSideDrawer ? 168 : 116) + statusRoom
     }
 
@@ -393,7 +393,7 @@ final class NotchHUDModel: ObservableObject {
     /// under way (that is the step being tried), and comes back when it ends.
     func setTourCard(_ card: FirstRunTourCard?) {
         guard tourCard != card else { return }
-        let sizeChanged = tourCard?.status != card?.status || tourCard?.step != card?.step || tourCard?.microphoneName != card?.microphoneName
+        let sizeChanged = tourCard?.status != card?.status || tourCard?.step != card?.step || tourCard?.microphoneName != card?.microphoneName || tourCard?.field != card?.field
         tourCard = card
         reconcile(immediately: true)
         if sizeChanged && expansion == .tour { onLayoutChanged?() }
@@ -604,6 +604,20 @@ final class NotchHUDManager {
             if let textField = firstTextField(in: subview) { return textField }
         }
         return nil
+    }
+
+    /// Gives the keyboard to the tour card's field (the account step's email or code). Like the
+    /// composer, the app activates and the field is made first responder until it takes.
+    func focusTourField() {
+        guard let instance = primaryInstance, instance.model.expansion == .tour else { return }
+        NSApp.activate(ignoringOtherApps: true)
+        instance.window.makeKeyAndOrderFront(nil)
+        for delay in [0.05, 0.25, 0.6] {
+            DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self, weak instance] in
+                guard let self, let instance, instance.model.expansion == .tour else { return }
+                self.focusComposerField(in: instance.window)
+            }
+        }
     }
 
     /// Closes every open panel because a window it opened is coming forward.
