@@ -132,7 +132,13 @@ final class RealtimeVoiceClient: NSObject, ObservableObject {
 
     /// Audio runs off the main actor: CoreAudio's first-time setup hops synchronously to the main
     /// queue, so configuring the engine from a main-actor task deadlocks the app.
-    private let audio = RealtimeAudioEngine()
+    /// Not `private` so a test can read the microphone it was handed.
+    let audio = RealtimeAudioEngine()
+    /// Settings → microphone (a CoreAudio UID; nil = the Mac's default), the same one fn dictation
+    /// and the classic ⌃⌥ lane hear with. Applied when the audio graph is next set up.
+    var preferredMicrophoneUID: String? {
+        didSet { audio.setPreferredMicrophoneUID(preferredMicrophoneUID) }
+    }
     private var isAudioWired = false
     private var isForwardingMicrophone = false
     private var currentMode: TurnMode = .pushToTalk
@@ -1229,6 +1235,22 @@ nonisolated final class RealtimeAudioEngine: @unchecked Sendable {
     private var framesOut = 0
     private var peakLevel: CGFloat = 0
     private var peakOut: CGFloat = 0
+    /// The input device to use (CoreAudio UID; nil = the Mac's default), and the one the running
+    /// graph was set up with: a change rebuilds the graph at the next `start()`.
+    private var preferredMicrophoneUID: String?
+    private var configuredMicrophoneUID: String?
+
+    /// Called from the main actor; stored on `queue` like the rest of the engine's state.
+    func setPreferredMicrophoneUID(_ uid: String?) {
+        queue.async { self.preferredMicrophoneUID = uid }
+    }
+
+    /// For tests: the UID the next `start()` will select.
+    func currentPreferredMicrophoneUID() async -> String? {
+        await withCheckedContinuation { continuation in
+            queue.async { continuation.resume(returning: self.preferredMicrophoneUID) }
+        }
+    }
 
     /// Both callbacks are read from `queue` and from the audio thread, so they are installed on
     /// `queue` rather than assigned directly. Call before `start()`.
@@ -1255,6 +1277,11 @@ nonisolated final class RealtimeAudioEngine: @unchecked Sendable {
     func start() async throws -> String {
         try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<String, Error>) in
             queue.async {
+                // A microphone chosen since the graph was set up: pause() keeps the old device's
+                // graph, so it is rebuilt rather than restarted.
+                if self.isRunning, self.configuredMicrophoneUID != self.preferredMicrophoneUID {
+                    self.tearDown()
+                }
                 if self.isRunning {
                     if !self.engine.isRunning {
                         do { try self.engine.start() } catch { continuation.resume(throwing: error); return }
@@ -1370,6 +1397,11 @@ nonisolated final class RealtimeAudioEngine: @unchecked Sendable {
             )
             notes.append("other-audio ducking min")
         }
+        // Settings → microphone, set on the unit that actually captures (with voice processing on,
+        // the voice-processing unit) and before its format is read below, which depends on it.
+        let selectedMicrophone = MicrophoneDevices.apply(preferredUID: preferredMicrophoneUID, to: engine)
+        configuredMicrophoneUID = preferredMicrophoneUID
+        notes.append(selectedMicrophone ? "microphone \(preferredMicrophoneUID ?? "mac default")" : "microphone not selected, system input")
         engine.attach(playerNode)
         // With voice processing on, the output unit only initializes when the mixer → output link
         // is made explicitly at the hardware format before the player is connected. `connect`
@@ -1419,6 +1451,7 @@ nonisolated final class RealtimeAudioEngine: @unchecked Sendable {
         microphoneCapture.withLock { $0 = nil }
         converter = nil
         monoFormat = nil
+        configuredMicrophoneUID = nil
         queuedBuffers = 0
         isRunning = false
     }
