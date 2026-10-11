@@ -23,7 +23,9 @@
 //      only come from the model.
 //    - stream-json input is the one way `-p` accepts images; stream-json output with partial
 //      messages gives `text_delta` events, so the answer can be spoken while it arrives.
-//    - The request's quick-action tools and maxTokens have no CLI equivalent and are not sent.
+//    - The request's quick-action tools have no CLI equivalent: they are described in the system
+//      prompt and asked for as [ACTION: …] lines (PlanToolProtocol.swift), which are kept out of
+//      the streamed text and returned as tool calls. maxTokens has no equivalent and is not sent.
 //
 
 import Foundation
@@ -57,17 +59,27 @@ nonisolated struct ClaudeCodeAnswerProvider: AnswerProvider {
         defer { try? FileManager.default.removeItem(at: scratchWorkingDirectory) }
 
         let streamParser = ClaudeCodeStreamParser()
+        // With quick actions offered, an [ACTION: …] line must never reach the voice.
+        let actionLineFilter: PlanActionLineFilter? = request.tools.isEmpty ? nil : PlanActionLineFilter()
+        let handOnTextDelta: @Sendable (String) -> Void = { textDelta in
+            guard let actionLineFilter else { onTextChunk(textDelta); return }
+            let safeText = actionLineFilter.consume(textDelta)
+            if !safeText.isEmpty { onTextChunk(safeText) }
+        }
         let output: PlanCLIProcessOutput
         do {
             output = try await processRunner.run(
                 executablePath: executablePath,
-                arguments: Self.commandLineArguments(model: model, systemPrompt: request.systemPrompt),
+                arguments: Self.commandLineArguments(
+                    model: model,
+                    systemPrompt: PlanToolProtocol.systemPrompt(request.systemPrompt, offering: request.tools)
+                ),
                 standardInput: Self.standardInputMessage(for: request),
                 workingDirectory: scratchWorkingDirectory,
                 environment: PlanCLIs.processEnvironment(forExecutableAt: executablePath),
                 timeoutSeconds: timeoutSeconds,
                 onStandardOutputChunk: { chunk in
-                    for textDelta in streamParser.consume(chunk) { onTextChunk(textDelta) }
+                    for textDelta in streamParser.consume(chunk) { handOnTextDelta(textDelta) }
                 }
             )
         } catch is CancellationError {
@@ -76,14 +88,20 @@ nonisolated struct ClaudeCodeAnswerProvider: AnswerProvider {
             throw AnswerProviderError(source: .claudeCodePlan, status: 0, message: "Couldn't start Claude Code at \(executablePath).")
         }
         try Task.checkCancellation()
-        for textDelta in streamParser.finish() { onTextChunk(textDelta) }
+        for textDelta in streamParser.finish() { handOnTextDelta(textDelta) }
+        if let actionLineFilter {
+            let heldBackText = actionLineFilter.finish()
+            if !heldBackText.isEmpty { onTextChunk(heldBackText) }
+        }
 
         let answerText = try Self.answerText(
             from: streamParser.summary,
             output: output,
             timeoutSeconds: timeoutSeconds
         )
-        return AnswerResult(text: answerText, toolCalls: [])
+        guard !request.tools.isEmpty else { return AnswerResult(text: answerText, toolCalls: []) }
+        let (spokenText, toolCalls) = PlanToolProtocol.parse(answerText: answerText, knownToolNames: Set(request.tools.map(\.name)))
+        return AnswerResult(text: spokenText, toolCalls: toolCalls)
     }
 
     // MARK: building the call

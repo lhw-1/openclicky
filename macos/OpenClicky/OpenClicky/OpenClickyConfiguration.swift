@@ -65,6 +65,12 @@ struct OpenClickyShellSettings: Codable {
     var answerSource: String? = nil
     /// Model overrides per provider ("openrouter": "anthropic/claude-sonnet-4.6"); absent → default.
     var answerModels: [String: String]? = nil
+    /// Who speaks answers: nil or "cloud" is the cloud voice (ElevenLabs on the free credits, OpenAI
+    /// on your own key); "mac" is this Mac's own voice (MacVoice.swift), free and offline.
+    var speechVoice: String? = nil
+    /// The Mac voice picked in Settings (an AVSpeechSynthesisVoice identifier); nil → the best one
+    /// installed for the reply language.
+    var macVoiceIdentifier: String? = nil
     /// Written by sign-in (OpenClickyAuthSession): the refresh token that keeps `token` fresh, when it
     /// expires (unix seconds), and whose account it is. Absent when the token was pasted by hand.
     var refreshToken: String? = nil
@@ -106,6 +112,8 @@ extension OpenClickyShellSettings {
         useCodexPlan = try container.decodeIfPresent(Bool.self, forKey: .useCodexPlan)
         answerSource = try container.decodeIfPresent(String.self, forKey: .answerSource)
         answerModels = try container.decodeIfPresent([String: String].self, forKey: .answerModels)
+        speechVoice = try container.decodeIfPresent(String.self, forKey: .speechVoice)
+        macVoiceIdentifier = try container.decodeIfPresent(String.self, forKey: .macVoiceIdentifier)
         refreshToken = try container.decodeIfPresent(String.self, forKey: .refreshToken)
         tokenExpiresAt = try container.decodeIfPresent(Double.self, forKey: .tokenExpiresAt)
         accountEmail = try container.decodeIfPresent(String.self, forKey: .accountEmail)

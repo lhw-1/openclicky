@@ -71,6 +71,12 @@ struct OpenClickyAgentError: LocalizedError {
 
 @MainActor
 final class OpenClickyAgentClient {
+    /// Whether the openclicky tool the agent lane runs is on this Mac.
+    static var isToolInstalled: Bool {
+        guard let executableName = OpenClickyConfiguration.cliCommand.first, !executableName.isEmpty else { return false }
+        return OpenClickyAgentError.toolResolves(executableName, path: OpenClickyConfiguration.cliProcessEnvironment["PATH"])
+    }
+
     private var runningProcess: Process?
 
     /// Ask the gate which lane this request belongs to. Falls back to "agent" only if the CLI itself
