@@ -353,8 +353,19 @@ enum OpenClickyConfiguration {
         return trimmedToken.isEmpty ? nil : trimmedToken
     }
 
-    /// True when the user has a token: the backend rejects every model call without one.
-    static var isConfigured: Bool { token != nil }
+    /// True when this Mac is signed in to an OpenClicky account (a token in shell.json). The account
+    /// routes (/billing/me, /auth/*, AssemblyAI) need it; model calls do not (see `isConfigured`).
+    static var hasAccountToken: Bool { token != nil }
+
+    /// True when model calls can be made at all: an own OpenAI or Anthropic key (no account needed,
+    /// the calls go straight to the vendor) or an account. Which route each call takes is
+    /// `ProviderRouter`'s decision.
+    static var isConfigured: Bool { isConfigured(settings) }
+
+    nonisolated static func isConfigured(_ shellSettings: OpenClickyShellSettings) -> Bool {
+        let credentials = ProviderCredentials(settings: shellSettings)
+        return credentials.accountToken != nil || credentials.openAIKey != nil || credentials.anthropicKey != nil
+    }
 
     /// Where cua-driver is, mirroring the CLI's own precedence (`resolveCuaDriverBin` in
     /// `agent/src/config.ts`) so the app and the CLI agree on whether Computer Use exists. An
@@ -424,27 +435,19 @@ enum OpenClickyConfiguration {
         return trimmedValue.isEmpty ? nil : trimmedValue
     }
 
-    /// The `x-openclicky-*` headers carrying the user's own provider keys (empty when they use OpenClicky's).
-    static func providerKeyHeaders(from settings: OpenClickyShellSettings = settings) -> [String: String] {
-        var headers: [String: String] = [:]
-        if let openaiApiKey = cleaned(settings.openaiApiKey) { headers["x-openclicky-openai-key"] = openaiApiKey }
-        if let anthropicApiKey = cleaned(settings.anthropicApiKey) { headers["x-openclicky-anthropic-key"] = anthropicApiKey }
-        return headers
-    }
-
     /// True when this Mac pays its own provider bills: an OpenAI key is set in shell.json.
     static func usesOwnKeys(_ settings: OpenClickyShellSettings = settings) -> Bool {
         cleaned(settings.openaiApiKey) != nil
     }
     static var usesOwnKeys: Bool { usesOwnKeys(settings) }
 
-    /// Adds the bearer token every backend request needs, plus the user's own provider keys if any.
+    /// Adds the account's bearer token to a backend request. Never the person's own provider keys:
+    /// a capability they have a key for goes straight to its vendor (`ProviderRouter`), so the
+    /// backend only sees calls that run on the account. No token, no header: the backend refuses
+    /// an empty `Authorization: Bearer `.
     static func authorize(_ request: inout URLRequest) {
         if let token {
             request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
-        }
-        for (headerName, headerValue) in providerKeyHeaders() {
-            request.setValue(headerValue, forHTTPHeaderField: headerName)
         }
     }
 

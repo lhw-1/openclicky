@@ -99,7 +99,7 @@ final class BillingStatusModel: ObservableObject {
     @Published var errorText: String?
 
     func refresh() {
-        guard OpenClickyConfiguration.isConfigured else {
+        guard OpenClickyConfiguration.hasAccountToken else {
             summary = nil
             return
         }
@@ -160,7 +160,7 @@ struct NotchAccountSection<Row: View, ActionRow: View>: View {
             if OpenClickyConfiguration.usesOwnKeys {
                 row("key.fill", "keys", "your own (not metered)")
                 action("doc.text", "change keys", "openaiApiKey / anthropicApiKey in shell.json") { OpenClickyConfiguration.revealSettingsFile() }
-            } else if !OpenClickyConfiguration.isConfigured {
+            } else if !OpenClickyConfiguration.hasAccountToken {
                 action("person.crop.circle.badge.plus", "free account", "set it up with your email in settings", openAccountPage)
             } else {
                 signedInRows

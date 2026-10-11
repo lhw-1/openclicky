@@ -398,7 +398,7 @@ final class OpenClickyAuthSession: ObservableObject {
     /// `becauseSignInExpired`: the backend or the sign-in server refused this sign-in for good.
     /// The person did not ask for it, so the account form, the log and a quiet caption all say why.
     func signOut(becauseSignInExpired: Bool) {
-        let hadSession = OpenClickyConfiguration.isConfigured
+        let hadSession = OpenClickyConfiguration.hasAccountToken
         OpenClickyConfiguration.update { settings in
             settings.token = ""
             settings.refreshToken = nil
@@ -558,6 +558,11 @@ final class OpenClickyAuthSession: ObservableObject {
         let body = Data(errorDescription.drop { $0 != "{" }.utf8)
         if BackendSignIn.isOwnKeyRefusal(body: body) {
             AppLog.append("sign-in: 401 came from the person's own provider key, sign-in kept")
+            return Self.ownKeyRefusedSentence
+        }
+        // No account on this Mac, only own keys: there is no sign-in to expire, so never "sign in again".
+        if !OpenClickyConfiguration.hasAccountToken && OpenClickyConfiguration.isConfigured {
+            AppLog.append("sign-in: 401 on a mac with own keys and no account; nothing to sign out of")
             return Self.ownKeyRefusedSentence
         }
         return Self.spokenSentence(after: await handleBackendRejection())

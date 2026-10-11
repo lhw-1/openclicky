@@ -11,14 +11,20 @@ import Testing
 @testable import OpenClicky
 
 struct OpenClickyConfigurationTests {
-    @Test func providerKeyHeadersComeFromTheSettings() {
+    @Test func anOwnKeyIsEnoughForModelCallsWithNoAccount() {
         var settings = OpenClickyShellSettings()
         settings.openaiApiKey = " sk-user "
         settings.anthropicApiKey = ""
-        let headers = OpenClickyConfiguration.providerKeyHeaders(from: settings)
-        #expect(headers == ["x-openclicky-openai-key": "sk-user"])
         #expect(OpenClickyConfiguration.usesOwnKeys(settings))
+        #expect(OpenClickyConfiguration.isConfigured(settings))
+        var anthropicOnly = OpenClickyShellSettings()
+        anthropicOnly.anthropicApiKey = "ak-user"
+        #expect(OpenClickyConfiguration.isConfigured(anthropicOnly))
+        var signedIn = OpenClickyShellSettings()
+        signedIn.token = "tok"
+        #expect(OpenClickyConfiguration.isConfigured(signedIn))
         #expect(!OpenClickyConfiguration.usesOwnKeys(OpenClickyShellSettings()))
+        #expect(!OpenClickyConfiguration.isConfigured(OpenClickyShellSettings()))
     }
 
     @Test func cliEnvironmentCarriesTheUserKeysUnderOpenClickyNames() {
