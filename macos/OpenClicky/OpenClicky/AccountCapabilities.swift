@@ -156,7 +156,7 @@ final class AccountProfileStore: ObservableObject {
         }
         Task {
             do { absorb(try await BillingStatusModel.fetchSummary()) }
-            catch { print("💳 Account profile: \(error.localizedDescription)") }
+            catch { AppLog.append("account profile: /billing/me failed: \(error.localizedDescription)") }
         }
     }
 

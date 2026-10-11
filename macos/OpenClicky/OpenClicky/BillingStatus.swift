@@ -111,7 +111,7 @@ final class BillingStatusModel: ObservableObject {
                 AccountProfileStore.shared.absorb(fetched)
             } catch {
                 errorText = Self.errorSentence(for: error)
-                print("💳 Billing status failed: \(error.localizedDescription)")
+                AppLog.append("billing: /billing/me failed: \(error.localizedDescription)")
             }
         }
     }
@@ -125,7 +125,7 @@ final class BillingStatusModel: ObservableObject {
         }
         var request = URLRequest(url: billingURL)
         OpenClickyConfiguration.authorize(&request)
-        let (data, response) = try await URLSession.shared.data(for: request)
+        let (data, response) = try await BackendSignIn.send(request) { try await URLSession.shared.data(for: $0) }
         let statusCode = (response as? HTTPURLResponse)?.statusCode ?? 0
         guard statusCode == 200 else {
             throw NSError(domain: "OpenClickyBilling", code: statusCode, userInfo: [NSLocalizedDescriptionKey: statusCode == 401 ? "session expired, sign in again" : "backend answered \(statusCode)"])
@@ -134,6 +134,8 @@ final class BillingStatusModel: ObservableObject {
     }
 
     static func errorSentence(for error: Error) -> String {
+        // A refused sign-in has already been refreshed once, or signed out; its sentence says which.
+        if let signInError = error as? BackendSignInError { return signInError.localizedDescription }
         switch (error as NSError).code {
         case 401: return "your sign-in ran out — sign in again."
         case 503: return AccountLimitError.serviceTroubleMessage

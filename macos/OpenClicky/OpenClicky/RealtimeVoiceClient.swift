@@ -366,7 +366,7 @@ final class RealtimeVoiceClient: NSObject, ObservableObject {
         OpenClickyConfiguration.authorize(&secretRequest)
         let connectInstructions = currentInstructions()
         secretRequest.httpBody = try JSONSerialization.data(withJSONObject: ["voice": voice as Any, "instructions": connectInstructions].compactMapValues { $0 })
-        let (secretData, secretResponse) = try await urlSession.data(for: secretRequest)
+        let (secretData, secretResponse) = try await BackendSignIn.send(secretRequest) { [urlSession] in try await urlSession.data(for: $0) }
         let secretStatusCode = (secretResponse as? HTTPURLResponse)?.statusCode ?? 0
         guard (200...299).contains(secretStatusCode),
               let secretJSON = try JSONSerialization.jsonObject(with: secretData) as? [String: Any],

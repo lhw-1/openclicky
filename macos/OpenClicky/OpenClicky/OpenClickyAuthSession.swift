@@ -211,7 +211,7 @@ final class OpenClickyAuthSession: ObservableObject {
                 // Back to whatever the form showed before this send (the email step, or the code step).
                 emailFlow = returnTo ?? Self.stateAfterCancellation(inFlight)
             } else {
-                print("🔐 Account request failed: \(Self.describe(error))")
+                AppLog.append("sign-in: account request failed: \(Self.describe(error))")
                 if let returnTo { lastErrorText = Self.unreachableMessage; emailFlow = returnTo }
                 else { emailFlow = .failed(Self.unreachableMessage) }
             }
@@ -223,7 +223,8 @@ final class OpenClickyAuthSession: ObservableObject {
         await refreshIfNeeded()
         let token = OpenClickyConfiguration.settings.token
         guard !token.isEmpty, let request = Self.resendRequest(backendBaseURL: OpenClickyConfiguration.backendBaseURL, token: token) else { return false }
-        let status = ((try? await URLSession.shared.data(for: request))?.1 as? HTTPURLResponse)?.statusCode ?? 0
+        let answer = try? await BackendSignIn.send(request) { try await URLSession.shared.data(for: $0) }
+        let status = (answer?.1 as? HTTPURLResponse)?.statusCode ?? 0
         if (200..<300).contains(status) { watchConfirmation(); return true }
         return false
     }
@@ -232,11 +233,24 @@ final class OpenClickyAuthSession: ObservableObject {
     func resetFlow() { emailFlow = .idle; lastErrorText = nil }
 
     /// A fresh form starts empty: a finished or failed attempt is forgotten, one in flight is kept.
+    /// So is "your sign-in expired": the form is where the person goes to find out why they were
+    /// signed out, and opening it must not wipe the answer.
     func forgetSettledFlow() {
-        switch emailFlow {
-        case .sending, .checkingCode, .needsCode: return
-        default: emailFlow = .idle; lastErrorText = nil
+        guard !Self.flowSurvivesFreshForm(emailFlow) else { return }
+        emailFlow = .idle; lastErrorText = nil
+    }
+
+    nonisolated static func flowSurvivesFreshForm(_ state: EmailFlowState) -> Bool {
+        switch state {
+        case .sending, .checkingCode, .needsCode: return true
+        case .failed(let message): return message == sessionExpiredMessage
+        default: return false
         }
+    }
+
+    /// The expiry sentence while the sign-out it explains is the last thing that happened.
+    var sessionExpiredNotice: String? {
+        emailFlow == .failed(Self.sessionExpiredMessage) ? Self.sessionExpiredMessage : nil
     }
 
     /// The running confirmation watch; nil once it has finished or been cancelled.
@@ -281,7 +295,12 @@ final class OpenClickyAuthSession: ObservableObject {
         }
     }
 
-    func signOut() {
+    func signOut() { signOut(becauseSignInExpired: false) }
+
+    /// `becauseSignInExpired`: the backend or the sign-in server refused this sign-in for good.
+    /// The person did not ask for it, so the account form, the log and a quiet caption all say why.
+    func signOut(becauseSignInExpired: Bool) {
+        let hadSession = OpenClickyConfiguration.isConfigured
         OpenClickyConfiguration.update { settings in
             settings.token = ""
             settings.refreshToken = nil
@@ -290,40 +309,160 @@ final class OpenClickyAuthSession: ObservableObject {
         }
         confirmationWatch?.cancel()
         confirmationWatch = nil
+        tokenFromLastForcedRefresh = nil
         emailFlow = .idle
         lastErrorText = nil
-        print("🔐 Signed out")
+        AppLog.append(becauseSignInExpired ? "sign-in: expired, signed out" : "sign-in: signed out")
+        if becauseSignInExpired && hadSession { announceSignInExpired() }
         AccountProfileStore.shared.refresh()
     }
 
+    /// Posted when a dead sign-in signed this Mac out; the object is the sentence.
+    static let signInExpiredNotification = Notification.Name("openClickySignInExpired")
+
+    private func announceSignInExpired() {
+        emailFlow = .failed(Self.sessionExpiredMessage)
+        lastErrorText = Self.sessionExpiredMessage
+        NotificationCenter.default.post(name: Self.signInExpiredNotification, object: Self.sessionExpiredMessage)
+        AccountProfileStore.shared.showNotice?(Self.sessionExpiredMessage)
+    }
+
+    nonisolated enum RefreshOutcome: Equatable { case refreshed, notNeeded, failed, signedOut }
+    /// The refresh being run, so a second caller waits for it instead of reporting "not needed".
+    private var refreshInFlight: Task<RefreshOutcome, Never>?
+
     /// Refreshes when the stored access token is within `refreshLeadSeconds` of expiring.
-    func refreshIfNeeded(force: Bool = false) async {
+    @discardableResult
+    func refreshIfNeeded(force: Bool = false) async -> RefreshOutcome {
+        if let refreshInFlight { return await refreshInFlight.value }
         let settings = OpenClickyConfiguration.settings
-        guard let refreshToken = settings.refreshToken?.nonEmpty, !isRefreshing else { return }
+        guard let refreshToken = settings.refreshToken?.nonEmpty else { return .notNeeded }
         let expiresAt = settings.tokenExpiresAt ?? 0
-        guard force || Date().timeIntervalSince1970 > expiresAt - refreshLeadSeconds else { return }
+        guard force || Date().timeIntervalSince1970 > expiresAt - refreshLeadSeconds else { return .notNeeded }
+        // Its own task: a caller cancelled mid-refresh (a new question) must not cut it short.
+        let refresh = Task { @MainActor in
+            await self.refresh(using: refreshToken, storedEmail: settings.accountEmail)
+        }
+        refreshInFlight = refresh
         isRefreshing = true
-        defer { isRefreshing = false }
+        let outcome = await refresh.value
+        refreshInFlight = nil
+        isRefreshing = false
+        return outcome
+    }
+
+    private func refresh(using refreshToken: String, storedEmail: String?) async -> RefreshOutcome {
         do {
             let config = try await authConfig()
             let session = try await requestToken(config: config, grant: "refresh_token", body: ["refresh_token": refreshToken])
             store(Session(access_token: session.access_token, refresh_token: session.refresh_token, expires_in: session.expires_in),
-                  email: Self.refreshedEmail(session, stored: settings.accountEmail))
-            print("🔐 Session refreshed")
+                  email: Self.refreshedEmail(session, stored: storedEmail))
+            AppLog.append("sign-in: session refreshed")
+            return .refreshed
         } catch {
             let status = (error as NSError).userInfo[Self.httpStatusKey] as? Int ?? 0
             if Self.refreshRejectionEndsSession(status: status) {
                 // The sign-in server refused this refresh token outright (expired, revoked, or from
                 // another project after a move): it will never work again. Signing out shows the
                 // sign-in form, instead of looking signed in while every request answers 401.
-                print("🔐 Session refresh refused (\(status)); signing out")
-                signOut()
-                lastErrorText = Self.sessionExpiredMessage
-            } else {
-                lastErrorText = Self.describe(error)
-                print("🔐 Session refresh failed: \(lastErrorText ?? "")")
+                AppLog.append("sign-in: refresh refused (\(status)); signing out")
+                signOut(becauseSignInExpired: true)
+                return .signedOut
+            }
+            lastErrorText = Self.describe(error)
+            AppLog.append("sign-in: refresh failed, session kept: \(lastErrorText ?? "")")
+            return .failed
+        }
+    }
+
+    // MARK: - The backend refused the token (401)
+
+    /// What one 401 from the backend calls for. `sentToken` is the token the refused request
+    /// carried, when the caller knows it.
+    nonisolated enum RejectionDecision: Equatable {
+        /// No token at all: there is no sign-in to end.
+        case nothingToSignOutOf
+        /// The request went out with an older token than the one now stored; send it again.
+        case alreadyRenewed
+        /// Nothing can renew this token (pasted, invite, or one a refresh just produced): sign out.
+        case signOut
+        /// Refresh once and send it again.
+        case refresh
+    }
+
+    nonisolated static func decisionAfterRejection(currentToken: String?, sentToken: String?, hasRefreshToken: Bool,
+                                                   tokenFromLastForcedRefresh: String?) -> RejectionDecision {
+        guard let currentToken, !currentToken.isEmpty else { return .nothingToSignOutOf }
+        if let sentToken, !sentToken.isEmpty, sentToken != currentToken { return .alreadyRenewed }
+        // A pasted or invite token has nothing to refresh with; repeating "ask again" would loop forever.
+        guard hasRefreshToken else { return .signOut }
+        // The token this refresh produced was refused too: the second 401 in a row ends it.
+        if currentToken == tokenFromLastForcedRefresh { return .signOut }
+        return .refresh
+    }
+
+    nonisolated enum RejectionOutcome: Equatable {
+        /// A fresh token is stored; the request (or the question) can go again.
+        case tryAgain
+        /// Signed out; the person has to sign in again.
+        case signedOut
+        /// The refresh could not be tried (offline, sign-in server down); the session is kept.
+        case couldNotCheck
+    }
+
+    /// The token the last 401-driven refresh produced: refused once more, it signs out.
+    private var tokenFromLastForcedRefresh: String?
+
+    /// Every backend caller's one answer to a 401: refresh once, and sign out when nothing can
+    /// renew the token or the renewed token is refused as well.
+    func handleBackendRejection(sentToken: String? = nil) async -> RejectionOutcome {
+        let decision = Self.decisionAfterRejection(
+            currentToken: OpenClickyConfiguration.token, sentToken: sentToken,
+            hasRefreshToken: canRefresh, tokenFromLastForcedRefresh: tokenFromLastForcedRefresh)
+        AppLog.append("sign-in: backend refused the token (401): \(decision)")
+        switch decision {
+        case .nothingToSignOutOf:
+            return .signedOut
+        case .alreadyRenewed:
+            return .tryAgain
+        case .signOut:
+            signOut(becauseSignInExpired: true)
+            return .signedOut
+        case .refresh:
+            switch await refreshIfNeeded(force: true) {
+            case .refreshed:
+                tokenFromLastForcedRefresh = OpenClickyConfiguration.token
+                return .tryAgain
+            case .signedOut:
+                return .signedOut
+            case .failed, .notNeeded:
+                return .couldNotCheck
             }
         }
+    }
+
+    nonisolated static let askAgainSentence = "please ask that again."
+    nonisolated static let spokenSignInExpiredSentence = "your openclicky sign-in has expired. sign in again in settings, account."
+    nonisolated static let ownKeyRefusedSentence = "your own api key was refused — check it in settings, account."
+
+    nonisolated static func spokenSentence(after outcome: RejectionOutcome) -> String {
+        switch outcome {
+        case .tryAgain: return askAgainSentence
+        case .signedOut: return spokenSignInExpiredSentence
+        case .couldNotCheck: return unreachableMessage
+        }
+    }
+
+    /// For the ask lane's 401: handles it and returns the sentence to speak. `errorDescription`
+    /// carries the backend's body; a 401 relayed from the person's own provider key is not about
+    /// the sign-in, and signing out over it would be wrong.
+    func sentenceAfterBackendRejection(errorDescription: String) async -> String {
+        let body = Data(errorDescription.drop { $0 != "{" }.utf8)
+        if BackendSignIn.isOwnKeyRefusal(body: body) {
+            AppLog.append("sign-in: 401 came from the person's own provider key, sign-in kept")
+            return Self.ownKeyRefusedSentence
+        }
+        return Self.spokenSentence(after: await handleBackendRejection())
     }
 
     nonisolated static let httpStatusKey = "OpenClickyAuthHTTPStatus"

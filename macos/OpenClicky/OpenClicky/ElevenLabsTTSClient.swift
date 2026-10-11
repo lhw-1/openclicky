@@ -68,7 +68,7 @@ final class ElevenLabsTTSClient {
 
         request.httpBody = try JSONSerialization.data(withJSONObject: body)
 
-        let (data, response) = try await session.data(for: request)
+        let (data, response) = try await BackendSignIn.send(request) { [session] in try await session.data(for: $0) }
 
         guard let httpResponse = response as? HTTPURLResponse else {
             throw NSError(domain: "ElevenLabsTTS", code: -1,
