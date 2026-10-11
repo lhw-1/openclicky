@@ -40,9 +40,9 @@ extension SettingsCatalog {
                 })),
             SettingsItem(
                 id: "privacy.memoryOnThisMac", page: .privacy, section: "what it keeps",
-                title: "keep my memory on this mac only", detail: "history, dictionary and styles stay here. with this mac as the engine and “clean up my words with ai” off, nothing leaves this mac at all.",
+                title: "keep my memory on this mac only", detail: "history, dictionary and styles stay here. with this mac as the engine and “clean up my words with ai” off, nothing you dictate leaves this mac. questions to clicky (⌃⌥, hands-free) still go online.",
                 keywords: ["local", "memory", "cloud", "sync", "data"],
-                view: AnyView(SettingsRow(title: "keep my memory on this mac only", detail: "history, dictionary and styles stay here. with this mac as the engine and “clean up my words with ai” off, nothing leaves this mac at all.") {
+                view: AnyView(SettingsRow(title: "keep my memory on this mac only", detail: "history, dictionary and styles stay here. with this mac as the engine and “clean up my words with ai” off, nothing you dictate leaves this mac. questions to clicky (⌃⌥, hands-free) still go online.") {
                     SettingsToggle(settings: settings, keyPath: \.keepMemoryOnThisMac)
                 })),
             SettingsItem(
@@ -92,7 +92,7 @@ extension SettingsCatalog {
                 })),
             SettingsItem(
                 id: "privacy.summary", page: .privacy, section: "where things live",
-                title: "privacy summary", detail: "with this mac as the engine nothing leaves it unless you turn on “clean up my words with ai”. the other engines send audio to the provider you chose, with your key or account.",
+                title: "privacy summary", detail: "with this mac as the engine, what you dictate stays on it unless you turn on “clean up my words with ai” — hey clicky edits need it on too. the other engines send audio to the provider you chose, with your key or account. questions to clicky always go online: ⌃⌥ sends what you asked and a picture of your screen, and fast voice and hands-free send your voice to openai.",
                 keywords: ["policy", "privacy", "what leaves", "readme"],
                 chrome: .bare,
                 view: AnyView(PrivacySummaryNote())),
@@ -225,7 +225,7 @@ private struct PrivacySummaryNote: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
-            Text(settingsHighlighted("with this mac as the engine nothing leaves it unless you turn on “clean up my words with ai”. the other engines send audio to the provider you chose, with your key or account.", query: searchQuery))
+            Text(settingsHighlighted("with this mac as the engine, what you dictate stays on it unless you turn on “clean up my words with ai” — hey clicky edits need it on too. the other engines send audio to the provider you chose, with your key or account. questions to clicky always go online: ⌃⌥ sends what you asked and a picture of your screen, and fast voice and hands-free send your voice to openai.", query: searchQuery))
                 .fixedSize(horizontal: false, vertical: true)
             HStack(spacing: 4) {
                 Text("the full privacy policy is in the project’s")

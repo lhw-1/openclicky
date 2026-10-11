@@ -50,7 +50,9 @@ private final class FakeCapture: DictationCapturing {
         activity.send(false)
     }
 
-    func replaceTranscriptionProvider(_ provider: any BuddyTranscriptionProvider) {}
+    /// How many times the engine was rebuilt (a changed engine or language).
+    private(set) var providerReplacements = 0
+    func replaceTranscriptionProvider(_ provider: any BuddyTranscriptionProvider) { providerReplacements += 1 }
     func updateContextualKeyterms(_ contextualKeyterms: [String]) {}
 
     /// The engine's words arrive: the session ends, then the final text is delivered (as the real
@@ -256,7 +258,8 @@ struct DictationTakeControllerTests {
     }
 
     @Test @MainActor func controlHeldPastTheTapWindowIsAnEditTake() async throws {
-        let h = try Harness()
+        // An edit needs a model and the clean-up switch on (see the F-18 tests below).
+        let h = try Harness(polisher: CountingPolisher())
         h.controller.handle(.dictationEditPressed)
         #expect(h.controller.state == .idle)
         await h.waitUntil { h.controller.state == .listening }
@@ -576,5 +579,103 @@ struct DictationTakeControllerTests {
         #expect(record.status == .cancelled)
         #expect(record.formattedText == "Hello there")
         #expect(record.pasteOutcome == .posted)
+    }
+
+    // MARK: the dictation key used for a shortcut (F-22)
+
+    @Test @MainActor func aShortcutTypedWithTheKeyHeldThrowsTheTakeAway() async throws {
+        let h = try Harness()
+        h.controller.handle(.dictationPressed)
+        await h.waitUntil { h.controller.state == .listening }
+        h.controller.handle(.dictationReleased(wasTap: false, keyWasPressedDuringHold: true))
+        #expect(h.controller.state == .idle)
+        #expect(h.capture.cancels == 1)
+        #expect(h.capture.stops == 0)
+        await h.settle(0.2)
+        #expect(h.pasted.texts.isEmpty)
+        #expect(try h.store.recent().isEmpty)
+    }
+
+    // MARK: hey clicky and the clean-up switch (F-18)
+
+    @Test @MainActor func withTheCleanUpOffAHeyClickyEditSendsNothingToAModel() async throws {
+        let polisher = CountingPolisher()
+        let selected = FocusedFieldSnapshot(appBundleID: "com.apple.Notes", appName: "Notes", role: "AXTextArea", isEditable: true, isSecure: false, value: "see you tomorow", selectedText: "see you tomorow")
+        let h = try Harness(polisher: polisher, field: selected)
+        h.settings.polishWithModel = false
+        h.controller.handle(.dictationPressed)
+        await h.waitUntil { h.controller.state == .listening }
+        h.controller.handle(.dictationEditModifierJoined)
+        #expect(h.orb.hint == DictationTakeController.heyClickyNeedsCleanUpMessage)
+        h.controller.handle(.dictationReleased(wasTap: false))
+        h.capture.deliverFinal("make it formal")
+        await h.waitUntil { h.controller.state == .idle }
+        #expect(polisher.calls == 0)
+        #expect(h.pasted.texts.isEmpty)
+        #expect(h.orb.phase == .failed(DictationTakeController.heyClickyNeedsCleanUpMessage))
+    }
+
+    @Test @MainActor func withTheCleanUpOffAControlFirstEditNeverOpensTheMicrophone() async throws {
+        let h = try Harness(polisher: CountingPolisher())
+        h.settings.polishWithModel = false
+        h.controller.handle(.dictationEditPressed)
+        await h.settle(0.6)
+        #expect(h.capture.starts == 0)
+        #expect(h.controller.state == .idle)
+        #expect(h.orb.phase == .failed(DictationTakeController.heyClickyNeedsCleanUpMessage))
+    }
+
+    @Test @MainActor func withTheCleanUpOnAHeyClickyEditStillGoesToTheModel() async throws {
+        let polisher = CountingPolisher()
+        let selected = FocusedFieldSnapshot(appBundleID: "com.apple.Notes", appName: "Notes", role: "AXTextArea", isEditable: true, isSecure: false, value: "see you tomorow", selectedText: "see you tomorow")
+        let h = try Harness(polisher: polisher, field: selected)
+        h.controller.handle(.dictationPressed)
+        await h.waitUntil { h.controller.state == .listening }
+        h.controller.handle(.dictationEditModifierJoined)
+        h.controller.handle(.dictationReleased(wasTap: false))
+        h.capture.deliverFinal("make it formal")
+        await h.waitUntil { h.controller.state == .idle }
+        #expect(polisher.calls == 1)
+        #expect(h.pasted.texts == ["Polished."])
+    }
+
+    // MARK: engine or language changed during a take (F-19)
+
+    @Test @MainActor func aLanguageChangedDuringATakeIsUsedByTheNextTake() async throws {
+        let h = try Harness()
+        h.controller.handle(.dictationPressed)
+        await h.waitUntil { h.controller.state == .listening }
+        h.settings.languageCode = "hi-IN"
+        await h.settle(0.1)
+        // Not under the take that is listening.
+        #expect(h.capture.providerReplacements == 0)
+        #expect(h.controller.handle(.escapePressed))
+        await h.settle(0.1)
+        h.controller.handle(.dictationPressed)
+        #expect(h.capture.providerReplacements == 1)
+        await h.waitUntil { h.controller.state == .listening }
+        #expect(h.controller.handle(.escapePressed))
+        // Nothing changed since: the next take keeps the engine it has.
+        h.controller.handle(.dictationPressed)
+        #expect(h.capture.providerReplacements == 1)
+    }
+
+    @Test @MainActor func aLanguageChangedWhileIdleRebuildsTheEngineOnce() async throws {
+        let h = try Harness()
+        h.settings.languageCode = "ta-IN"
+        await h.waitUntil { h.capture.providerReplacements > 0 }
+        #expect(h.capture.providerReplacements == 1)
+        h.controller.handle(.dictationPressed)
+        #expect(h.capture.providerReplacements == 1)
+    }
+}
+
+/// A model that answers "Polished." and counts how often it was asked.
+private final class CountingPolisher: TakePolisher, @unchecked Sendable {
+    private(set) var calls = 0
+    var displayName: String { "counting" }
+    func polish(system: String, user: String) async throws -> String {
+        calls += 1
+        return "Polished."
     }
 }
