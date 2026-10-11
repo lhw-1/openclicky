@@ -217,6 +217,13 @@ enum TakeFormatter {
     /// A rewrite that is wildly longer or shorter than the words spoken is an answer or a refusal,
     /// not a cleanup; the local result is safer then.
     static func looksLikeTheSameTake(_ polished: String, raw: String) -> Bool {
+        // A reply cut off at the model's token limit comes back about half as long, and its word
+        // count can still pass below (Malayalam's long words; Japanese and Chinese have no spaces,
+        // so the whole take is "one word"). Taking out fillers shortens a take, but not that much.
+        // Counted in Unicode scalars, which Devanagari and Latin spellings of a word roughly share.
+        let rawLength = raw.unicodeScalars.filter { !$0.properties.isWhitespace }.count
+        let polishedLength = polished.unicodeScalars.filter { !$0.properties.isWhitespace }.count
+        if rawLength >= 40, Double(polishedLength) < Double(rawLength) * 0.6 { return false }
         let rawWords = max(1, raw.split(whereSeparator: { $0.isWhitespace }).count)
         let polishedWords = polished.split(whereSeparator: { $0.isWhitespace }).count
         if rawWords <= 3 { return polishedWords <= rawWords + 4 }

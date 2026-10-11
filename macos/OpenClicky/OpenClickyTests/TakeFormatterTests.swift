@@ -68,6 +68,22 @@ struct TakeFormatterTests {
         #expect(!TakeFormatter.looksLikeTheSameTake("", raw: raw))
     }
 
+    /// A reply cut off at the model's token limit comes back about half as long; its words can
+    /// still pass the word-count check (Malayalam, or Japanese with no spaces at all) (F-39).
+    @Test func aRewriteCutToHalfItsLengthIsRejected() {
+        let malayalam = String(repeating: "ഇന്ന് രാവിലെ ഞാൻ ഓഫീസിലേക്ക് പോയി. ", count: 20)
+        let halfMalayalam = String(malayalam.prefix(malayalam.count / 2))
+        #expect(TakeFormatter.looksLikeTheSameTake(malayalam, raw: malayalam))
+        #expect(!TakeFormatter.looksLikeTheSameTake(halfMalayalam, raw: malayalam))
+
+        let japanese = String(repeating: "今日は朝から会議があって、そのあと昼ご飯を食べました。", count: 6)
+        #expect(!TakeFormatter.looksLikeTheSameTake(String(japanese.prefix(japanese.count / 2)), raw: japanese))
+
+        // Fillers taken out shorten a take, but not to half.
+        let withFillers = "um so I think uh we should like move the meeting to friday you know because uh the room is booked"
+        #expect(TakeFormatter.looksLikeTheSameTake("So I think we should move the meeting to Friday, because the room is booked.", raw: withFillers))
+    }
+
     @Test func theSystemPromptCarriesStyleDictionaryAndScript() {
         var ctx = context(dictionary: [DictionaryTerm(written: "FlowsXR", heardAs: ["flows xr"])])
         ctx.language = DictationLanguage.named("ml-IN")
