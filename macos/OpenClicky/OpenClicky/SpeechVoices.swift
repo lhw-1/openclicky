@@ -50,10 +50,11 @@ enum SpeechVoiceChoice: String, CaseIterable, Identifiable {
         }
     }
 
-    /// Automatic's order: own keys first (they cost the person, not the free allowance), the free
-    /// voice, then the offline voices.
-    /// Gemini comes last of the keys: its voice takes about four seconds a sentence.
-    static let automaticOrder: [SpeechVoiceChoice] = [.openAI, .elevenLabs, .google, .polly, .sarvam, .gemini, .account, .kokoro, .mac]
+    /// Automatic's order: own keys first (the person chose to pay for them), then Kokoro once it is
+    /// downloaded (free, offline, and it saves the free ElevenLabs characters for those without
+    /// it), then the free voice, then this Mac. Gemini comes last of the keys: its voice takes about
+    /// four seconds a sentence.
+    static let automaticOrder: [SpeechVoiceChoice] = [.openAI, .elevenLabs, .google, .polly, .sarvam, .gemini, .kokoro, .account, .mac]
 
     /// Whether this voice can speak right now in `languageCode` with these settings.
     static func canSpeak(_ choice: SpeechVoiceChoice, settings: OpenClickyShellSettings, hasAccount: Bool,
@@ -90,10 +91,13 @@ enum SpeechVoiceChoice: String, CaseIterable, Identifiable {
     }
 
     /// The voice that speaks now: the one picked if it can, else this Mac's (a missing key or a
-    /// Kokoro still downloading); Automatic, the first in `automaticOrder` that can.
+    /// Kokoro still downloading); Automatic, the first in `automaticOrder` that can. Kokoro in a
+    /// language it doesn't speak (it became the voice on its own, then the language changed) goes
+    /// on as Automatic.
     static func resolve(settings: OpenClickyShellSettings, hasAccount: Bool, kokoroInstalled: Bool, languageCode: String) -> SpeechVoiceChoice {
         let picked = SpeechVoiceChoice(stored: settings.speechVoice)
-        let candidates = picked == .automatic ? automaticOrder : [picked]
+        let kokoroCantSpeakLanguage = picked == .kokoro && KokoroVoice.speaker(forLanguage: languageCode, picked: nil) == nil
+        let candidates = picked == .automatic || kokoroCantSpeakLanguage ? automaticOrder : [picked]
         return candidates.first {
             canSpeak($0, settings: settings, hasAccount: hasAccount, kokoroInstalled: kokoroInstalled, languageCode: languageCode)
         } ?? .mac

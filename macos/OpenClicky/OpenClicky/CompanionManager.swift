@@ -966,6 +966,12 @@ final class CompanionManager: ObservableObject {
         permissionPromptController.update(with: permissionStatus)
         // The welcome tour waits for the last permission, then takes the island.
         firstRunTour.start(companionManager: self)
+        // Kokoro: warm it if it speaks, or download it if setup is long done. A few seconds in, so
+        // the launch itself stays quick.
+        DispatchQueue.main.asyncAfter(deadline: .now() + 8) { [weak self] in
+            guard let self else { return }
+            KokoroVoice.shared.startAutomaticSetup(tourIsFinished: self.firstRunTour.isFinished)
+        }
     }
 
     /// Triggers the macOS screen content picker by performing a dummy

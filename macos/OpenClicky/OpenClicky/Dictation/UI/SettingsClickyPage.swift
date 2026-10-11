@@ -257,8 +257,9 @@ private struct SpeechVoiceRows: View {
                     set: { choice in
                         OpenClickyConfiguration.update { $0.speechVoice = choice.storedValue }
                         ShellSettingsRevision.shared.noteChanged()
-                        // Kokoro is downloaded only once someone picks it.
+                        // Picking Kokoro downloads it if it isn't yet, then warms it up.
                         if choice == .kokoro { KokoroVoice.shared.download() }
+                        KokoroVoice.shared.warmUpIfSpeaking()
                     }
                 )) {
                     ForEach(offered) { Text($0.title).tag($0) }
@@ -266,7 +267,8 @@ private struct SpeechVoiceRows: View {
                 .labelsHidden().fixedSize()
             }
             .onAppear { billing.refresh() }
-            if picked == .kokoro { KokoroRows() }
+            // Also while the automatic download runs, so it can be watched or cancelled.
+            if picked == .kokoro || kokoro.state.isBusy { KokoroRows() }
             if SpeechVoiceChoice.current() == .mac || picked == .mac { MacVoiceRow() }
             if offered.count < SpeechVoiceChoice.allCases.count {
                 SettingsRow(title: "More voices", detail: "Add an OpenAI, ElevenLabs, Gemini, Google Cloud, Amazon Polly or Sarvam key under Account, and its voice shows up here.") {
@@ -326,7 +328,7 @@ private struct KokoroRows: View {
                 Button("Download") { kokoro.download() }.fixedSize()
             }
         case .downloading(let fraction):
-            SettingsRow(title: "Downloading Kokoro", detail: "\(Int((fraction * 100).rounded()))% of \(KokoroVoice.downloadSizeText). This Mac’s voice speaks meanwhile.") {
+            SettingsRow(title: "Downloading Kokoro", detail: "\(Int((fraction * 100).rounded()))% of \(KokoroVoice.downloadSizeText). Answers keep the current voice until it’s ready.") {
                 HStack(spacing: 8) {
                     ProgressView(value: fraction).frame(width: 120)
                     Button("Cancel") { kokoro.cancelDownload() }.fixedSize()

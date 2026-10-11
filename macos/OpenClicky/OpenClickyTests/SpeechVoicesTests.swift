@@ -33,7 +33,9 @@ struct SpeechVoicesTests {
         }
         #expect(resolve(settings()) == .mac)
         #expect(resolve(settings(), kokoro: true) == .kokoro)
-        #expect(resolve(settings(), account: true, kokoro: true) == .account)
+        // Kokoro, once downloaded, saves the free voice's characters.
+        #expect(resolve(settings(), account: true, kokoro: true) == .kokoro)
+        #expect(resolve(settings(), account: true) == .account)
         #expect(resolve(settings { $0.sarvamKey = "s" }, account: true) == .sarvam)
         #expect(resolve(settings { $0.geminiApiKey = "g"; $0.sarvamKey = "s" }) == .sarvam)
         #expect(resolve(settings { $0.geminiApiKey = "g" }, account: true) == .gemini)
@@ -52,6 +54,19 @@ struct SpeechVoicesTests {
         #expect(SpeechVoiceChoice.resolve(settings: pickedKokoro, hasAccount: false, kokoroInstalled: true, languageCode: "ta") == .mac)
         let pickedSarvam = settings { $0.speechVoice = "sarvam"; $0.sarvamKey = "s" }
         #expect(SpeechVoiceChoice.resolve(settings: pickedSarvam, hasAccount: false, kokoroInstalled: false, languageCode: "ta") == .sarvam)
+    }
+
+    @Test func anAutomaticDownloadMakesKokoroTheVoiceOnlyWhereNobodyPickedOne() {
+        #expect(KokoroVoice.voiceAfterAutomaticDownload(stored: nil, languageCode: "en") == "kokoro")
+        #expect(KokoroVoice.voiceAfterAutomaticDownload(stored: "cloud", languageCode: "en") == "kokoro")
+        #expect(KokoroVoice.voiceAfterAutomaticDownload(stored: "openai", languageCode: "en") == "openai")
+        #expect(KokoroVoice.voiceAfterAutomaticDownload(stored: "mac", languageCode: "en") == "mac")
+        #expect(KokoroVoice.voiceAfterAutomaticDownload(stored: nil, languageCode: "ta") == nil)
+    }
+
+    @Test func kokoroInALanguageItDoesntSpeakCarriesOnAsAutomatic() {
+        let kokoro = settings { $0.speechVoice = "kokoro" }
+        #expect(SpeechVoiceChoice.resolve(settings: kokoro, hasAccount: true, kokoroInstalled: true, languageCode: "ta") == .account)
     }
 
     @Test func thePickerOffersTheVoicesThereAreKeysForAndKeepsThePickedOne() {

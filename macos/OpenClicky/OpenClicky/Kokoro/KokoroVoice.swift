@@ -16,6 +16,7 @@
 import Combine
 import CryptoKit
 import Foundation
+import Network
 
 @MainActor
 final class KokoroVoice: ObservableObject {
@@ -27,6 +28,13 @@ final class KokoroVoice: ObservableObject {
         case unpacking
         case installed
         case failed(String)
+
+        var isBusy: Bool {
+            switch self {
+            case .downloading, .unpacking: return true
+            default: return false
+            }
+        }
     }
 
     @Published private(set) var state: State
@@ -133,10 +141,80 @@ final class KokoroVoice: ObservableObject {
         return try await engine.audio(for: request)
     }
 
+
+    // MARK: Automatic setup
+
+    /// Set when the person removed Kokoro or cancelled its download: it is never fetched again on
+    /// its own (picking it in Settings clears this).
+    nonisolated static let declinedKey = "openclicky.kokoro.declined"
+    /// Free space the automatic download asks for: the archive and the unpacked model side by side
+    /// (about 750 MB), with room to spare.
+    nonisolated static let automaticDownloadFreeSpace: Int64 = 2_000_000_000
+
+    /// At launch and when the welcome tour ends: once setup is done, Kokoro downloads in the
+    /// background, and when it is ready it becomes the voice (if the voice was left on Automatic),
+    /// so answers stop spending the free ElevenLabs characters. An installed Kokoro that speaks
+    /// is loaded and warmed so the first answer doesn't wait for it.
+    func startAutomaticSetup(tourIsFinished: Bool) {
+        if Self.isInstalled {
+            warmUpIfSpeaking()
+            return
+        }
+        guard tourIsFinished, downloadTask == nil,
+              !UserDefaults.standard.bool(forKey: Self.declinedKey),
+              Self.speaker(forLanguage: ReplyLanguage.currentCode, picked: nil) != nil,
+              Self.freeSpace() >= Self.automaticDownloadFreeSpace else { return }
+        Task {
+            // Not on a phone hotspot or a metered connection: it tries again next launch.
+            if await Self.networkIsExpensiveOrConstrained() {
+                AppLog.append("kokoro: automatic download waits for an unmetered network")
+                return
+            }
+            AppLog.append("kokoro: automatic download started")
+            download(isAutomatic: true)
+        }
+    }
+
+    /// Loads the model and speaks one throwaway word, so the first real answer starts at once.
+    func warmUpIfSpeaking() {
+        guard Self.isInstalled, SpeechVoiceChoice.current() == .kokoro else { return }
+        Task {
+            let startedAt = Date()
+            _ = try? await audio(for: "ok")
+            AppLog.append(String(format: "kokoro: warmed up in %.1f s", Date().timeIntervalSince(startedAt)))
+        }
+    }
+
+    /// The decision once an automatic download finishes: Kokoro takes over from Automatic; a voice
+    /// the person picked themselves is left alone.
+    nonisolated static func voiceAfterAutomaticDownload(stored: String?, languageCode: String) -> String? {
+        guard SpeechVoiceChoice(stored: stored) == .automatic, speaker(forLanguage: languageCode, picked: nil) != nil else { return stored }
+        return SpeechVoiceChoice.kokoro.rawValue
+    }
+
+    nonisolated private static func freeSpace() -> Int64 {
+        let home = FileManager.default.homeDirectoryForCurrentUser
+        let values = try? home.resourceValues(forKeys: [.volumeAvailableCapacityForImportantUsageKey])
+        return values?.volumeAvailableCapacityForImportantUsage ?? 0
+    }
+
+    nonisolated private static func networkIsExpensiveOrConstrained() async -> Bool {
+        await withCheckedContinuation { continuation in
+            let monitor = NWPathMonitor()
+            monitor.pathUpdateHandler = { path in
+                monitor.cancel()
+                continuation.resume(returning: path.status != .satisfied || path.isExpensive || path.isConstrained)
+            }
+            monitor.start(queue: DispatchQueue(label: "org.openclicky.kokoro.network"))
+        }
+    }
+
     // MARK: Download
 
     /// Downloads, checks and unpacks Kokoro; does nothing while a download runs or once installed.
-    func download() {
+    /// Picking Kokoro in Settings calls this; so does the automatic setup.
+    func download(isAutomatic: Bool = false) {
+        if !isAutomatic { UserDefaults.standard.set(false, forKey: Self.declinedKey) }
         guard downloadTask == nil, !Self.isInstalled else {
             if Self.isInstalled { state = .installed }
             return
@@ -165,7 +243,17 @@ final class KokoroVoice: ObservableObject {
                 guard Self.isInstalled else { throw KokoroError.unpackFailed("the files weren't where they should be") }
                 AppLog.append("kokoro: installed")
                 self?.state = .installed
-            } catch is CancellationError {
+                if isAutomatic {
+                    let settings = OpenClickyConfiguration.settings
+                    let voice = Self.voiceAfterAutomaticDownload(stored: settings.speechVoice, languageCode: ReplyLanguage.currentCode)
+                    if voice != settings.speechVoice {
+                        OpenClickyConfiguration.update { $0.speechVoice = voice }
+                        ShellSettingsRevision.shared.noteChanged()
+                        AppLog.append("kokoro: now the voice")
+                    }
+                }
+                self?.warmUpIfSpeaking()
+            } catch where error is CancellationError || (error as? URLError)?.code == .cancelled {
                 self?.state = .notInstalled
             } catch {
                 AppLog.append("kokoro: download failed: \(error.localizedDescription)")
@@ -175,12 +263,15 @@ final class KokoroVoice: ObservableObject {
         }
     }
 
+    /// A cancelled download is a no: it isn't started again on its own.
     func cancelDownload() {
+        UserDefaults.standard.set(true, forKey: Self.declinedKey)
         downloadTask?.cancel()
     }
 
     /// Deletes the download and unloads the model.
     func remove() {
+        UserDefaults.standard.set(true, forKey: Self.declinedKey)
         downloadTask?.cancel()
         engine.unload()
         try? FileManager.default.removeItem(at: Self.folder)
