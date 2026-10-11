@@ -38,6 +38,19 @@ describe("elevenLabsCharsRemaining", () => {
     expect(await elevenLabsCharsRemaining(env)).toBe(0);
   });
 
+  it("logs a failed lookup and remembers it for a minute instead of asking ElevenLabs on every piece", async () => {
+    const log = vi.spyOn(console, "error").mockImplementation(() => {});
+    const f = vi.fn(async () => new Response("unauthorized", { status: 401 }));
+    vi.stubGlobal("fetch", f);
+    expect(await elevenLabsCharsRemaining(env, 1_000)).toBe(0);
+    expect(await elevenLabsCharsRemaining(env, 30_000)).toBe(0);
+    expect(f).toHaveBeenCalledTimes(1);
+    expect(JSON.stringify(log.mock.calls)).toContain("401");
+    stub({ character_count: 0, character_limit: 10_000 });
+    expect(await elevenLabsCharsRemaining(env, 62_000)).toBe(10_000 - 500);
+    log.mockRestore();
+  });
+
   it("is 0 when the subscription lookup returns non-JSON", async () => {
     vi.stubGlobal("fetch", vi.fn(async () => new Response("<html>oops</html>", { status: 200 })));
     expect(await elevenLabsCharsRemaining(env)).toBe(0);
@@ -61,11 +74,27 @@ describe("speakOnGrant", () => {
     expect(await res.json()).toEqual({ error: "tts_budget" });
   });
 
-  it("speaks only the first 400 characters", async () => {
+  it("answers 413 text_too_long for 600 characters of Hindi, never 200 with partial audio, and spends nothing", async () => {
     const f = stub({ character_count: 0, character_limit: 1_000_000 });
-    await say(app(new MemorySpendLedger()), "word ".repeat(200));
+    const ledger = new MemorySpendLedger();
+    const log = vi.spyOn(console, "error").mockImplementation(() => {});
+    const hindi = "नमस्ते दुनिया ".repeat(43).slice(0, 600);
+    const res = await say(app(ledger), hindi);
+    expect(res.status).toBe(413);
+    expect(await res.json()).toEqual({ error: "text_too_long" });
+    expect(f.mock.calls.some(([url]) => String(url).includes("text-to-speech"))).toBe(false);
+    const s = await ledger.summary("u1", { monthlyMicro: 10e6, dailyMicro: 2e6, globalMonthlyMicro: 1e9, ttsCharsMonthly: 20000, guestTotalMicro: 1_000_000, guestDays: 14, guestTtsChars: 2_000 });
+    expect(s.ttsCharsMonth).toBe(0);
+    expect(JSON.stringify(log.mock.calls)).toContain("600");
+    log.mockRestore();
+  });
+
+  it("speaks a piece of exactly 400 characters whole", async () => {
+    const f = stub({ character_count: 0, character_limit: 1_000_000 });
+    const res = await say(app(new MemorySpendLedger()), "a".repeat(400));
+    expect(res.status).toBe(200);
     const ttsCall = f.mock.calls.find(([url]) => String(url).includes("text-to-speech"))!;
-    expect(JSON.parse((ttsCall as unknown as [string, RequestInit])[1].body as string).text.length).toBeLessThanOrEqual(400);
+    expect(JSON.parse((ttsCall as unknown as [string, RequestInit])[1].body as string).text.length).toBe(400);
   });
 
   it("answers tts_budget, not 500, when the subscription lookup throws", async () => {
