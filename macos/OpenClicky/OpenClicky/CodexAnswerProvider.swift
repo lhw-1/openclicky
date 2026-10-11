@@ -28,7 +28,9 @@
 //    - `--output-last-message` writes exactly the final answer; `--json` events on stdout carry
 //      the error message when a turn fails. Codex does not stream text here, so `onTextChunk`
 //      gets the whole answer once.
-//    - The request's quick-action tools and maxTokens have no CLI equivalent and are not sent.
+//    - The request's quick-action tools have no CLI equivalent: they are described in the
+//      developer instructions and asked for as [ACTION: …] lines (PlanToolProtocol.swift), which
+//      are taken out of the answer and returned as tool calls. maxTokens is not sent.
 //
 
 import Foundation
@@ -82,7 +84,7 @@ nonisolated struct CodexAnswerProvider: AnswerProvider {
                 executablePath: executablePath,
                 arguments: Self.commandLineArguments(
                     model: model,
-                    systemPrompt: request.systemPrompt,
+                    systemPrompt: PlanToolProtocol.systemPrompt(request.systemPrompt, offering: request.tools),
                     imageFilePaths: imageFilePaths,
                     outputFilePath: outputFilePath,
                     workingDirectoryPath: scratchWorkingDirectory.path
@@ -102,8 +104,13 @@ nonisolated struct CodexAnswerProvider: AnswerProvider {
 
         let outputFileContents = try? String(contentsOfFile: outputFilePath, encoding: .utf8)
         let answerText = try Self.answerText(outputFileContents: outputFileContents, output: output, timeoutSeconds: timeoutSeconds)
-        onTextChunk(answerText)
-        return AnswerResult(text: answerText, toolCalls: [])
+        guard !request.tools.isEmpty else {
+            onTextChunk(answerText)
+            return AnswerResult(text: answerText, toolCalls: [])
+        }
+        let (spokenText, toolCalls) = PlanToolProtocol.parse(answerText: answerText, knownToolNames: Set(request.tools.map(\.name)))
+        if !spokenText.isEmpty { onTextChunk(spokenText) }
+        return AnswerResult(text: spokenText, toolCalls: toolCalls)
     }
 
     // MARK: building the call

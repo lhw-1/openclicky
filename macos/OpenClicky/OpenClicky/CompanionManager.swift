@@ -1587,7 +1587,11 @@ final class CompanionManager: ObservableObject {
                 }
 
                 // An account cannot run the agent, so it offers the quick actions to Claude instead.
-                let tools = AccountCapabilities.current().kind == .account ? RealtimeVoiceClient.anthropicToolDefinitions() : []
+                // So does a Claude Code or Codex plan, through PlanToolProtocol's [ACTION: …] lines.
+                let tools = Self.offersQuickActionsToAskLane(
+                    accountKind: AccountCapabilities.current().kind,
+                    answeringSource: ProviderRouter.route(for: .claude, credentials: ProviderRouter.currentCredentials()).answeringSource
+                ) ? RealtimeVoiceClient.anthropicToolDefinitions() : []
                 let toolsLine = tools.isEmpty ? "" : "\n\n" + Self.accountToolsInstruction
                 // The answer is spoken while it is still being written: each finished sentence goes to
                 // the voice, and the pointer moves when the voice starts (the prompt puts the tag first).
@@ -1973,6 +1977,13 @@ final class CompanionManager: ObservableObject {
         systemSpeechSynthesizer.stopSpeaking(at: .immediate)
         systemSpeechSynthesizer.speak(utterance)
         voiceState = .responding
+    }
+
+    /// The ask lane offers the quick actions where nothing else does them: a free account (no
+    /// agent) and a plan (no Realtime session, whose own tools do them for own keys).
+    static func offersQuickActionsToAskLane(accountKind: AccountKind, answeringSource: AnswerSource?) -> Bool {
+        if accountKind == .account { return true }
+        return answeringSource == .claudeCodePlan || answeringSource == .codexPlan
     }
 
     static let accountToolsInstruction = "When the user asks you to open an app or a website, make or show a folder, change the volume or control playback, call the matching tool instead of describing the steps. For anything else you can only explain and point."
