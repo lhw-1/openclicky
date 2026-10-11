@@ -154,6 +154,15 @@ final class CompanionManager: ObservableObject {
         if placement == .hidden { setMenuBarIconVisible(true) }
     }
 
+    /// How tall the open island is: regular, compact, or automatic by screen height.
+    @Published private(set) var hudSize: HUDSize = .stored
+
+    func setHUDSize(_ size: HUDSize) {
+        hudSize = size
+        UserDefaults.standard.set(size.rawValue, forKey: HUDSize.defaultsKey)
+        notchHUDManager.setSize(size)
+    }
+
     #if DEBUG
     /// The UI tour shows the busy strip without talking.
     func debugSetVoiceState(_ state: CompanionVoiceState) { voiceState = state }
@@ -1493,7 +1502,9 @@ final class CompanionManager: ObservableObject {
     you're openclicky, a friendly always-on companion that lives in the user's menu bar. the user just spoke to you via push-to-talk and you can see their screen(s). your reply will be spoken aloud via text-to-speech, so write the way you'd actually talk. this is an ongoing conversation — you remember everything they've said before.
 
     rules:
-    - default to one or two sentences. be direct and dense. BUT if the user asks you to explain more, go deeper, or elaborate, then go all out — give a thorough, detailed explanation with no length limit.
+    - keep it short: one or two short sentences, about thirty words at most. people listen to this, and a long answer is hard to follow by ear.
+    - for a task with several steps, say only the next step or two, then stop. they will do it and ask again for the rest, and you'll see their screen when they do.
+    - if they ask you to explain more or go deeper, say more, but still keep it under about eighty words.
     - all lowercase, casual, warm. no emojis.
     - write for the ear, not the eye. short sentences. no lists, bullet points, markdown, or formatting — just natural speech.
     - don't use abbreviations or symbols that sound weird read aloud. write "for example" not "e.g.", spell out small numbers.
@@ -1502,8 +1513,7 @@ final class CompanionManager: ObservableObject {
     - you can help with anything — coding, writing, general knowledge, brainstorming.
     - never say "simply" or "just".
     - don't read out code verbatim. describe what the code does or what needs to change conversationally.
-    - focus on giving a thorough, useful explanation. don't end with simple yes/no questions like "want me to explain more?" or "should i show you?" — those are dead ends that force the user to just say yes.
-    - instead, when it fits naturally, end by planting a seed — mention something bigger or more ambitious they could try, a related concept that goes deeper, or a next-level technique that builds on what you just explained. make it something worth coming back for, not a question they'd just nod to. it's okay to not end with anything extra if the answer is complete on its own.
+    - don't end with questions like "want me to explain more?" or "should i show you?", and don't add extra tips they didn't ask for. stop when the answer is given.
     - if you receive multiple screen images, the one labeled "primary focus" is where the cursor is — prioritize that one but reference others if relevant.
 
     element pointing:
@@ -1519,7 +1529,7 @@ final class CompanionManager: ObservableObject {
 
     examples:
     - user asks how to color grade in final cut: "[POINT:1100,42:color inspector] you'll want to open the color inspector — it's right up in the top right area of the toolbar. click that and you'll get all the color wheels and curves."
-    - user asks what html is: "[POINT:none] html stands for hypertext markup language, it's basically the skeleton of every web page. curious how it connects to the css you're looking at?"
+    - user asks what html is: "[POINT:none] html stands for hypertext markup language, it's basically the skeleton of every web page."
     - user asks how to commit in xcode: "[POINT:285,11:source control] see that source control menu up top? click that and hit commit, or you can use command option c as a shortcut."
     - element is on screen 2 (not where cursor is): "[POINT:400,300:terminal:screen2] that's over on your other monitor — see the terminal window?"
 
@@ -1977,8 +1987,8 @@ final class CompanionManager: ObservableObject {
             return
         }
         let utterance = AVSpeechUtterance(string: text)
-        utterance.rate = AVSpeechUtteranceDefaultSpeechRate
         utterance.voice = MacVoice.currentVoice()
+        utterance.rate = MacVoice.speakingRate(for: utterance.voice)
         systemSpeechSynthesizer.stopSpeaking(at: .immediate)
         systemSpeechSynthesizer.speak(utterance)
         voiceState = .responding

@@ -6,6 +6,7 @@
 //
 
 import Testing
+import Foundation
 import CoreGraphics
 @testable import OpenClicky
 
@@ -21,6 +22,43 @@ struct HUDPlacementTests {
         let model = NotchHUDModel(geometry: geometry)
         model.placement = placement
         return model
+    }
+
+    @Test func automaticSizeIsCompactOnlyOnShortScreens() {
+        #expect(HUDSize.automatic.usesCompactLayout(screenHeight: 900))
+        #expect(HUDSize.automatic.usesCompactLayout(screenHeight: 800))
+        #expect(!HUDSize.automatic.usesCompactLayout(screenHeight: 982))
+        #expect(HUDSize.compact.usesCompactLayout(screenHeight: 1440))
+        #expect(!HUDSize.regular.usesCompactLayout(screenHeight: 640))
+    }
+
+    @Test func theCompactPanelIsShorterOnEveryTabAndPlacement() {
+        for placement in [HUDPlacement.notch, .left] {
+            for tab in NotchHUDTab.allCases {
+                let island = model(placement)
+                island.select(tab)
+                island.size = .regular
+                let regularHeight = island.fullHeight
+                island.size = .compact
+                #expect(island.fullHeight < regularHeight, "\(placement) \(tab)")
+            }
+        }
+    }
+
+    @Test func thePanelReopensOnHomeAfterTwoSecondsAway() {
+        var clock = Date(timeIntervalSince1970: 1_000)
+        let island = model(.notch)
+        island.now = { clock }
+        island.openPinned()
+        island.select(.agents)
+        island.close()
+        clock += 1
+        island.openPinned()
+        #expect(island.activeTab == .agents)
+        island.close()
+        clock += NotchHUDModel.tabMemorySeconds + 0.5
+        island.openPinned()
+        #expect(island.activeTab == .home)
     }
 
     @Test func notchIslandHangsCentredFromTheTop() {

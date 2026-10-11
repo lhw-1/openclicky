@@ -26,6 +26,11 @@ extension SettingsCatalog {
                 keywords: ["notch", "island", "hud", "side", "edge", "drawer", "hide", "hidden", "position", "placement", "shortcuts only"],
                 view: AnyView(HUDPlacementRow(companionManager: companionManager))),
             SettingsItem(
+                id: "general.hudSize", page: .general, section: "",
+                title: "Island size", detail: "Compact is shorter, for small screens or larger text.",
+                keywords: ["size", "compact", "small", "short", "tall", "height", "large text", "zoom", "low resolution", "island", "notch"],
+                view: AnyView(HUDSizeRow(companionManager: companionManager))),
+            SettingsItem(
                 id: "general.menuBarIcon", page: .general, section: "",
                 title: "Show in menu bar", detail: "Off is fine — the island is OpenClicky’s home.",
                 keywords: ["menu bar", "status item", "icon", "tray"],
@@ -163,6 +168,46 @@ private struct HUDPlacementRow: View {
             .fixedSize()
         }
         .onReceive(companionManager.$hudPlacement) { placement = $0 }
+    }
+}
+
+extension HUDSize {
+    var settingsTitle: String {
+        switch self {
+        case .automatic: return "Automatic"
+        case .regular: return "Regular"
+        case .compact: return "Compact"
+        }
+    }
+
+    var settingsDetail: String {
+        switch self {
+        case .automatic: return "Compact on smaller screens, regular on larger ones."
+        case .regular: return "The full-height panel."
+        case .compact: return "A shorter panel, for small screens or larger text."
+        }
+    }
+}
+
+/// Follows `hudSize` on its own, like the placement row.
+private struct HUDSizeRow: View {
+    let companionManager: CompanionManager
+    @State private var size: HUDSize
+
+    init(companionManager: CompanionManager) {
+        self.companionManager = companionManager
+        _size = State(initialValue: companionManager.hudSize)
+    }
+
+    var body: some View {
+        SettingsRow(title: "Island size", detail: size.settingsDetail) {
+            Picker("", selection: Binding(get: { size }, set: { companionManager.setHUDSize($0) })) {
+                ForEach(HUDSize.allCases) { size in Text(size.settingsTitle).tag(size) }
+            }
+            .labelsHidden()
+            .fixedSize()
+        }
+        .onReceive(companionManager.$hudSize) { size = $0 }
     }
 }
 

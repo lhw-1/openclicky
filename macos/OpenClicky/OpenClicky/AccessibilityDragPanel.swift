@@ -26,10 +26,13 @@ final class AccessibilityDragPanelController: AccessibilityDragPresenting {
 
     private static let panelSize = NSSize(width: 520, height: 108)
 
+    /// True while the helper is wanted; it can still be out of sight while a dialog is open.
+    private var isWanted = false
+
     func showAccessibilityDragHelper() {
         if panel == nil { createPanel() }
+        isWanted = true
         positionPanel()
-        panel?.orderFrontRegardless()
         if followTimer == nil {
             followTimer = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { [weak self] _ in
                 Task { @MainActor [weak self] in self?.positionPanel() }
@@ -38,6 +41,7 @@ final class AccessibilityDragPanelController: AccessibilityDragPresenting {
     }
 
     func hideAccessibilityDragHelper() {
+        isWanted = false
         followTimer?.invalidate()
         followTimer = nil
         panel?.orderOut(nil)
@@ -73,11 +77,19 @@ final class AccessibilityDragPanelController: AccessibilityDragPresenting {
     /// pointer is on (never `NSScreen.main`, which follows keyboard focus and can be a display the
     /// user isn't even looking at).
     private func positionPanel() {
-        guard let panel else { return }
+        guard let panel, isWanted else { return }
         let panelSize = Self.panelSize
         let origin: CGPoint
+        let settingsWindows = Self.systemSettingsWindows()
 
-        if let settingsFrame = Self.systemSettingsWindowFrame() {
+        // A dialog over Settings ("Quit & Reopen", an account password) has its buttons in the
+        // lower half, right where the helper sits: step aside until it is answered.
+        if settingsWindows.dialogIsOpen {
+            panel.orderOut(nil)
+            return
+        }
+
+        if let settingsFrame = settingsWindows.mainFrame {
             let heightAboveTheWindowsBottomEdge: CGFloat = 120
             origin = CGPoint(
                 x: settingsFrame.midX - panelSize.width / 2,
@@ -93,6 +105,7 @@ final class AccessibilityDragPanelController: AccessibilityDragPresenting {
         }
 
         panel.setFrame(NSRect(origin: origin, size: panelSize), display: true)
+        if !panel.isVisible { panel.orderFrontRegardless() }
     }
 
     private static func screenUnderPointer() -> NSScreen? {
@@ -100,32 +113,54 @@ final class AccessibilityDragPanelController: AccessibilityDragPresenting {
         return NSScreen.screens.first(where: { $0.frame.contains(mouseLocation) }) ?? NSScreen.screens.first
     }
 
-    /// The System Settings window in AppKit coordinates (bottom-left origin), if it is on screen.
-    /// `CGWindowListCopyWindowInfo` gives bounds and the owning app's name without needing Screen
-    /// Recording permission — only window *titles* are withheld — which matters here, because this
-    /// panel exists precisely when permissions are still missing.
-    private static func systemSettingsWindowFrame() -> CGRect? {
-        guard let primaryScreen = NSScreen.screens.first else { return nil }
+    /// The System Settings window in AppKit coordinates (bottom-left origin), if it is on screen,
+    /// and whether a dialog sits over it. `CGWindowListCopyWindowInfo` gives bounds and owners
+    /// without Screen Recording permission (only window titles are withheld), which matters here,
+    /// because this panel exists precisely when permissions are still missing.
+    ///
+    /// The main window is the largest one System Settings owns. The first match used to win, and a
+    /// sheet or alert is in front of the window, so the helper centred itself on the dialog and
+    /// covered its buttons. A dialog is any other window, in front of the main one and inside its
+    /// frame, from any process but this one: some (an account's password) come from a Settings
+    /// extension or a system agent, not from System Settings itself.
+    static func systemSettingsWindows() -> (mainFrame: CGRect?, dialogIsOpen: Bool) {
+        guard let primaryScreen = NSScreen.screens.first else { return (nil, false) }
         let options: CGWindowListOption = [.optionOnScreenOnly, .excludeDesktopElements]
         guard let windowInfoList = CGWindowListCopyWindowInfo(options, kCGNullWindowID) as? [[String: Any]] else {
-            return nil
+            return (nil, false)
         }
+        let ownProcessID = Int(ProcessInfo.processInfo.processIdentifier)
 
-        for windowInfo in windowInfoList {
-            guard let ownerName = windowInfo[kCGWindowOwnerName as String] as? String,
-                  ownerName == "System Settings" || ownerName == "System Preferences",
+        // Front to back: every window's bounds, owner, and whether System Settings owns it.
+        let windows: [(bounds: CGRect, isSettings: Bool)] = windowInfoList.compactMap { windowInfo in
+            guard (windowInfo[kCGWindowOwnerPID as String] as? Int) != ownProcessID,
                   let boundsDictionary = windowInfo[kCGWindowBounds as String] as? [String: Any],
                   let windowBounds = CGRect(dictionaryRepresentation: boundsDictionary as CFDictionary),
-                  // Skip the tiny helper windows (tooltips, shadows) the app also owns.
-                  windowBounds.width > 400, windowBounds.height > 300
-            else { continue }
-
-            // CGWindowList is top-left origin over the whole display arrangement; AppKit is
-            // bottom-left origin from the primary screen.
-            let flippedY = primaryScreen.frame.maxY - windowBounds.maxY
-            return CGRect(x: windowBounds.minX, y: flippedY, width: windowBounds.width, height: windowBounds.height)
+                  // Skip tooltips, shadows and other slivers.
+                  windowBounds.width > 150, windowBounds.height > 100
+            else { return nil }
+            let ownerName = windowInfo[kCGWindowOwnerName as String] as? String ?? ""
+            return (windowBounds, ownerName == "System Settings" || ownerName == "System Preferences")
         }
-        return nil
+        guard let (mainBounds, dialogIsOpen) = mainSettingsWindow(inFrontToBackOrder: windows) else { return (nil, false) }
+
+        // CGWindowList is top-left origin over the whole display arrangement; AppKit is
+        // bottom-left origin from the primary screen.
+        let flippedY = primaryScreen.frame.maxY - mainBounds.maxY
+        return (CGRect(x: mainBounds.minX, y: flippedY, width: mainBounds.width, height: mainBounds.height), dialogIsOpen)
+    }
+
+    /// The largest System Settings window, and whether a smaller window in front of it lies inside it.
+    nonisolated static func mainSettingsWindow(inFrontToBackOrder windows: [(bounds: CGRect, isSettings: Bool)]) -> (bounds: CGRect, dialogIsOpen: Bool)? {
+        let settingsWindows = windows.enumerated().filter { $0.element.isSettings && $0.element.bounds.width > 400 && $0.element.bounds.height > 300 }
+        guard let main = settingsWindows.max(by: { $0.element.bounds.width * $0.element.bounds.height < $1.element.bounds.width * $1.element.bounds.height }) else {
+            return nil
+        }
+        let mainBounds = main.element.bounds
+        let dialogIsOpen = windows.prefix(main.offset).contains { window in
+            mainBounds.contains(window.bounds) && window.bounds.width < mainBounds.width && window.bounds.height < mainBounds.height
+        }
+        return (mainBounds, dialogIsOpen)
     }
 }
 

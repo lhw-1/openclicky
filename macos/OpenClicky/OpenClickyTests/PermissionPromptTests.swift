@@ -33,6 +33,24 @@ struct PermissionPromptTests {
         return controller
     }
 
+    @Test func theDragHelperFollowsTheMainSettingsWindowAndStepsAsideForADialog() {
+        let main = CGRect(x: 400, y: 75, width: 1320, height: 1150)
+        let quitAndReopen = CGRect(x: 820, y: 420, width: 480, height: 460)
+        let finderBehind = CGRect(x: 200, y: 80, width: 1700, height: 860)
+        // Front to back. The dialog came first and used to be taken for the window.
+        let withDialog = AccessibilityDragPanelController.mainSettingsWindow(inFrontToBackOrder: [
+            (quitAndReopen, true), (main, true), (finderBehind, false),
+        ])
+        #expect(withDialog?.bounds == main)
+        #expect(withDialog?.dialogIsOpen == true)
+        // A password sheet from a Settings extension (another process) counts too.
+        #expect(AccessibilityDragPanelController.mainSettingsWindow(inFrontToBackOrder: [(quitAndReopen, false), (main, true)])?.dialogIsOpen == true)
+        // A window behind Settings, or one only overlapping it, is not a dialog.
+        #expect(AccessibilityDragPanelController.mainSettingsWindow(inFrontToBackOrder: [(main, true), (quitAndReopen, false)])?.dialogIsOpen == false)
+        #expect(AccessibilityDragPanelController.mainSettingsWindow(inFrontToBackOrder: [(finderBehind, false), (main, true)])?.dialogIsOpen == false)
+        #expect(AccessibilityDragPanelController.mainSettingsWindow(inFrontToBackOrder: [(finderBehind, false)]) == nil)
+    }
+
     @Test func asksForOneStepAtATimeInOrder() {
         var status = PermissionStatus()
         // Accessibility first: from then on the pointer can show and help with the rest.

@@ -22,6 +22,14 @@ struct MacVoiceTests {
         #expect(MacVoice.isChosen(settings: settings))
     }
 
+    @Test func aBasicVoiceSpeaksWellBelowTheNormalRate() {
+        // No voice found (or a basic one) is the robotic fallback: it must be clearly slower.
+        #expect(MacVoice.speakingRate(for: nil) <= AVSpeechUtteranceDefaultSpeechRate * 0.85)
+        if let premium = AVSpeechSynthesisVoice.speechVoices().first(where: { $0.quality == .premium || $0.quality == .enhanced }) {
+            #expect(MacVoice.speakingRate(for: premium) > MacVoice.speakingRate(for: nil))
+        }
+    }
+
     @Test func voicesSayTheirRegionAndQuality() {
         #expect(MacVoice.Choice(id: "a", name: "Eddy", region: "United Kingdom", quality: .default).label == "Eddy, United Kingdom")
         #expect(MacVoice.Choice(id: "b", name: "Ava", region: "United States", quality: .premium).label == "Ava, United States (Premium)")

@@ -58,6 +58,16 @@ final class MacVoice {
         return AVSpeechSynthesisVoice(language: ReplyLanguage.currentCode)
     }
 
+    /// How fast this Mac speaks. A basic voice at the normal rate is what people call robotic and
+    /// is hard to follow, older listeners especially, so it slows right down; an Enhanced or
+    /// Premium voice is clear enough to slow only a little.
+    static func speakingRate(for voice: AVSpeechSynthesisVoice?) -> Float {
+        switch voice?.quality {
+        case .premium?, .enhanced?: return AVSpeechUtteranceDefaultSpeechRate * 0.92
+        default: return AVSpeechUtteranceDefaultSpeechRate * 0.8
+        }
+    }
+
     /// Whether answers are spoken by this Mac (shell.json `speechVoice` = "mac").
     static func isChosen(settings: OpenClickyShellSettings = OpenClickyConfiguration.settings) -> Bool {
         settings.speechVoice == "mac"
@@ -67,6 +77,7 @@ final class MacVoice {
     func audio(for text: String) async throws -> Data {
         let utterance = AVSpeechUtterance(string: text)
         utterance.voice = Self.currentVoice()
+        utterance.rate = Self.speakingRate(for: utterance.voice)
         let fileURL = FileManager.default.temporaryDirectory.appendingPathComponent("openclicky-voice-\(UUID().uuidString).caf")
         defer { try? FileManager.default.removeItem(at: fileURL) }
         let render = Render(fileURL: fileURL)

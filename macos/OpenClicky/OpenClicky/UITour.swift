@@ -144,6 +144,8 @@ final class UITour {
     private func tourIsland() async {
         let hud = companionManager.notchHUDManager
         let originalPlacement = companionManager.hudPlacement
+        // A fresh demo home starts the welcome tour, whose card would cover every panel shot.
+        companionManager.firstRunTour.debugShow(nil, companionManager: companionManager)
         hud.debugKeepsPanelsOpen = true
         defer {
             hud.debugKeepsPanelsOpen = false
@@ -156,14 +158,17 @@ final class UITour {
             hud.debugCloseAll()
             await shoot("\(prefix)-01-collapsed", window: hud.debugPrimaryWindow)
             hud.debugOpenPrimaryPanel()
-            for (number, tab) in [(2, NotchHUDTab.home), (3, .agents), (4, .settings)] {
-                hud.debugSelect(tab)
-                if tab == .settings {
-                    await shootWindow(named: "\(prefix)-0\(number)-\(tab.rawValue)", window: hud.debugPrimaryWindow, scrolls: true)
-                } else {
-                    await shoot("\(prefix)-0\(number)-\(tab.rawValue)", window: hud.debugPrimaryWindow)
+            // Regular, then the compact panel a small or zoomed display gets.
+            let originalSize = companionManager.hudSize
+            for (sizeNumber, size) in [(2, HUDSize.regular), (4, .compact)] {
+                companionManager.setHUDSize(size)
+                hud.debugOpenPrimaryPanel()
+                for (offset, tab) in [NotchHUDTab.home, .agents].enumerated() {
+                    hud.debugSelect(tab)
+                    await shoot("\(prefix)-0\(sizeNumber + offset)-\(tab.rawValue)-\(size.rawValue)", window: hud.debugPrimaryWindow)
                 }
             }
+            companionManager.setHUDSize(originalSize)
             hud.debugSelect(.home)
             hud.debugCloseAll()
             if placement != .notch { continue }
