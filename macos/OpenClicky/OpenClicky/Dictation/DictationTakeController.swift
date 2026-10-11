@@ -320,7 +320,7 @@ final class DictationTakeController: ObservableObject {
             }
             return true
 
-        case .dictationReleased(let wasTap):
+        case .dictationReleased(let wasTap, let keyWasPressedDuringHold):
             if let pendingEditStartWork {
                 // Released inside the tap window: not an edit, nothing was opened.
                 pendingEditStartWork.cancel()
@@ -332,7 +332,11 @@ final class DictationTakeController: ObservableObject {
                 break
             case .starting, .listening:
                 if takeIsToggle { break }
-                if wasTap {
+                if keyWasPressedDuringHold {
+                    // The key was held for a shortcut (right ⌘ + C, fn + an arrow), not to talk:
+                    // finishing would paste room noise or end in "didn't catch that".
+                    cancelTake(reason: "cancelled — that was a shortcut")
+                } else if wasTap {
                     // A tap: keep listening until the next tap (or a double tap cancels).
                     takeIsToggle = true
                     orb.hint = "say it, then tap \(settings.dictationKey.keycapLabel)"

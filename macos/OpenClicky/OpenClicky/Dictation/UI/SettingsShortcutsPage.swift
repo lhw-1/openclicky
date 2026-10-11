@@ -15,6 +15,16 @@ extension SettingsCatalog {
         let key = settings.dictationKey.keycapLabel
         let fnKeyState = FnKeyState.shared
         let dictationKeyIsFn = settings.dictationKey == .fn
+        // A right-hand key shares its flag with the left one: the left one keeps the companion's
+        // jobs, and a key typed while the right one is held makes the hold a shortcut, not a take.
+        let rightHandKeyNote: String = {
+            switch settings.dictationKey {
+            case .fn: return ""
+            case .rightOption: return " talk uses the left ⌥ with ⌃. a key typed with right ⌥ held (é, €) cancels the take."
+            case .rightCommand: return " a shortcut typed with right ⌘ held (⌘C) cancels the take."
+            case .rightControl: return " hey clicky, hands-free and ⌃ ×2 use the left ⌃."
+            }
+        }()
         return [
             SettingsItem(
                 id: "shortcuts.fnBanner", page: .shortcuts, section: "",
@@ -25,9 +35,9 @@ extension SettingsCatalog {
                 view: AnyView(FnKeyBanner(fnKeyState: fnKeyState))),
             SettingsItem(
                 id: "shortcuts.dictationKey", page: .shortcuts, section: "dictation",
-                title: "dictation key", detail: "hold to talk anywhere; tap to start a take, tap again to finish. currently \(key).",
+                title: "dictation key", detail: "hold to talk anywhere; tap to start a take, tap again to finish. currently \(key)." + rightHandKeyNote,
                 keywords: ["fn", "hotkey", "push to talk", "right option", "right command", "right control", "dictate"],
-                view: AnyView(SettingsRow(title: "dictation key", detail: "hold to talk anywhere; tap to start a take, tap again to finish. currently \(key).") {
+                view: AnyView(SettingsRow(title: "dictation key", detail: "hold to talk anywhere; tap to start a take, tap again to finish. currently \(key)." + rightHandKeyNote) {
                     DictationKeyPicker(settings: settings)
                 })),
             SettingsItem(

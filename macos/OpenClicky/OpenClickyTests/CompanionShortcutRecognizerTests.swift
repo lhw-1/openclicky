@@ -91,7 +91,7 @@ struct CompanionShortcutRecognizerTests {
         _ = flags(&recognizer, [.function], keyCode: Self.fnKeyCode, at: 0)
         _ = recognizer.handle(.keyDown, keyCode: 123, modifierFlags: [.function], at: 0.05)
         _ = recognizer.handle(.keyUp, keyCode: 123, modifierFlags: [.function], at: 0.1)
-        #expect(flags(&recognizer, [], keyCode: Self.fnKeyCode, at: 0.2) == [.dictationReleased(wasTap: false)])
+        #expect(flags(&recognizer, [], keyCode: Self.fnKeyCode, at: 0.2) == [.dictationReleased(wasTap: false, keyWasPressedDuringHold: true)])
     }
 
     @Test func controlJoiningAHeldFnIsHeyClicky() {
@@ -137,5 +137,295 @@ struct CompanionShortcutRecognizerTests {
         #expect(flags(&recognizer, [], keyCode: 58, at: 0.1) == [])
         #expect(flags(&recognizer, [.option], keyCode: 61, at: 1) == [.dictationPressed])
         #expect(flags(&recognizer, [], keyCode: 61, at: 2) == [.dictationReleased(wasTap: false)])
+    }
+}
+
+// MARK: - every dictation key × every gesture
+
+/// A physical modifier key as macOS reports it on flagsChanged: its key code, the flag it sets, and
+/// its device bit (IOLLEvent.h's NX_DEVICE…KEYMASK) — left and right control set the same flag but
+/// different bits.
+private enum PhysicalKey {
+    case fn, leftControl, rightControl, leftOption, rightOption, leftCommand, rightCommand
+
+    var keyCode: UInt16 {
+        switch self {
+        case .fn: return 63
+        case .leftControl: return 59
+        case .rightControl: return 62
+        case .leftOption: return 58
+        case .rightOption: return 61
+        case .leftCommand: return 55
+        case .rightCommand: return 54
+        }
+    }
+
+    var modifierFlag: NSEvent.ModifierFlags {
+        switch self {
+        case .fn: return .function
+        case .leftControl, .rightControl: return .control
+        case .leftOption, .rightOption: return .option
+        case .leftCommand, .rightCommand: return .command
+        }
+    }
+
+    var deviceBit: UInt {
+        switch self {
+        case .fn: return 0
+        case .leftControl: return 0x0000_0001
+        case .rightControl: return 0x0000_2000
+        case .leftOption: return 0x0000_0020
+        case .rightOption: return 0x0000_0040
+        case .leftCommand: return 0x0000_0008
+        case .rightCommand: return 0x0000_0010
+        }
+    }
+
+    static func dictationKey(_ hotkey: DictationHotkey) -> PhysicalKey {
+        switch hotkey {
+        case .fn: return .fn
+        case .rightOption: return .rightOption
+        case .rightCommand: return .rightCommand
+        case .rightControl: return .rightControl
+        }
+    }
+}
+
+/// Plays key presses into a recogniser and collects every event it reports.
+private struct SimulatedKeyboard {
+    var recognizer: CompanionShortcutRecognizer
+    var heldKeys: [PhysicalKey] = []
+    var time: TimeInterval = 0
+    var events: [CompanionShortcutEvent] = []
+
+    init(dictationKey: DictationHotkey) {
+        recognizer = CompanionShortcutRecognizer(dictationKey: dictationKey)
+    }
+
+    private var currentFlags: NSEvent.ModifierFlags {
+        var rawValue: UInt = 0
+        for key in heldKeys { rawValue |= key.modifierFlag.rawValue | key.deviceBit }
+        return NSEvent.ModifierFlags(rawValue: rawValue)
+    }
+
+    mutating func wait(_ seconds: TimeInterval) { time += seconds }
+
+    mutating func press(_ key: PhysicalKey) {
+        heldKeys.append(key)
+        events += recognizer.handle(.flagsChanged, keyCode: key.keyCode, modifierFlags: currentFlags, at: time)
+    }
+
+    mutating func release(_ key: PhysicalKey) {
+        heldKeys.removeAll { $0 == key }
+        events += recognizer.handle(.flagsChanged, keyCode: key.keyCode, modifierFlags: currentFlags, at: time)
+    }
+
+    /// A letter (C is key code 8) pressed and released with whatever modifiers are held.
+    mutating func typeLetter(keyCode: UInt16 = 8) {
+        events += recognizer.handle(.keyDown, keyCode: keyCode, modifierFlags: currentFlags, at: time)
+        wait(0.03)
+        events += recognizer.handle(.keyUp, keyCode: keyCode, modifierFlags: currentFlags, at: time)
+    }
+}
+
+/// Each gesture must produce exactly the events of its own shortcut, whichever key dictates: a
+/// right ⌃ hold is a dictation and not a Hey Clicky edit, right ⌥ then ⌃ is an edit and not a ⌃⌥
+/// question as well, a shortcut typed while the key is held says so when the key comes up.
+struct DictationKeyGestureMatrixTests {
+
+    @Test(arguments: DictationHotkey.allCases)
+    func holdingTheKeyIsOneDictationTake(hotkey: DictationHotkey) {
+        let key = PhysicalKey.dictationKey(hotkey)
+        var keyboard = SimulatedKeyboard(dictationKey: hotkey)
+        keyboard.press(key)
+        keyboard.wait(2)
+        keyboard.release(key)
+        #expect(keyboard.events == [.dictationPressed, .dictationReleased(wasTap: false)])
+    }
+
+    @Test(arguments: DictationHotkey.allCases)
+    func tappingTheKeyIsATapAndNothingElse(hotkey: DictationHotkey) {
+        let key = PhysicalKey.dictationKey(hotkey)
+        var keyboard = SimulatedKeyboard(dictationKey: hotkey)
+        keyboard.press(key)
+        keyboard.wait(0.1)
+        keyboard.release(key)
+        #expect(keyboard.events == [.dictationPressed, .dictationReleased(wasTap: true)])
+    }
+
+    @Test(arguments: DictationHotkey.allCases)
+    func doubleTappingTheKeyCancelsAndOpensNothingElse(hotkey: DictationHotkey) {
+        let key = PhysicalKey.dictationKey(hotkey)
+        var keyboard = SimulatedKeyboard(dictationKey: hotkey)
+        keyboard.press(key)
+        keyboard.wait(0.1)
+        keyboard.release(key)
+        keyboard.wait(0.15)
+        keyboard.press(key)
+        keyboard.wait(0.1)
+        keyboard.release(key)
+        #expect(keyboard.events == [
+            .dictationPressed, .dictationReleased(wasTap: true),
+            .dictationPressed, .dictationReleased(wasTap: true), .dictationDoubleTapped,
+        ])
+    }
+
+    @Test(arguments: DictationHotkey.allCases)
+    func controlJoiningTheHeldKeyIsAnEditAndNotTalk(hotkey: DictationHotkey) {
+        let key = PhysicalKey.dictationKey(hotkey)
+        var keyboard = SimulatedKeyboard(dictationKey: hotkey)
+        keyboard.press(key)
+        keyboard.wait(0.2)
+        keyboard.press(.leftControl)
+        #expect(!keyboard.recognizer.isTalkHeld)
+        keyboard.wait(2)
+        keyboard.release(.leftControl)
+        keyboard.wait(0.05)
+        keyboard.release(key)
+        #expect(keyboard.events == [.dictationPressed, .dictationEditModifierJoined, .dictationReleased(wasTap: false)])
+    }
+
+    @Test(arguments: DictationHotkey.allCases)
+    func theKeyPressedWithControlAlreadyDownIsAnEditFromTheStart(hotkey: DictationHotkey) {
+        let key = PhysicalKey.dictationKey(hotkey)
+        var keyboard = SimulatedKeyboard(dictationKey: hotkey)
+        keyboard.press(.leftControl)
+        keyboard.wait(0.05)
+        keyboard.press(key)
+        keyboard.wait(2)
+        keyboard.release(key)
+        keyboard.wait(0.05)
+        keyboard.release(.leftControl)
+        #expect(keyboard.events == [.dictationEditPressed, .dictationReleased(wasTap: false)])
+    }
+
+    @Test(arguments: DictationHotkey.allCases)
+    func tappingTheKeyTwiceWithControlHeldTogglesHandsFreeOnly(hotkey: DictationHotkey) {
+        let key = PhysicalKey.dictationKey(hotkey)
+        var keyboard = SimulatedKeyboard(dictationKey: hotkey)
+        keyboard.press(.leftControl)
+        keyboard.wait(0.02)
+        keyboard.press(key)
+        keyboard.wait(0.08)
+        keyboard.release(key)
+        keyboard.wait(0.15)
+        keyboard.press(key)
+        keyboard.wait(0.08)
+        keyboard.release(key)
+        keyboard.wait(0.05)
+        keyboard.release(.leftControl)
+        #expect(keyboard.events == [
+            .dictationEditPressed, .dictationReleased(wasTap: true),
+            .dictationEditPressed, .dictationReleased(wasTap: true), .handsFreeToggleRequested,
+        ])
+    }
+
+    @Test(arguments: DictationHotkey.allCases)
+    func holdingControlAndOptionIsTalkWhateverTheDictationKey(hotkey: DictationHotkey) {
+        var keyboard = SimulatedKeyboard(dictationKey: hotkey)
+        keyboard.press(.leftControl)
+        keyboard.wait(0.05)
+        keyboard.press(.leftOption)
+        keyboard.wait(2)
+        keyboard.release(.leftOption)
+        keyboard.wait(0.05)
+        keyboard.release(.leftControl)
+        #expect(keyboard.events == [.talkPressed, .talkReleased])
+    }
+
+    @Test(arguments: DictationHotkey.allCases)
+    func tappingControlTwiceOpensTheComposerOnly(hotkey: DictationHotkey) {
+        var keyboard = SimulatedKeyboard(dictationKey: hotkey)
+        keyboard.press(.leftControl)
+        keyboard.wait(0.1)
+        keyboard.release(.leftControl)
+        keyboard.wait(0.15)
+        keyboard.press(.leftControl)
+        keyboard.wait(0.1)
+        keyboard.release(.leftControl)
+        #expect(keyboard.events == [.textComposerRequested])
+    }
+
+    @Test(arguments: DictationHotkey.allCases)
+    func aShortcutTypedWithTheKeyHeldIsReportedOnRelease(hotkey: DictationHotkey) {
+        let key = PhysicalKey.dictationKey(hotkey)
+        var keyboard = SimulatedKeyboard(dictationKey: hotkey)
+        keyboard.press(key)
+        keyboard.wait(0.05)
+        keyboard.typeLetter()
+        keyboard.wait(0.05)
+        keyboard.release(key)
+        #expect(keyboard.events == [.dictationPressed, .dictationReleased(wasTap: false, keyWasPressedDuringHold: true)])
+    }
+
+    /// A letter typed just before the key went down whose key-up lands after it is not a shortcut.
+    @Test(arguments: DictationHotkey.allCases)
+    func aLateKeyUpFromTypingIsNotAShortcut(hotkey: DictationHotkey) {
+        let key = PhysicalKey.dictationKey(hotkey)
+        var keyboard = SimulatedKeyboard(dictationKey: hotkey)
+        keyboard.press(key)
+        keyboard.events += keyboard.recognizer.handle(.keyUp, keyCode: 0, modifierFlags: [], at: 0.02)
+        keyboard.wait(2)
+        keyboard.release(key)
+        #expect(keyboard.events == [.dictationPressed, .dictationReleased(wasTap: false)])
+    }
+
+    /// One gesture, one lane: ⌃⌥ completed while the key is held is not also a question.
+    @Test(arguments: DictationHotkey.allCases)
+    func talkNeverStartsWhileTheKeyIsHeld(hotkey: DictationHotkey) {
+        let key = PhysicalKey.dictationKey(hotkey)
+        var keyboard = SimulatedKeyboard(dictationKey: hotkey)
+        keyboard.press(key)
+        keyboard.wait(0.2)
+        keyboard.press(.leftControl)
+        keyboard.wait(0.05)
+        keyboard.press(.leftOption)
+        keyboard.wait(1)
+        keyboard.release(key)
+        keyboard.wait(0.5)
+        keyboard.release(.leftOption)
+        keyboard.release(.leftControl)
+        #expect(keyboard.events == [.dictationPressed, .dictationEditModifierJoined, .dictationReleased(wasTap: false)])
+    }
+
+    @Test(arguments: DictationHotkey.allCases)
+    func theKeyPressedDuringTalkIsIgnored(hotkey: DictationHotkey) {
+        let key = PhysicalKey.dictationKey(hotkey)
+        var keyboard = SimulatedKeyboard(dictationKey: hotkey)
+        keyboard.press(.leftControl)
+        keyboard.press(.leftOption)
+        keyboard.wait(0.5)
+        keyboard.press(key)
+        keyboard.wait(0.5)
+        keyboard.release(key)
+        keyboard.wait(0.5)
+        keyboard.release(.leftOption)
+        keyboard.release(.leftControl)
+        #expect(keyboard.events == [.talkPressed, .talkReleased])
+    }
+
+    /// With right ⌥ dictating, the left ⌥ keeps its job: ⌥ then ⌃ is still talk.
+    @Test func withRightOptionDictatingTheLeftOptionStillTalks() {
+        var keyboard = SimulatedKeyboard(dictationKey: .rightOption)
+        keyboard.press(.leftOption)
+        keyboard.wait(0.05)
+        keyboard.press(.leftControl)
+        keyboard.wait(1)
+        keyboard.release(.leftControl)
+        keyboard.release(.leftOption)
+        #expect(keyboard.events == [.talkPressed, .talkReleased])
+    }
+
+    /// Both controls down, then the right one (the dictation key) comes up: the flag is still set by
+    /// the left one, but the take ends.
+    @Test func withRightControlDictatingReleasingItWhileTheLeftIsHeldEndsTheTake() {
+        var keyboard = SimulatedKeyboard(dictationKey: .rightControl)
+        keyboard.press(.rightControl)
+        keyboard.wait(0.5)
+        keyboard.press(.leftControl)
+        keyboard.wait(1)
+        keyboard.release(.rightControl)
+        #expect(keyboard.events == [.dictationPressed, .dictationEditModifierJoined, .dictationReleased(wasTap: false)])
+        #expect(!keyboard.recognizer.isDictationKeyHeld)
     }
 }
