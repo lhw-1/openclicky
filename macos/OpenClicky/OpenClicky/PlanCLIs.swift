@@ -74,9 +74,16 @@ nonisolated enum PlanCLIs {
     }
 
     /// The first executable file named `executableName` in the common install directories.
+    /// The account's real home folder, where CLIs are installed, from the user database: a
+    /// redirected home (CFFIXED_USER_HOME, the UI tour's demo profile) must not hide them.
+    static var realHomeDirectory: String {
+        if let entry = getpwuid(getuid()), let directory = entry.pointee.pw_dir { return String(cString: directory) }
+        return NSHomeDirectory()
+    }
+
     static func pathInCommonInstallDirectories(
         executableName: String,
-        homeDirectory: String = NSHomeDirectory(),
+        homeDirectory: String = PlanCLIs.realHomeDirectory,
         isExecutableFile: (String) -> Bool = { FileManager.default.isExecutableFile(atPath: $0) }
     ) -> String? {
         for directory in commonInstallDirectories(homeDirectory: homeDirectory) {
@@ -133,7 +140,49 @@ nonisolated enum PlanCLIs {
         return await pathFromLoginShell(executableName: executableName, processRunner: processRunner)
     }
 
-    static func claudeCodePath() async -> String? { await locateExecutable(named: "claude") }
+    /// Claude Code, the newest copy on this Mac: an old install left in /usr/local/bin next to a
+    /// current one in ~/.local/bin refused options the provider passes ("unknown option").
+    static func claudeCodePath(processRunner: PlanCLIProcessRunning = PlanCLIProcessRunner()) async -> String? {
+        var candidates = commonInstallDirectories(homeDirectory: realHomeDirectory)
+            .map { "\($0)/claude" }
+            .filter { FileManager.default.isExecutableFile(atPath: $0) }
+        if let shellPath = await pathFromLoginShell(executableName: "claude", processRunner: processRunner),
+           !candidates.contains(shellPath) {
+            candidates.append(shellPath)
+        }
+        guard candidates.count > 1 else { return candidates.first }
+        var versions: [(path: String, version: String)] = []
+        for candidate in candidates {
+            let output = try? await processRunner.run(
+                executablePath: candidate, arguments: ["--version"], standardInput: nil,
+                workingDirectory: FileManager.default.temporaryDirectory,
+                environment: ProcessInfo.processInfo.environment,
+                timeoutSeconds: statusCheckTimeoutSeconds, onStandardOutputChunk: nil)
+            if let output, !output.timedOut, output.exitStatus == 0 {
+                versions.append((candidate, output.standardOutputText))
+            }
+        }
+        let newest = newestPath(from: versions) ?? candidates.first
+        AppLog.append("plans: claude code at \(candidates.joined(separator: ", ")); using \(newest ?? "none")")
+        return newest
+    }
+
+    /// The path whose `--version` output names the highest version ("2.1.296 (Claude Code)").
+    static func newestPath(from versions: [(path: String, version: String)]) -> String? {
+        func numbers(_ text: String) -> [Int] {
+            let versionText = text.split(whereSeparator: { !$0.isNumber && $0 != "." }).first.map(String.init) ?? ""
+            return versionText.split(separator: ".").compactMap { Int($0) }
+        }
+        return versions.max { first, second in
+            let firstNumbers = numbers(first.version), secondNumbers = numbers(second.version)
+            for index in 0..<max(firstNumbers.count, secondNumbers.count) {
+                let left = index < firstNumbers.count ? firstNumbers[index] : 0
+                let right = index < secondNumbers.count ? secondNumbers[index] : 0
+                if left != right { return left < right }
+            }
+            return false
+        }?.path
+    }
     static func codexPath() async -> String? { await locateExecutable(named: "codex") }
 
     // MARK: signed in or not

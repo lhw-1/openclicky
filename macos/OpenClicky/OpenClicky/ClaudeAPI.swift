@@ -150,7 +150,7 @@ class ClaudeAPI {
         // Another source answers (an OpenAI-compatible key, Gemini, a Claude Code or Codex plan):
         // the same question goes to its AnswerProvider, and its text streams back the same way.
         if case .answerProvider(let source) = ProviderRouter.current(for: .claude) {
-            let provider = try AnswerProviderFactory.make(for: source, credentials: ProviderRouter.currentCredentials(),
+            let provider = try await AnswerProviderFactory.make(for: source, credentials: ProviderRouter.currentCredentials(),
                                                           modelOverrides: OpenClickyConfiguration.settings.answerModels ?? [:])
             let answerRequest = AnswerRequest(
                 images: images.map { AnswerRequest.Image(data: $0.data, label: $0.label, mediaType: detectImageMediaType(for: $0.data)) },
@@ -158,11 +158,23 @@ class ClaudeAPI {
                 history: conversationHistory.map { AnswerRequest.Turn(user: $0.userPlaceholder, assistant: $0.assistantResponse) },
                 userPrompt: userPrompt,
                 tools: tools.compactMap(Self.answerTool(fromAnthropicTool:)))
-            // The main queue keeps the pieces in order; each one is the whole answer so far, like below.
-            let accumulated = AnswerTextAccumulator()
-            let result = try await provider.answer(answerRequest) { piece in
-                let soFar = accumulated.append(piece)
-                DispatchQueue.main.async { MainActor.assumeIsolated { onTextChunk(soFar) } }
+            // The pieces come through a stream this call reads to the end, in order; each is handed
+            // on as the whole answer so far, like the Anthropic path below. Cancelling the question
+            // cancels the provider (a CLI process is ended).
+            let (pieces, piecesContinuation) = AsyncStream<String>.makeStream()
+            let answerTask = Task<AnswerResult, Error> {
+                defer { piecesContinuation.finish() }
+                return try await provider.answer(answerRequest) { piecesContinuation.yield($0) }
+            }
+            let result = try await withTaskCancellationHandler {
+                var answerSoFar = ""
+                for await piece in pieces {
+                    answerSoFar += piece
+                    await onTextChunk(answerSoFar)
+                }
+                return try await answerTask.value
+            } onCancel: {
+                answerTask.cancel()
             }
             AppLog.append("answer: \(source.displayName) answered (\(result.text.count) chars, \(result.toolCalls.count) tool calls)")
             return (text: result.text, toolCalls: result.toolCalls, duration: Date().timeIntervalSince(startTime))
@@ -362,18 +374,6 @@ class ClaudeAPI {
 
         let duration = Date().timeIntervalSince(startTime)
         return (text: text, duration: duration)
-    }
-}
-
-/// The answer so far, appended to from a provider's callback on whatever thread it streams on.
-nonisolated final class AnswerTextAccumulator: @unchecked Sendable {
-    private let lock = NSLock()
-    private var text = ""
-
-    func append(_ piece: String) -> String {
-        lock.lock(); defer { lock.unlock() }
-        text += piece
-        return text
     }
 }
 

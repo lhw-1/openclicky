@@ -85,6 +85,18 @@ struct ProviderRouteTests {
         #expect(ProviderRouter.route(for: .openAIChat, credentials: geminiOnly) == .unavailable(ProviderRouter.needsOpenAIKeySentence))
     }
 
+    /// Quick actions reach the other providers: an Anthropic tool becomes an AnswerRequest tool
+    /// with its schema intact; one without a name is dropped.
+    @Test func anthropicToolsBecomeAnswerTools() throws {
+        let tool: [String: Any] = ["name": "open_app", "description": "Open an app", "input_schema": ["type": "object", "properties": ["name": ["type": "string"]], "required": ["name"]]]
+        let converted = try #require(ClaudeAPI.answerTool(fromAnthropicTool: tool))
+        #expect(converted.name == "open_app")
+        #expect(converted.description == "Open an app")
+        let schema = try #require(try JSONSerialization.jsonObject(with: converted.inputSchemaJSON) as? [String: Any])
+        #expect((schema["required"] as? [String]) == ["name"])
+        #expect(ClaudeAPI.answerTool(fromAnthropicTool: ["description": "no name"]) == nil)
+    }
+
     @Test func blankValuesCountAsMissing() {
         #expect(nothing.openAIKey == nil && nothing.anthropicKey == nil && nothing.accountToken == nil)
         #expect(ProviderCredentials(openAIKey: " sk-user\n", anthropicKey: nil, accountToken: nil).openAIKey == "sk-user")

@@ -452,4 +452,15 @@ struct AnswerProviderPlanTests {
         #expect(pathEntries.suffix(2) == ["/usr/bin", "/bin"])
         #expect(Set(pathEntries).count == pathEntries.count)
     }
+
+    /// Two Claude Code installs (an old one in /usr/local/bin): the newest one answers.
+    @Test func theNewestClaudeCodeIsPicked() {
+        let versions = [
+            (path: "/usr/local/bin/claude", version: "2.1.197 (Claude Code)\n"),
+            (path: "/Users/someone/.local/bin/claude", version: "2.1.296 (Claude Code)\n"),
+            (path: "/opt/homebrew/bin/claude", version: "2.1.30 (Claude Code)\n"),
+        ]
+        #expect(PlanCLIs.newestPath(from: versions) == "/Users/someone/.local/bin/claude")
+        #expect(PlanCLIs.newestPath(from: []) == nil)
+    }
 }

@@ -93,7 +93,7 @@ extension SettingsCatalog {
                     set: { [companionManager] in companionManager.setAgentModeEnabled($0) }))),
             SettingsItem(
                 id: "clicky.model", page: .clicky, section: "Agent",
-                title: "Model", detail: "Which Claude answers your questions.",
+                title: "Model", detail: "Which Claude answers, on the free credits or a Claude key.",
                 keywords: ["model", "claude", "sonnet", "opus"],
                 view: AnyView(ClaudeModelRow(companionManager: companionManager))),
             SettingsItem(
@@ -257,7 +257,7 @@ private struct ClaudeModelRow: View {
     }
 
     var body: some View {
-        SettingsRow(title: "Model", detail: "Which Claude answers your questions.") {
+        SettingsRow(title: "Model", detail: "Which Claude answers, on the free credits or a Claude key.") {
             Picker("", selection: Binding(get: { model }, set: { companionManager.setSelectedModel($0) })) {
                 Text("Sonnet").tag("claude-sonnet-4-6")
                 Text("Opus").tag("claude-opus-4-6")

@@ -72,6 +72,22 @@ extension SettingsCatalog {
                 chrome: .footer,
                 view: AnyView(SettingsFootnote(text: "Your keys go straight to that provider, never through OpenClicky, and are used instead of the free credits. Stored in ~/.openclicky/shell.json."))),
             SettingsItem(
+                id: "account.claudeCodePlan", page: .account, section: "Subscriptions",
+                title: "Claude Code (your Claude plan)", detail: "Answer questions through Claude Code, signed in to your Claude plan.",
+                keywords: ["claude code", "claude plan", "pro", "max", "subscription", "anthropic"],
+                view: AnyView(PlanSubscriptionRow(plan: .claudeCodePlan))),
+            SettingsItem(
+                id: "account.codexPlan", page: .account, section: "Subscriptions",
+                title: "Codex (your ChatGPT plan)", detail: "Answer questions through Codex, signed in with ChatGPT.",
+                keywords: ["codex", "chatgpt", "plus", "pro", "subscription", "openai"],
+                view: AnyView(PlanSubscriptionRow(plan: .codexPlan))),
+            SettingsItem(
+                id: "account.plansNote", page: .account, section: "Subscriptions",
+                title: "Plans answer, they don't act", detail: "A plan answers and points; quick actions like opening apps need a key or the free credits.",
+                keywords: ["subscription", "plan"],
+                chrome: .footer,
+                view: AnyView(SettingsFootnote(text: "A plan answers questions and points. Quick actions, like opening apps or making folders, run with a key or the free credits. Codex answers in one go, a few seconds after you ask."))),
+            SettingsItem(
                 id: "account.backendHost", page: .account, section: "Backend",
                 title: "Host", detail: "Where OpenClicky’s model calls go. Change it in shell.json.",
                 keywords: ["backend", "server", "url", "host", "shell.json"],
@@ -418,6 +434,50 @@ private struct SarvamKeyEditor: View {
             } catch {
                 keyCheck = .failed(error.localizedDescription)
             }
+        }
+    }
+}
+
+// MARK: - subscriptions
+
+/// A plan the person already pays for: whether its CLI is here and signed in, and the switch that
+/// lets it answer questions.
+private struct PlanSubscriptionRow: View {
+    let plan: AnswerSource
+    @State private var status: PlanCLIStatus?
+    @State private var isOn = false
+
+    private var title: String { plan.displayName }
+
+    var body: some View {
+        SettingsRow(title: title, detail: detail) {
+            HStack(spacing: 8) {
+                if status == .notInstalled {
+                    Button("Get It ↗") { openExternalLink(plan == .claudeCodePlan ? "https://claude.com/product/claude-code" : "https://developers.openai.com/codex/cli") }
+                }
+                SettingsSwitch(isOn: Binding(get: { isOn }, set: { newValue in
+                    isOn = newValue
+                    OpenClickyConfiguration.update { settings in
+                        if plan == .claudeCodePlan { settings.useClaudeCodePlan = newValue } else { settings.useCodexPlan = newValue }
+                    }
+                    ShellSettingsRevision.shared.noteChanged()
+                }))
+                .disabled(status != .ready && !isOn)
+            }
+        }
+        .task {
+            isOn = plan == .claudeCodePlan ? OpenClickyConfiguration.settings.useClaudeCodePlan == true : OpenClickyConfiguration.settings.useCodexPlan == true
+            status = plan == .claudeCodePlan ? await PlanCLIs.claudeCodeStatus() : await PlanCLIs.codexStatus()
+        }
+    }
+
+    private var detail: String {
+        let command = plan == .claudeCodePlan ? "claude" : "codex login"
+        switch status {
+        case .none: return "Checking…"
+        case .notInstalled?: return plan == .claudeCodePlan ? "Claude Code isn’t installed on this Mac." : "Codex isn’t installed on this Mac."
+        case .installedSignedOut?: return "Installed, not signed in. Run “\(command)” in Terminal and sign in."
+        case .ready?: return isOn ? "Signed in. Answering with your plan when it’s the one picked (Settings → Clicky)." : "Signed in. Switch on to answer with your plan."
         }
     }
 }

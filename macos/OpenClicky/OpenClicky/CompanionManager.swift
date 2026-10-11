@@ -1698,7 +1698,11 @@ final class CompanionManager: ObservableObject {
                 AppLog.append("ask: failed: \((error as NSError).domain) \((error as NSError).code)")
                 lastQuestionFailed = true
                 dismissCursorCaption()
-                if let unavailable = error as? ProviderRouteUnavailable {
+                if let providerError = error as? AnswerProviderError {
+                    // A key or plan the person set up refused: say which and why, in text.
+                    AppLog.append("ask: \(providerError.source.rawValue) refused (\(providerError.status))")
+                    showAskCaption("\(providerError.source.displayName) couldn’t answer: \(providerError.message)", holdSeconds: 8)
+                } else if let unavailable = error as? ProviderRouteUnavailable {
                     // Not an outage: nothing is set up to answer yet. Said in text beside the
                     // pointer, not in the system voice, which reads a setup note like an alarm.
                     showAskCaption(unavailable.sentence, holdSeconds: 8)
