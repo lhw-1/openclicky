@@ -121,4 +121,103 @@ struct OpenClickyConfigurationTests {
         let directoryAttributes = try FileManager.default.attributesOfItem(atPath: temporaryDirectory.path)
         #expect((directoryAttributes[.posixPermissions] as? NSNumber)?.uint16Value == 0o700)
     }
+
+    // MARK: - shell.json updates (F-27)
+
+    private func temporarySettingsFile(_ contents: String) throws -> URL {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("openclicky-settings-test-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let fileURL = directory.appendingPathComponent("shell.json")
+        try Data(contents.utf8).write(to: fileURL)
+        return fileURL
+    }
+
+    private func jsonObject(at fileURL: URL) throws -> [String: Any] {
+        try #require(try JSONSerialization.jsonObject(with: Data(contentsOf: fileURL)) as? [String: Any])
+    }
+
+    /// One wrong-typed field used to make `update` start from the defaults and write them back,
+    /// losing every key the person had stored. A file that does not read must be left alone.
+    @Test func anUpdateNeverRewritesAFileThatDoesNotDecode() throws {
+        let original = #"{"token":"old","sarvamKey":"sk-sarvam","openaiApiKey":"sk-openai","voiceSeconds":"5"}"#
+        let fileURL = try temporarySettingsFile(original)
+        defer { try? FileManager.default.removeItem(at: fileURL.deletingLastPathComponent()) }
+
+        let written = OpenClickyConfiguration.update(fileAt: fileURL) { $0.token = "new" }
+
+        #expect(!written)
+        #expect(try String(contentsOf: fileURL, encoding: .utf8) == original)
+        if case .unreadable = OpenClickyConfiguration.readSettingsFile(at: fileURL) {} else {
+            Issue.record("a wrong-typed field must read as unreadable")
+        }
+    }
+
+    @Test func anUpdateNeverRewritesAFileThatIsNotJSON() throws {
+        let original = "{ token: oops"
+        let fileURL = try temporarySettingsFile(original)
+        defer { try? FileManager.default.removeItem(at: fileURL.deletingLastPathComponent()) }
+
+        #expect(!OpenClickyConfiguration.update(fileAt: fileURL) { $0.token = "new" })
+        #expect(try String(contentsOf: fileURL, encoding: .utf8) == original)
+    }
+
+    /// The change is merged into the file as it is: fields this build does not know (a newer
+    /// build's, or the person's own notes) and everything not changed stay exactly as written.
+    @Test func anUpdateKeepsFieldsItDoesNotKnow() throws {
+        let fileURL = try temporarySettingsFile(#"{"token":"old","sarvamKey":"sk-sarvam","futureSetting":{"depth":2},"refreshToken":"r1"}"#)
+        defer { try? FileManager.default.removeItem(at: fileURL.deletingLastPathComponent()) }
+
+        let written = OpenClickyConfiguration.update(fileAt: fileURL) { settings in
+            settings.token = "new"
+            settings.refreshToken = nil
+        }
+
+        #expect(written)
+        let object = try jsonObject(at: fileURL)
+        #expect(object["token"] as? String == "new")
+        #expect(object["sarvamKey"] as? String == "sk-sarvam")
+        #expect((object["futureSetting"] as? [String: Any])?["depth"] as? Int == 2)
+        #expect(object["refreshToken"] == nil)
+        // Defaults the file never spelled out are not written into it.
+        #expect(object["voiceSeconds"] == nil)
+    }
+
+    /// A short, hand-written shell.json is a normal file: the missing fields take their defaults.
+    @Test func aFileWithOnlySomeFieldsReads() throws {
+        let fileURL = try temporarySettingsFile(#"{"token":"tok","sarvamKey":"sk-sarvam"}"#)
+        defer { try? FileManager.default.removeItem(at: fileURL.deletingLastPathComponent()) }
+
+        let settings = OpenClickyConfiguration.load(fileURL: fileURL, environment: [:])
+        #expect(settings.token == "tok")
+        #expect(settings.sarvamKey == "sk-sarvam")
+        #expect(settings.voiceSeconds == 5)
+        #expect(settings.backendUrl == OpenClickyConfiguration.hostedBackendURL)
+    }
+
+    /// `BACKEND_URL=… open OpenClicky.app` is for this launch only: a sign-in or refresh must not
+    /// write the override into shell.json.
+    @Test func environmentOverridesAreNeverWrittenToTheFile() throws {
+        let fileURL = try temporarySettingsFile(#"{"token":"old","backendUrl":"https://api.example.com"}"#)
+        defer { try? FileManager.default.removeItem(at: fileURL.deletingLastPathComponent()) }
+        let environment = ["BACKEND_URL": "http://localhost:8787", "OPENCLICKY_MODEL": "local-model"]
+
+        #expect(OpenClickyConfiguration.load(fileURL: fileURL, environment: environment).backendUrl == "http://localhost:8787")
+        #expect(OpenClickyConfiguration.update(fileAt: fileURL) { $0.token = "new" })
+
+        let object = try jsonObject(at: fileURL)
+        #expect(object["backendUrl"] as? String == "https://api.example.com")
+        #expect(object["model"] == nil)
+        #expect(object["token"] as? String == "new")
+    }
+
+    @Test func anUpdateCreatesAMissingFile() throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("openclicky-settings-test-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let fileURL = directory.appendingPathComponent("shell.json")
+
+        #expect(OpenClickyConfiguration.update(fileAt: fileURL) { $0.token = "tok" })
+        #expect(OpenClickyConfiguration.load(fileURL: fileURL, environment: [:]).token == "tok")
+    }
 }
