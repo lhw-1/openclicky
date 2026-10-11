@@ -42,7 +42,7 @@ nonisolated enum AnswerSource: String, CaseIterable, Identifiable, Sendable {
         case .anthropic: return nil // ClaudeAPI's own model (Settings → Clicky → Model)
         case .openAI: return "gpt-4.1"
         case .openRouter: return "anthropic/claude-sonnet-4.6"
-        case .gemini: return "gemini-2.5-flash"
+        case .gemini: return "gemini-3.8-flash"
         case .groq: return "meta-llama/llama-4-scout-17b-16e-instruct"
         case .mistral: return "mistral-medium-latest"
         case .xai: return "grok-4"

@@ -25,7 +25,7 @@ Codex/ChatGPT plan, and Gemini, Groq, Mistral, xAI natively.
 | Source | How | Default model |
 |---|---|---|
 | OpenAI, OpenRouter, Groq, Mistral, xAI | `/chat/completions`, SSE, images as data URLs, tools as functions | gpt-4.1, anthropic/claude-sonnet-4.6, llama-4-scout, mistral-medium-latest, grok-4 |
-| Gemini | `models/{m}:streamGenerateContent?alt=sse`, inlineData images, functionDeclarations | gemini-2.5-flash |
+| Gemini | `models/{m}:streamGenerateContent?alt=sse`, inlineData images, functionDeclarations | gemini-3.8-flash |
 | Claude Code plan | `claude -p` with stream-json input (image blocks) and output, no tools, one turn | the CLI's |
 | Codex plan | `codex exec -i <image>` read-only, `--output-last-message`, not streamed | the CLI's |
 
