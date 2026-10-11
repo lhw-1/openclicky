@@ -358,7 +358,7 @@ private struct KokoroRows: View {
                     Button("Preview") { VoicePreview.shared.play(.kokoro) }.fixedSize()
                 }
             }
-            SettingsRow(title: "Kokoro download", detail: "About 450 MB in Application Support.") {
+            SettingsRow(title: "Kokoro download", detail: "About 400 MB in Application Support.") {
                 Button("Remove") {
                     kokoro.remove()
                     if SpeechVoiceChoice(stored: OpenClickyConfiguration.settings.speechVoice) == .kokoro {

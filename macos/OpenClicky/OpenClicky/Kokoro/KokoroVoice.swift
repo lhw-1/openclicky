@@ -3,10 +3,10 @@
 //  OpenClicky
 //
 //  Kokoro: an open 82M-parameter voice model that runs on this Mac, free and offline, through
-//  sherpa-onnx's C library. Nothing of it ships in the app. Picking Kokoro in Settings downloads
-//  the library (universal, 19 MB) and the model (350 MB), checks both against pinned SHA-256s,
-//  unpacks them into Application Support, and loads them in-process with dlopen; the app's
-//  `disable-library-validation` entitlement is what allows a library signed by someone else.
+//  sherpa-onnx's C library. The engine ships inside the app (Contents/Frameworks, signed with the
+//  app's identity by scripts/embed-kokoro-engine.sh, so it loads with library validation on); only
+//  the model (350 MB) is downloaded, when Kokoro is picked in Settings, checked against a pinned
+//  SHA-256 and unpacked into Application Support.
 //
 //  The model stays loaded once used: loading takes about three seconds, while a sentence then
 //  takes about 0.3× its spoken length on an M2 Pro and 0.55× under Rosetta (the closest stand-in
@@ -37,23 +37,21 @@ final class KokoroVoice: ObservableObject {
         let bytes: Int64
     }
 
-    /// sherpa-onnx's universal (arm64 + x86_64) shared library; must match sherpa-onnx-c-api.h.
+    /// The embedded sherpa-onnx version (scripts/embed-kokoro-engine.sh); must match sherpa-onnx-c-api.h.
     nonisolated static let runtimeVersion = "1.13.8"
-    nonisolated static let runtimeDownload = Download(
-        url: URL(string: "https://github.com/k2-fsa/sherpa-onnx/releases/download/v1.13.8/sherpa-onnx-v1.13.8-osx-universal2-shared-lib.tar.bz2")!,
-        sha256: "c1cca5b4a1867543e27d42fbea513983e73f629d0aa53b43b51555a71d2108d9", bytes: 18_819_320)
     /// Kokoro v1.0, multilingual, full precision.
     nonisolated static let modelDownload = Download(
         url: URL(string: "https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/kokoro-multi-lang-v1_0.tar.bz2")!,
         sha256: "c5f7e2d2caf082bc1d20fb70334a61d99d20b484500aad32e7cf84c128ea3298", bytes: 349_906_910)
-    /// What Settings says before the download: the two archives, rounded.
-    nonisolated static let downloadSizeText = "370 MB"
+    /// What Settings says before the download, rounded.
+    nonisolated static let downloadSizeText = "350 MB"
 
     nonisolated static var folder: URL {
         FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
             .appendingPathComponent("OpenClicky/Kokoro", isDirectory: true)
     }
-    nonisolated static var libraryFolder: URL { folder.appendingPathComponent("sherpa-onnx-v\(runtimeVersion)-osx-universal2-shared-lib/lib", isDirectory: true) }
+    /// The engine, inside the app.
+    nonisolated static var libraryFolder: URL { Bundle.main.privateFrameworksURL ?? Bundle.main.bundleURL.appendingPathComponent("Contents/Frameworks") }
     nonisolated static var modelFolder: URL { folder.appendingPathComponent("kokoro-multi-lang-v1_0", isDirectory: true) }
 
     nonisolated static var isInstalled: Bool {
@@ -147,7 +145,7 @@ final class KokoroVoice: ObservableObject {
         downloadTask = Task { [weak self] in
             do {
                 try FileManager.default.createDirectory(at: Self.folder, withIntermediateDirectories: true)
-                let downloads = [Self.runtimeDownload, Self.modelDownload]
+                let downloads = [Self.modelDownload]
                 let totalBytes = Double(downloads.reduce(0) { $0 + $1.bytes })
                 var bytesBefore: Int64 = 0
                 var archives: [URL] = []

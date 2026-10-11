@@ -139,7 +139,8 @@ done < <(find "$APP_PATH/Contents/Frameworks" -type f -perm -u+x -exec sh -c 'fi
 
 # Notarization checks every nested binary. Xcode leaves Sparkle's helpers (Updater.app, Autoupdate,
 # the XPC services) with Sparkle's own signature, which Apple rejects as "not signed with a valid
-# Developer ID certificate", so they are re-signed inside-out with our identity, then the framework,
+# Developer ID certificate", so they are re-signed inside-out with our identity, then the framework
+# and Kokoro's embedded engine (signed by the build phase without a timestamp),
 # then the app itself (re-signing nested code invalidates the outer signature).
 if [[ "$SIGN_IDENTITY" == Developer\ ID* ]]; then
   echo "▸ re-signing nested components with the Developer ID identity"
@@ -149,7 +150,9 @@ if [[ "$SIGN_IDENTITY" == Developer\ ID* ]]; then
     "$SPARKLE/Versions/B/XPCServices/Downloader.xpc" \
     "$SPARKLE/Versions/B/Autoupdate" \
     "$SPARKLE/Versions/B/Updater.app" \
-    "$SPARKLE"; do
+    "$SPARKLE" \
+    "$APP_PATH/Contents/Frameworks/libsherpa-onnx-c-api.dylib" \
+    "$APP_PATH/Contents/Frameworks/libonnxruntime.dylib"; do
     [[ -e "$nested" ]] && sign_with_timestamp --sign "$SIGN_IDENTITY" "$nested"
   done
   sign_with_timestamp --entitlements "$APP_DIR/OpenClicky/OpenClicky.entitlements" --sign "$SIGN_IDENTITY" "$APP_PATH"
@@ -167,7 +170,8 @@ DMG_STAGING="$EXPORT_DIR/dmg"
 mkdir -p "$DMG_STAGING"
 cp -R "$APP_PATH" "$DMG_STAGING/"
 ln -s /Applications "$DMG_STAGING/Applications"
-hdiutil create -quiet -volname "$APP_NAME $VERSION" -srcfolder "$DMG_STAGING" -ov -format UDZO "$DMG_PATH"
+# LZMA (ULMO, macOS 10.15+): with Kokoro's engine inside, 24.6 MB against 35.6 MB as UDZO.
+hdiutil create -quiet -volname "$APP_NAME $VERSION" -srcfolder "$DMG_STAGING" -ov -format ULMO "$DMG_PATH"
 rm -rf "$DMG_STAGING"
 
 # 3. Notarize (Developer ID builds only).
