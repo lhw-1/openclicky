@@ -40,7 +40,7 @@ struct CleanUpSwitchReadersTests {
         for polishWithModel in [false, true] {
             for polishOfflineTakes in [false, true] {
                 let settings = makeSettings(polishWithModel: polishWithModel, polishOfflineTakes: polishOfflineTakes, engine: .offline)
-                let sentence = RecordPageView.engineSentence(settings: settings, hasPolisher: true)
+                let sentence = WordsPageView.engineSentence(settings: settings, hasPolisher: true)
                 #expect(sentence.contains("model for polish") == DictationEngineResolver.wantsModelPolish(settings: settings),
                         "polishWithModel \(polishWithModel), polishOfflineTakes \(polishOfflineTakes): \(sentence)")
             }
@@ -53,7 +53,7 @@ struct CleanUpSwitchReadersTests {
         let settings = makeSettings(polishWithModel: false, polishOfflineTakes: true, engine: .offline)
         #expect(!DictationEngineResolver.wantsModelPolish(settings: settings))
         #expect(!StylesPageView.cleanUpSwitchShowsOn(settings: settings))
-        #expect(RecordPageView.engineSentence(settings: settings, hasPolisher: true) == "your voice and your history stay on this mac.")
+        #expect(WordsPageView.engineSentence(settings: settings, hasPolisher: true) == "your voice and your history stay on this mac.")
     }
 
     /// The smoke run names its engine on the command line instead of the stored one.
