@@ -53,6 +53,16 @@ nonisolated enum ProviderRoute: Equatable, Sendable {
         }
     }
 
+    /// The source a `.claude` route answers with, for saying who answered; nil when nothing can.
+    var answeringSource: AnswerSource? {
+        switch self {
+        case .anthropicDirect: return .anthropic
+        case .answerProvider(let source): return source
+        case .backend: return .openClickyAccount
+        case .openAIDirect, .unavailable: return nil
+        }
+    }
+
     var unavailableSentence: String? {
         if case .unavailable(let sentence) = self { return sentence }
         return nil

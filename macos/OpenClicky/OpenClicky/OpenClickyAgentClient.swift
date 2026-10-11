@@ -56,6 +56,17 @@ struct OpenClickyThreadDetail: Decodable {
 struct OpenClickyAgentError: LocalizedError {
     let message: String
     var errorDescription: String? { message }
+
+    /// Said instead of env's "No such file or directory" when the agent tool isn't on this Mac
+    /// (the downloaded app doesn't carry it).
+    nonisolated static let toolMissingMessage = "agents run through the openclicky command-line tool, which isn't on this mac. questions, pointing and quick actions still work."
+
+    /// Whether `name` runs: an executable path, or a name found on `path` (the CLI's PATH).
+    nonisolated static func toolResolves(_ name: String, path: String?) -> Bool {
+        let fileManager = FileManager.default
+        if name.contains("/") { return fileManager.isExecutableFile(atPath: NSString(string: name).expandingTildeInPath) }
+        return (path ?? "").split(separator: ":").contains { fileManager.isExecutableFile(atPath: "\($0)/\(name)") }
+    }
 }
 
 @MainActor
@@ -120,6 +131,9 @@ final class OpenClickyAgentClient {
         }
         let environment = OpenClickyConfiguration.cliProcessEnvironment
         let workingDirectory = OpenClickyConfiguration.workspacePath
+        guard OpenClickyAgentError.toolResolves(executableName, path: environment["PATH"]) else {
+            throw OpenClickyAgentError(message: OpenClickyAgentError.toolMissingMessage)
+        }
         let fullArguments = [executableName] + Array(cliCommand.dropFirst()) + arguments
         try? FileManager.default.createDirectory(atPath: workingDirectory, withIntermediateDirectories: true)
         return try await Task.detached(priority: .userInitiated) {
@@ -162,6 +176,9 @@ final class OpenClickyAgentClient {
         let cliCommand = OpenClickyConfiguration.cliCommand
         guard let executableName = cliCommand.first, !executableName.isEmpty else {
             throw OpenClickyAgentError(message: "cliCommand is empty in \(OpenClickyConfiguration.settingsFileURL.path)")
+        }
+        guard OpenClickyAgentError.toolResolves(executableName, path: OpenClickyConfiguration.cliProcessEnvironment["PATH"]) else {
+            throw OpenClickyAgentError(message: OpenClickyAgentError.toolMissingMessage)
         }
         try? FileManager.default.createDirectory(atPath: OpenClickyConfiguration.workspacePath, withIntermediateDirectories: true)
 

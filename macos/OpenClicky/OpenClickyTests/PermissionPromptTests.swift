@@ -171,6 +171,23 @@ struct PermissionPromptTests {
         #expect(controller.currentPrompt == nil)
     }
 
+    /// Reaching past the island while Clicky speaks keeps the speaking strip (its stop button);
+    /// hovering opens the panel again once the voice is done.
+    @Test func hoveringWhileSpeakingKeepsTheStopStrip() async throws {
+        let geometry = NotchGeometry(screenFrame: CGRect(x: 0, y: 0, width: 1512, height: 982),
+                                     hasHardwareNotch: true, notchWidth: 190, notchHeight: 32)
+        let model = NotchHUDModel(geometry: geometry)
+        model.setBusy(true)
+        model.setSpeaking(true)
+        model.setHovering(true)
+        try await Task.sleep(nanoseconds: 600_000_000)
+        #expect(model.expansion == .compact)
+
+        model.setSpeaking(false)
+        model.setBusy(false)
+        #expect(model.expansion == .full)
+    }
+
     @Test func thePermissionCardOutranksTheConnectCardAndTheBusyStrip() {
         let geometry = NotchGeometry(screenFrame: CGRect(x: 0, y: 0, width: 1512, height: 982),
                                      hasHardwareNotch: true, notchWidth: 190, notchHeight: 32)

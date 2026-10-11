@@ -1243,6 +1243,12 @@ final class RealtimeVoiceClient: NSObject, ObservableObject {
     /// Barge-in: cancel the active response and drop any continuation queued for it, so no
     /// stray `response.create` follows the cancel. The response is remembered as cancelled so its
     /// tool calls that are still in flight cannot re-arm the continuation.
+    /// The person asked Clicky to stop talking: cancel the reply and drop what is queued to play.
+    func stopSpeaking() {
+        cancelActiveResponse()
+        flushPlayback()
+    }
+
     private func cancelActiveResponse() {
         needsContinuationAfterResponse = false
         if let activeResponseId { cancelledResponseIds.insert(activeResponseId) }

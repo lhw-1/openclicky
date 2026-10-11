@@ -852,7 +852,7 @@ struct NotchAgentsView: View {
                 emptyState("loading agents…", detail: nil)
                 Spacer(minLength: 0)
             } else if let errorMessage = threadStore.errorMessage, threadStore.threads.isEmpty {
-                emptyState("couldn't load agents", detail: errorMessage)
+                emptyState(errorMessage == OpenClickyAgentError.toolMissingMessage ? "agents aren't set up on this mac" : "couldn't load agents", detail: errorMessage)
                 Spacer(minLength: 0)
             } else if threadStore.threads.isEmpty {
                 emptyState("no agents yet", detail: "hold ⌃⌥ and ask clicky to do something, or type it below.")

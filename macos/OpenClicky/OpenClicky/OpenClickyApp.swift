@@ -187,6 +187,18 @@ final class CompanionAppDelegate: NSObject, NSApplicationDelegate {
         }
 
         #if DEBUG
+        if let checkIndex = launchArguments.firstIndex(of: "--openclicky-check-source"), checkIndex + 1 < launchArguments.count {
+            // Debug: what Settings → Account's Test button says for one source (AnswerSource raw value).
+            setvbuf(stdout, nil, _IONBF, 0)
+            Task { @MainActor in
+                guard let source = AnswerSource(rawValue: launchArguments[checkIndex + 1]) else { print("check-source: unknown source"); exit(1) }
+                let outcome = await AnswerSourceCheck.run(source, credentials: ProviderRouter.currentCredentials(),
+                                                          modelOverrides: OpenClickyConfiguration.settings.answerModels ?? [:])
+                print("check-source: \(source.rawValue): \(outcome.sentence)")
+                if case .works = outcome { exit(0) } else { exit(1) }
+            }
+            return
+        }
         if launchArguments.contains("--openclicky-answer-smoke") {
             // Debug: one real question (a red square) through ClaudeAPI and whatever source
             // shell.json routes to, printing the streamed text and the answer, then exit.
@@ -195,7 +207,7 @@ final class CompanionAppDelegate: NSObject, NSApplicationDelegate {
                 let route = ProviderRouter.current(for: .claude)
                 print("answer-smoke: route \(route.logName)")
                 let api = ClaudeAPI(currentProxyURL: { "\(OpenClickyConfiguration.backendBaseURL)/chat" })
-                let redSquare = Self.smokeRedSquarePNG()
+                let redSquare = AnswerSourceCheck.redSquarePNG()
                 var chunks = 0
                 do {
                     let (text, toolCalls, duration) = try await api.analyzeImageStreaming(
@@ -282,18 +294,6 @@ final class CompanionAppDelegate: NSObject, NSApplicationDelegate {
 
 
 extension CompanionAppDelegate {
-    #if DEBUG
-    /// A 64×64 red PNG for --openclicky-answer-smoke.
-    static func smokeRedSquarePNG() -> Data {
-        let image = NSImage(size: NSSize(width: 64, height: 64), flipped: false) { rect in
-            NSColor.red.setFill(); rect.fill(); return true
-        }
-        guard let tiff = image.tiffRepresentation, let bitmap = NSBitmapImageRep(data: tiff),
-              let png = bitmap.representation(using: .png, properties: [:]) else { return Data() }
-        return png
-    }
-    #endif
-
     /// Reads any audio file and returns PCM16 mono 24 kHz bytes (the Realtime input format).
     static func loadPCM16Mono24k(path: String) throws -> Data {
         let file = try AVAudioFile(forReading: URL(fileURLWithPath: path))

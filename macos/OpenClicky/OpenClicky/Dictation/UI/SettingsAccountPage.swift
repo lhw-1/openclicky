@@ -4,7 +4,7 @@
 //
 //  Settings → Account: who you are and what it costs. Sign in (or set up a free account with just
 //  an email, in AccountSheet) or sign out; how much of the free allowance is used and what each
-//  engine costs; your own OpenAI and Sarvam keys; and the backend host and token from shell.json.
+//  engine costs; your own provider keys (each one testable) and the plans you already pay for; and the backend host and token from shell.json.
 //
 
 import AppKit
@@ -41,30 +41,12 @@ extension SettingsCatalog {
                 keywords: ["openai", "assemblyai", "allowance", "metered", "engine"],
                 view: AnyView(BackendEngineUsageRow())),
             SettingsItem(
-                id: "account.ownOpenAIKey", page: .account, section: "Your keys",
-                title: "OpenAI", detail: "Unlocks fast voice and hands-free.",
-                keywords: ["openai", "api key", "byok", "own key", "openaiApiKey"],
-                view: AnyView(OwnOpenAIKeyEditor())),
-            SettingsItem(
-                id: "account.anthropicKey", page: .account, section: "Your keys",
-                title: "Anthropic (Claude)", detail: "Answers your questions about the screen.",
-                keywords: ["anthropic", "claude", "api key", "byok", "own key", "anthropicApiKey"],
-                view: AnyView(AnthropicKeyEditor())),
-            providerKeyItem("account.openRouterKey", title: "OpenRouter", detail: "One key for Claude, GPT, Gemini, Llama and more.",
-                            placeholder: "sk-or-…", keywords: ["openrouter", "router", "llama", "deepseek", "many models"], keyPath: \.openRouterApiKey),
-            providerKeyItem("account.geminiKey", title: "Google Gemini", detail: "From Google AI Studio.",
-                            placeholder: "AIza…", keywords: ["gemini", "google", "ai studio"], keyPath: \.geminiApiKey),
-            providerKeyItem("account.groqKey", title: "Groq", detail: "Very fast answers on open models.",
-                            placeholder: "gsk_…", keywords: ["groq", "llama", "fast"], keyPath: \.groqApiKey),
-            providerKeyItem("account.mistralKey", title: "Mistral", detail: "Mistral’s own models.",
-                            placeholder: "Mistral key", keywords: ["mistral", "le chat", "pixtral"], keyPath: \.mistralApiKey),
-            providerKeyItem("account.xaiKey", title: "xAI (Grok)", detail: "Grok, from xAI.",
-                            placeholder: "xai-…", keywords: ["xai", "grok", "x.ai"], keyPath: \.xaiApiKey),
-            SettingsItem(
-                id: "account.sarvamKey", page: .account, section: "Your keys",
-                title: "Sarvam", detail: "For the Sarvam engine.",
-                keywords: ["sarvam", "saaras", "api key", "api-subscription-key", "key"],
-                view: AnyView(SarvamKeyEditor())),
+                id: "account.keys", page: .account, section: "Your keys",
+                title: "Your keys", detail: "Add keys from OpenAI, Anthropic, OpenRouter, Google Gemini, Groq, Mistral, xAI and Sarvam.",
+                keywords: ["api key", "byok", "own key", "provider", "add key", "openai", "openaiApiKey", "anthropic", "claude",
+                           "anthropicApiKey", "openrouter", "llama", "deepseek", "gemini", "google", "ai studio", "groq",
+                           "mistral", "xai", "grok", "sarvam", "saaras", "test"],
+                view: AnyView(ProviderKeysList())),
             SettingsItem(
                 id: "account.keysNote", page: .account, section: "Your keys",
                 title: "Where keys go", detail: "Your keys go straight to that provider, never through OpenClicky, and are used instead of the free credits. Stored in ~/.openclicky/shell.json.",
@@ -277,163 +259,200 @@ private struct BackendEngineUsageRow: View {
 
 // MARK: - your keys
 
-extension SettingsCatalog {
-    /// A row for one more provider's key, kept in shell.json.
-    func providerKeyItem(_ id: String, title: String, detail: String, placeholder: String, keywords: [String],
-                         keyPath: WritableKeyPath<OpenClickyShellSettings, String?>) -> SettingsItem {
-        SettingsItem(
-            id: id, page: .account, section: "Your keys", title: title, detail: detail,
-            keywords: keywords + ["api key", "byok", "own key", "provider"],
-            view: AnyView(ProviderKeyEditor(title: title, detail: detail, placeholder: placeholder, keyPath: keyPath)))
-    }
-}
+/// A provider a key can be saved for: where it lives in shell.json and how its row reads.
+private enum KeyProvider: String, CaseIterable, Identifiable {
+    case openAI, anthropic, openRouter, gemini, groq, mistral, xai, sarvam
 
-/// One provider's key: field and Save. A saved key can answer questions (ProviderRouter).
-private struct ProviderKeyEditor: View {
-    let title: String
-    let detail: String
-    let placeholder: String
-    let keyPath: WritableKeyPath<OpenClickyShellSettings, String?>
-    @State private var key = ""
-    @State private var status: String?
+    var id: String { rawValue }
 
-    var body: some View {
-        SettingsRow(title: title, detail: status ?? detail) {
-            HStack(spacing: 8) {
-                SecureField("", text: $key, prompt: Text(placeholder))
-                    .labelsHidden()
-                    .textFieldStyle(.roundedBorder)
-                    .frame(width: 180)
-                    .onSubmit(saveKey)
-                    .accessibilityLabel("\(title) key")
-                Button("Save", action: saveKey)
-            }
-        }
-        .onAppear { key = OpenClickyConfiguration.settings[keyPath: keyPath] ?? "" }
-    }
-
-    private func saveKey() {
-        let trimmed = key.trimmingCharacters(in: .whitespacesAndNewlines)
-        OpenClickyConfiguration.update { $0[keyPath: keyPath] = trimmed.isEmpty ? nil : trimmed }
-        NotificationCenter.default.post(name: OpenClickyConfiguration.credentialsChangedNotification, object: nil)
-        ShellSettingsRevision.shared.noteChanged()
-        status = trimmed.isEmpty ? "Key removed." : "✓ Saved. It can answer your questions now."
-    }
-}
-
-private struct OwnOpenAIKeyEditor: View {
-    @State private var openaiKey = OpenClickyConfiguration.settings.openaiApiKey ?? ""
-    @State private var status: String?
-
-    var body: some View {
-        SettingsRow(title: "OpenAI", detail: status ?? "Unlocks fast voice and hands-free.") {
-            HStack(spacing: 8) {
-                SecureField("", text: $openaiKey, prompt: Text("sk-…"))
-                    .labelsHidden()
-                    .textFieldStyle(.roundedBorder)
-                    .frame(width: 180)
-                    .onSubmit(saveKey)
-                    .accessibilityLabel("OpenAI key")
-                Button("Save", action: saveKey)
-            }
+    var title: String {
+        switch self {
+        case .openAI: return "OpenAI"
+        case .anthropic: return "Anthropic (Claude)"
+        case .openRouter: return "OpenRouter"
+        case .gemini: return "Google Gemini"
+        case .groq: return "Groq"
+        case .mistral: return "Mistral"
+        case .xai: return "xAI (Grok)"
+        case .sarvam: return "Sarvam"
         }
     }
 
-    private func saveKey() {
-        let trimmed = openaiKey.trimmingCharacters(in: .whitespacesAndNewlines)
-        OpenClickyConfiguration.update { $0.openaiApiKey = trimmed.isEmpty ? nil : trimmed }
+    var detail: String {
+        switch self {
+        case .openAI: return "Answers, fast voice and hands-free."
+        case .anthropic: return "Claude answers your questions about the screen."
+        case .openRouter: return "One key for Claude, GPT, Gemini, Llama and more."
+        case .gemini: return "From Google AI Studio."
+        case .groq: return "Very fast answers on open models."
+        case .mistral: return "Mistral’s own models."
+        case .xai: return "Grok, from xAI."
+        case .sarvam: return "The Sarvam dictation engine, for Indian languages."
+        }
+    }
+
+    var placeholder: String {
+        switch self {
+        case .openAI: return "sk-…"
+        case .anthropic: return "sk-ant-…"
+        case .openRouter: return "sk-or-…"
+        case .gemini: return "AIza…"
+        case .groq: return "gsk_…"
+        case .mistral: return "Mistral key"
+        case .xai: return "xai-…"
+        case .sarvam: return "Sarvam key"
+        }
+    }
+
+    var keyPath: WritableKeyPath<OpenClickyShellSettings, String?> {
+        switch self {
+        case .openAI: return \.openaiApiKey
+        case .anthropic: return \.anthropicApiKey
+        case .openRouter: return \.openRouterApiKey
+        case .gemini: return \.geminiApiKey
+        case .groq: return \.groqApiKey
+        case .mistral: return \.mistralApiKey
+        case .xai: return \.xaiApiKey
+        case .sarvam: return \.sarvamKey
+        }
+    }
+
+    /// The source this key answers questions as; Sarvam only does dictation.
+    var answerSource: AnswerSource? {
+        switch self {
+        case .openAI: return .openAI
+        case .anthropic: return .anthropic
+        case .openRouter: return .openRouter
+        case .gemini: return .gemini
+        case .groq: return .groq
+        case .mistral: return .mistral
+        case .xai: return .xai
+        case .sarvam: return nil
+        }
+    }
+
+    var savedKey: String? {
+        let key = (OpenClickyConfiguration.settings[keyPath: keyPath] ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        return key.isEmpty ? nil : key
+    }
+}
+
+/// Your keys: one row per saved key (Test, Remove) and an "Add a key" row whose menu holds the
+/// providers without one, so the list stays short however many providers there are.
+private struct ProviderKeysList: View {
+    @ObservedObject private var shellSettingsRevision = ShellSettingsRevision.shared
+    @State private var newProvider: KeyProvider = .openAI
+    @State private var newKey = ""
+    @State private var addStatus: String?
+    /// What the last Test or Save said, per provider.
+    @State private var rowStatus: [KeyProvider: String] = [:]
+    @State private var checking: Set<KeyProvider> = []
+    @State private var pendingRemoval: KeyProvider?
+
+    var body: some View {
+        let _ = shellSettingsRevision.revision
+        let saved = KeyProvider.allCases.filter { $0.savedKey != nil }
+        let unsaved = KeyProvider.allCases.filter { $0.savedKey == nil }
+        // A group, not a stack: the form draws each key as its own row, with its separators.
+        Group {
+            ForEach(saved) { provider in savedRow(provider) }
+            Group {
+                if unsaved.isEmpty {
+                    SettingsRow(title: "Every provider has a key", detail: addStatus) { EmptyView() }
+                } else {
+                    addRow(unsaved)
+                }
+            }
+            .onAppear { if !unsaved.contains(newProvider), let first = unsaved.first { newProvider = first } }
+            .confirmationDialog("Remove the \(pendingRemoval?.title ?? "") key?", isPresented: Binding(
+                get: { pendingRemoval != nil }, set: { if !$0 { pendingRemoval = nil } })) {
+                Button("Remove", role: .destructive) { if let pendingRemoval { remove(pendingRemoval) } }
+            } message: {
+                Text("It’s deleted from ~/.openclicky/shell.json. Keep a copy if you’ll need it again.")
+            }
+        }
+    }
+
+    private func savedRow(_ provider: KeyProvider) -> some View {
+        let masked = "••••" + String((provider.savedKey ?? "").suffix(4))
+        return SettingsRow(title: provider.title, detail: rowStatus[provider] ?? "\(provider.detail) \(masked)") {
+            HStack(spacing: 8) {
+                Button(checking.contains(provider) ? "Testing…" : "Test") { test(provider) }
+                    .disabled(checking.contains(provider))
+                    .help("Ask it what colour a red square is")
+                Button("Remove") { pendingRemoval = provider }
+            }
+        }
+    }
+
+    private func addRow(_ unsaved: [KeyProvider]) -> some View {
+        SettingsRow(title: "Add a key", detail: addStatus ?? newProvider.detail) {
+            HStack(spacing: 8) {
+                Picker("Provider", selection: $newProvider) {
+                    ForEach(unsaved) { Text($0.title).tag($0) }
+                }
+                .labelsHidden()
+                .fixedSize()
+                .onChange(of: newProvider) { _, _ in addStatus = nil }
+                SecureField("", text: $newKey, prompt: Text(newProvider.placeholder))
+                    .labelsHidden()
+                    .textFieldStyle(.roundedBorder)
+                    .frame(width: 130)
+                    .onSubmit(add)
+                    .accessibilityLabel("\(newProvider.title) key")
+                Button("Add", action: add)
+                    .fixedSize()
+                    .disabled(newKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+            }
+            .layoutPriority(1)
+        }
+    }
+
+    private func add() {
+        let provider = newProvider
+        let trimmed = newKey.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+        save(trimmed, for: provider)
+        newKey = ""
+        addStatus = nil
+        if let next = KeyProvider.allCases.first(where: { $0.savedKey == nil }) { newProvider = next }
+        // Find out straight away whether it works.
+        test(provider)
+    }
+
+    private func remove(_ provider: KeyProvider) {
+        save(nil, for: provider)
+        rowStatus[provider] = nil
+        addStatus = "\(provider.title) key removed."
+        newProvider = provider
+    }
+
+    private func save(_ key: String?, for provider: KeyProvider) {
+        OpenClickyConfiguration.update { $0[keyPath: provider.keyPath] = key }
         // A changed key is a changed credential: a live realtime session reconnects with it.
         NotificationCenter.default.post(name: OpenClickyConfiguration.credentialsChangedNotification, object: nil)
-        status = trimmed.isEmpty ? "Key removed." : "✓ Saved."
-    }
-}
-
-/// The Anthropic key: Claude answers questions straight from Anthropic on it (ProviderRouter).
-private struct AnthropicKeyEditor: View {
-    @State private var anthropicKey = OpenClickyConfiguration.settings.anthropicApiKey ?? ""
-    @State private var status: String?
-
-    var body: some View {
-        SettingsRow(title: "Anthropic (Claude)", detail: status ?? "Answers your questions about the screen.") {
-            HStack(spacing: 8) {
-                SecureField("", text: $anthropicKey, prompt: Text("sk-ant-…"))
-                    .labelsHidden()
-                    .textFieldStyle(.roundedBorder)
-                    .frame(width: 180)
-                    .onSubmit(saveKey)
-                    .accessibilityLabel("Anthropic key")
-                Button("Save", action: saveKey)
-            }
-        }
-    }
-
-    private func saveKey() {
-        let trimmed = anthropicKey.trimmingCharacters(in: .whitespacesAndNewlines)
-        OpenClickyConfiguration.update { $0.anthropicApiKey = trimmed.isEmpty ? nil : trimmed }
-        NotificationCenter.default.post(name: OpenClickyConfiguration.credentialsChangedNotification, object: nil)
-        status = trimmed.isEmpty ? "Key removed." : "✓ Saved."
-    }
-}
-
-/// The Sarvam key: field, test, save, and what happened. Kept in ~/.openclicky/shell.json.
-private struct SarvamKeyEditor: View {
-    @State private var sarvamKey = OpenClickyConfiguration.settings.sarvamKey ?? ""
-    @State private var keyCheck: KeyCheck = .idle
-
-    enum KeyCheck: Equatable {
-        case idle, checking, works, saved, removed
-        case failed(String)
-    }
-
-    var body: some View {
-        SettingsRow(title: "Sarvam", detail: statusText) {
-            HStack(spacing: 8) {
-                SecureField("", text: $sarvamKey, prompt: Text("Sarvam key"))
-                    .labelsHidden()
-                    .textFieldStyle(.roundedBorder)
-                    .frame(width: 180)
-                    .onSubmit(saveKey)
-                    .accessibilityLabel("Sarvam key")
-                Button("Test", action: testKey).disabled(keyCheck == .checking)
-                Button("Save", action: saveKey)
-            }
-        }
-    }
-
-    private var statusText: String {
-        switch keyCheck {
-        case .idle:
-            return (OpenClickyConfiguration.settings.sarvamKey ?? "").isEmpty
-                ? "For the Sarvam engine. Get one at dashboard.sarvam.ai."
-                : "For the Sarvam engine. Key saved."
-        case .checking: return "Checking…"
-        case .works: return "✓ The key works and is saved."
-        case .saved: return "✓ Saved."
-        case .removed: return "Key removed."
-        case .failed(let message): return message
-        }
-    }
-
-    private func saveKey() {
-        let trimmed = sarvamKey.trimmingCharacters(in: .whitespacesAndNewlines)
-        OpenClickyConfiguration.update { $0.sarvamKey = trimmed.isEmpty ? nil : trimmed }
         ShellSettingsRevision.shared.noteChanged()
-        keyCheck = trimmed.isEmpty ? .removed : .saved
     }
 
-    private func testKey() {
-        let trimmed = sarvamKey.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else { keyCheck = .failed("Paste a key first."); return }
-        keyCheck = .checking
+    private func test(_ provider: KeyProvider) {
+        guard let key = provider.savedKey else { return }
+        checking.insert(provider)
+        rowStatus[provider] = "Checking…"
         Task {
-            do {
-                _ = try await SarvamSpeechClient(key: trimmed).complete(system: "Reply with the single word: ok", user: "ping", maxTokens: 5)
-                // A key that answers is worth keeping.
-                saveKey()
-                keyCheck = .works
-            } catch {
-                keyCheck = .failed(error.localizedDescription)
+            let sentence: String
+            if let source = provider.answerSource {
+                sentence = await AnswerSourceCheck.run(source, credentials: ProviderRouter.currentCredentials(),
+                                                       modelOverrides: OpenClickyConfiguration.settings.answerModels ?? [:]).sentence
+            } else {
+                do {
+                    _ = try await SarvamSpeechClient(key: key).complete(system: "Reply with the single word: ok", user: "ping", maxTokens: 5)
+                    sentence = "✓ Works."
+                } catch {
+                    sentence = error.localizedDescription
+                }
             }
+            rowStatus[provider] = sentence
+            checking.remove(provider)
         }
     }
 }
@@ -446,12 +465,19 @@ private struct PlanSubscriptionRow: View {
     let plan: AnswerSource
     @State private var status: PlanCLIStatus?
     @State private var isOn = false
+    @State private var checkSentence: String?
+    @State private var isChecking = false
 
     private var title: String { plan.displayName }
 
     var body: some View {
         SettingsRow(title: title, detail: detail) {
             HStack(spacing: 8) {
+                if status == .ready {
+                    Button(isChecking ? "Testing…" : "Test", action: test)
+                        .disabled(isChecking)
+                        .help("Ask it what colour a red square is")
+                }
                 if status == .notInstalled {
                     Button("Get It ↗") { openExternalLink(plan == .claudeCodePlan ? "https://claude.com/product/claude-code" : "https://developers.openai.com/codex/cli") }
                 }
@@ -471,7 +497,18 @@ private struct PlanSubscriptionRow: View {
         }
     }
 
+    private func test() {
+        isChecking = true
+        checkSentence = "Checking… a plan takes a few seconds."
+        Task {
+            checkSentence = await AnswerSourceCheck.run(plan, credentials: ProviderRouter.currentCredentials(),
+                                                        modelOverrides: OpenClickyConfiguration.settings.answerModels ?? [:]).sentence
+            isChecking = false
+        }
+    }
+
     private var detail: String {
+        if let checkSentence { return checkSentence }
         let command = plan == .claudeCodePlan ? "claude" : "codex login"
         switch status {
         case .none: return "Checking…"

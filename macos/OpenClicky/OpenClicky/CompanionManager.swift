@@ -35,6 +35,8 @@ enum CompanionVoiceState {
 final class CompanionManager: ObservableObject {
     @Published private(set) var voiceState: CompanionVoiceState = .idle
     @Published private(set) var lastTranscript: String?
+    /// Who is answering the question being spoken ("Claude Code", "free credits"), for the island.
+    @Published private(set) var answeringSourceName: String?
     @Published private(set) var currentAudioPowerLevel: CGFloat = 0
     @Published private(set) var hasAccessibilityPermission = false
     @Published private(set) var hasScreenRecordingPermission = false
@@ -627,6 +629,21 @@ final class CompanionManager: ObservableObject {
 
     /// Stops the spoken answer, its remaining /tts fetches, and its pointer — before the player is
     /// stopped, so the queue cannot move on to the next piece.
+    /// The island's stop button: silence whatever Clicky is saying. Agent work keeps going.
+    func stopSpeaking() {
+        guard voiceState == .responding else { return }
+        AppLog.append("ask: stopped speaking from the island")
+        stopActiveAnswer()
+        currentResponseTask?.cancel()
+        elevenLabsTTSClient.stopPlayback()
+        systemSpeechSynthesizer.stopSpeaking(at: .immediate)
+        recordedVoice.stop()
+        realtimeVoiceClient.stopSpeaking()
+        // A cancelled answer skips its own reset to idle.
+        voiceState = .idle
+        scheduleTransientHideIfNeeded()
+    }
+
     private func stopActiveAnswer() {
         activeAnswerSpeaker?.cancel()
         activeAnswerPlayback?.cancel()
@@ -1590,6 +1607,7 @@ final class CompanionManager: ObservableObject {
                 activeAnswerSpeaker = answerSpeaker
                 activeAnswerPlayback = answerPlayback
                 let askStartedAt = Date()
+                answeringSourceName = ProviderRouter.route(for: .claude, credentials: ProviderRouter.currentCredentials()).answeringSource?.shortName
                 AppLog.append("ask: sending to claude (\(screenCaptures.count) screen(s))")
 
                 let fullResponseText: String
@@ -1943,6 +1961,7 @@ final class CompanionManager: ObservableObject {
     let recordedVoice = RecordedVoice()
 
     private func speakWithSystemVoice(_ text: String) {
+        answeringSourceName = nil
         // A fixed notice that has a recording plays it, in the app's own voice.
         if let line = RecordedVoice.line(forSpokenText: text), recordedVoice.play(line) {
             systemSpeechSynthesizer.stopSpeaking(at: .immediate)
