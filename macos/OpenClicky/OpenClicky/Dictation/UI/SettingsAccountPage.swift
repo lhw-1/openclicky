@@ -76,6 +76,8 @@ extension SettingsCatalog {
 /// Signed out: "Not signed in" and Sign In…, which opens the account sheet.
 private struct AccountProfileRow: View {
     @ObservedObject private var authSession = OpenClickyAuthSession.shared
+    // Read so a guest started in the background (no email) redraws the row.
+    @ObservedObject private var shellSettingsRevision = ShellSettingsRevision.shared
     @StateObject private var billing = BillingStatusModel()
     @State private var showsAccountSheet = false
     @State private var resendNote: String?
@@ -101,6 +103,11 @@ private struct AccountProfileRow: View {
                         }
                         GuestConfirmationCodeField(onConfirmed: { billing.refresh() })
                     }
+                } else if authSession.isGuestWithoutEmail {
+                    Text("Trying OpenClicky").font(.system(size: 15, weight: .semibold))
+                    Text("Free on OpenClicky’s credits, on this Mac. Add your email to keep the account, or your own key for more.")
+                        .font(.system(size: 12)).foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
                 } else {
                     Text("Not signed in").font(.system(size: 15, weight: .semibold))
                     Text("A free account adds AI polish and spoken answers. Dictation on this Mac works without one.")
@@ -120,13 +127,13 @@ private struct AccountProfileRow: View {
                     ShellSettingsRevision.shared.noteChanged()
                 }
             } else {
-                Button("Sign In…") { showsAccountSheet = true }
+                Button(authSession.isGuestWithoutEmail ? "Add Email…" : "Sign In…") { showsAccountSheet = true }
                     .buttonStyle(.borderedProminent)
                     .tint(SettingsLook.accent)
             }
         }
         .padding(.vertical, 6)
-        .onAppear { if authSession.accountEmail != nil { billing.refresh() } }
+        .onAppear { if OpenClickyConfiguration.hasAccountToken { billing.refresh() } }
         .onDisappear { resendWork.cancel() }
         .task { await authSession.refreshAccountsOpen() }
         .sheet(isPresented: $showsAccountSheet) {

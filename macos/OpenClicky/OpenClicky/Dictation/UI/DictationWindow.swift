@@ -340,7 +340,7 @@ private struct SidebarFooter: View {
                     .frame(width: 28, height: 28)
                     VStack(alignment: .leading, spacing: 1) {
                         Text(accountName).font(.system(size: 13, weight: .medium)).lineLimit(1).truncationMode(.tail)
-                        Text(authSession.accountEmail == nil ? "Personal · no account" : "Signed in")
+                        Text(authSession.accountEmail != nil ? "Signed in" : (authSession.isGuestWithoutEmail ? "Trying it free" : "Personal · no account"))
                             .font(.system(size: 11)).foregroundStyle(.secondary).lineLimit(1)
                     }
                     Spacer(minLength: 0)

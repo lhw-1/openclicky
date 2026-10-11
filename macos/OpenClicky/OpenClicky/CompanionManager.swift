@@ -1152,20 +1152,46 @@ final class CompanionManager: ObservableObject {
         DispatchQueue.main.asyncAfter(deadline: .now() + 1.6) { [weak self] in
             guard let self else { return }
             self.streamCursorCaption("hi! i’m clicky. i follow your pointer, and point at things when you ask.", holdSeconds: 6)
-            self.playTourGreeting()
+            // "Hi! I'm Clicky. Let me show you three quick things.", recorded and bundled.
+            self.recordedVoice.play(.tourHello)
         }
     }
 
-    /// "Hi! I'm Clicky. Let me show you three quick things." Recorded once (OpenAI speech, the
-    /// marin voice the app answers in) and bundled, so the hello needs no key and no network.
-    private var tourGreetingPlayer: AVAudioPlayer?
-
-    private func playTourGreeting() {
-        guard let url = Bundle.main.url(forResource: "clicky-hello", withExtension: "mp3"),
-              let player = try? AVAudioPlayer(contentsOf: url) else { return }
-        player.volume = 0.8
-        tourGreetingPlayer = player
-        player.play()
+    /// The tour's "watch this" before asking: a screenshot, one specific thing on screen pointed
+    /// at, and a few words about it said out loud, so asking makes sense before it is tried.
+    /// `onFinished` runs once the pointer and the voice are done (or the demo could not run).
+    func performTourDemo(onFinished: @escaping @MainActor () -> Void) {
+        Task { @MainActor in
+            defer { onFinished() }
+            do {
+                let screenCaptures = try await CompanionScreenCaptureUtility.captureAllScreensAsJPEG()
+                guard let cursorScreenCapture = screenCaptures.first(where: { $0.isCursorScreen }) else { return }
+                let dimensionInfo = " (image dimensions: \(cursorScreenCapture.screenshotWidthInPixels)x\(cursorScreenCapture.screenshotHeightInPixels) pixels)"
+                let (fullResponseText, _, _) = try await claudeAPI.analyzeImageStreaming(
+                    images: [(data: cursorScreenCapture.imageData, label: cursorScreenCapture.label + dimensionInfo)],
+                    systemPrompt: Self.onboardingDemoSystemPrompt,
+                    userPrompt: "look around my screen and find something interesting to point at",
+                    onTextChunk: { _ in }
+                )
+                let parseResult = Self.parsePointingCoordinates(from: fullResponseText)
+                guard let pointCoordinate = parseResult.coordinate else { return }
+                if !isOverlayVisible {
+                    overlayWindowManager.hasShownOverlayBefore = true
+                    overlayWindowManager.showOverlay(onScreens: NSScreen.screens, companionManager: self)
+                    isOverlayVisible = true
+                }
+                detectedElementBubbleText = parseResult.spokenText
+                detectedElementScreenLocation = Self.screenLocation(forScreenshotPoint: pointCoordinate, in: cursorScreenCapture)
+                detectedElementDisplayFrame = cursorScreenCapture.displayFrame
+                detectedElementPointToken &+= 1
+                AppLog.append("tour demo: pointing at \(parseResult.elementLabel ?? "something")")
+                // Said in the answering voice; quietly skipped when no voice route is set up.
+                try? await elevenLabsTTSClient.speakText(parseResult.spokenText)
+                while elevenLabsTTSClient.isPlaying { try? await Task.sleep(nanoseconds: 150_000_000) }
+            } catch {
+                AppLog.append("tour demo: could not run (\((error as NSError).domain) \((error as NSError).code))")
+            }
+        }
     }
 
     /// Starts the orb and keeps the event tap's dictation key in step with Settings.
@@ -1818,7 +1844,7 @@ final class CompanionManager: ObservableObject {
         transientHideTask?.cancel()
         transientHideTask = Task {
             // Wait for TTS audio to finish playing
-            while elevenLabsTTSClient.isPlaying || systemSpeechSynthesizer.isSpeaking {
+            while elevenLabsTTSClient.isPlaying || systemSpeechSynthesizer.isSpeaking || recordedVoice.isPlaying {
                 try? await Task.sleep(nanoseconds: 200_000_000)
                 guard !Task.isCancelled else { return }
             }
@@ -1848,7 +1874,16 @@ final class CompanionManager: ObservableObject {
     /// route (for example an OpenRouter-only backend). Keeps the conversation audible.
     private let systemSpeechSynthesizer = AVSpeechSynthesizer()
 
+    /// The bundled recordings of the lines said the same way every time (RecordedVoice.swift).
+    let recordedVoice = RecordedVoice()
+
     private func speakWithSystemVoice(_ text: String) {
+        // A fixed notice that has a recording plays it, in the app's own voice.
+        if let line = RecordedVoice.line(forSpokenText: text), recordedVoice.play(line) {
+            systemSpeechSynthesizer.stopSpeaking(at: .immediate)
+            voiceState = .responding
+            return
+        }
         let utterance = AVSpeechUtterance(string: text)
         utterance.rate = AVSpeechUtteranceDefaultSpeechRate
         systemSpeechSynthesizer.stopSpeaking(at: .immediate)
