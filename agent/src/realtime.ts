@@ -1,6 +1,6 @@
 import { spawn, type ChildProcess } from "node:child_process";
 import type { AgentConfig } from "./config.js";
-import { backendHeaders } from "./backendHeaders.js";
+import { openaiRoute, needsOpenAI, realtimeSecretBody } from "./providerRoute.js";
 
 /**
  * The always-on / push-to-talk voice loop (HeyClicky's RealtimeVoiceClient):
@@ -100,19 +100,22 @@ export class RealtimeSession {
     this.opts.onEvent?.(line);
   }
 
-  /** Mint the ephemeral secret via the backend, connect, configure the session, start the mic. */
+  /** Mint the ephemeral secret (own OpenAI key: from OpenAI directly; else via the backend), connect, configure the session, start the mic. */
   async start(): Promise<void> {
     const { cfg } = this.opts;
-    if (!cfg.token) throw new Error("missing token: set OPENCLICKY_TOKEN or pass --token");
+    const route = openaiRoute(cfg, "/agent/realtime/session", "/realtime/client_secrets", { "content-type": "application/json" });
+    if (!route) throw new Error(`talk ${needsOpenAI}`);
     const f = this.opts.fetchImpl ?? fetch;
-    const res = await f(`${cfg.backendUrl}/agent/realtime/session`, {
+    const instructions = this.opts.instructions ?? TALK_INSTRUCTIONS;
+    const res = await f(route.url, {
       method: "POST",
-      headers: backendHeaders(cfg, { "content-type": "application/json" }),
-      body: JSON.stringify({ voice: this.opts.voice, instructions: this.opts.instructions ?? TALK_INSTRUCTIONS }),
+      headers: route.headers,
+      body: JSON.stringify(route.direct ? realtimeSecretBody({ voice: this.opts.voice, instructions }) : { voice: this.opts.voice, instructions }),
     });
-    if (!res.ok) throw new Error(`backend ${res.status}: ${(await res.text()).slice(0, 300)}`);
+    const from = route.direct ? "openai" : "backend";
+    if (!res.ok) throw new Error(`${from} ${res.status}: ${(await res.text()).slice(0, 300)}`);
     const secret = (await res.json()) as { value?: string; session?: { model?: string } };
-    if (!secret.value) throw new Error("backend returned no client secret");
+    if (!secret.value) throw new Error(`${from} returned no client secret`);
     const model = secret.session?.model ?? "gpt-realtime";
     const base = (this.opts.realtimeUrl ?? "wss://api.openai.com/v1/realtime").replace(/\/+$/, "");
     const url = `${base}?model=${encodeURIComponent(model)}`;

@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
 import fs from "node:fs";
 import path from "node:path";
-import { backendHeaders } from "../src/backendHeaders.js";
+import { backendHeaders, canCallBackend } from "../src/backendHeaders.js";
 import { resolveConfig, repoRoot } from "../src/config.js";
 import { renderCodexConfig } from "../src/codexHome.js";
 
@@ -16,6 +16,28 @@ describe("backendHeaders", () => {
     });
   });
 
+  it("sends no Authorization header for an own key with no account (issue #4)", () => {
+    expect(backendHeaders({ openaiApiKey: "sk-user" })).toEqual({ "x-openclicky-openai-key": "sk-user" });
+    expect(backendHeaders({ token: "" })).toEqual({});
+    expect(canCallBackend({ openaiApiKey: "sk-user" })).toBe(true);
+    expect(canCallBackend({ token: "t" })).toBe(true);
+    expect(canCallBackend({})).toBe(false);
+  });
+
+  it("points Codex at OpenAI on the own key, or at the backend on the token", () => {
+    const template = fs.readFileSync(path.join(repoRoot(), "config", "codex-config.toml"), "utf8");
+    const base = { root: "/r", backendUrl: "http://b/", workspace: "/w", userSkillsActive: "/s" };
+    const viaBackend = renderCodexConfig(template, base);
+    expect(viaBackend).toContain('base_url = "http://b/v1"\nenv_key = "OPENCLICKY_SESSION_TOKEN"');
+    const direct = renderCodexConfig(template, { ...base, ownOpenAIKey: true });
+    expect(direct).toContain('base_url = "https://api.openai.com/v1"\nenv_key = "OPENCLICKY_OPENAI_KEY"');
+    expect(direct).not.toContain("http://b");
+    // Own keys never travel to the backend as headers any more.
+    expect(direct).not.toContain("env_http_headers");
+    expect(viaBackend).not.toContain("env_http_headers");
+    expect(direct).not.toContain("{{");
+  });
+
   it("reads the keys from the environment", () => {
     const cfg = resolveConfig({}, { HOME: "/tmp", OPENCLICKY_OPENAI_KEY: "sk-env", OPENCLICKY_ANTHROPIC_KEY: "ak-env" });
     expect(cfg.openaiApiKey).toBe("sk-env");
@@ -23,9 +45,4 @@ describe("backendHeaders", () => {
     expect(resolveConfig({}, { HOME: "/tmp" }).openaiApiKey).toBeUndefined();
   });
 
-  it("renders env_http_headers so Codex forwards the user's provider keys to the backend", () => {
-    const template = fs.readFileSync(path.join(repoRoot(), "config", "codex-config.toml"), "utf8");
-    const out = renderCodexConfig(template, { root: "/r", backendUrl: "http://b", workspace: "/w", userSkillsActive: "/s" });
-    expect(out).toContain('env_http_headers = { "x-openclicky-openai-key" = "OPENCLICKY_OPENAI_KEY", "x-openclicky-anthropic-key" = "OPENCLICKY_ANTHROPIC_KEY" }');
-  });
 });

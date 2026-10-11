@@ -4,7 +4,8 @@ import path from "node:path";
 import readline from "node:readline";
 import { resolveConfig, type AgentConfig } from "./config.js";
 import { readVersion } from "./version.js";
-import { backendHeaders } from "./backendHeaders.js";
+import { canCallBackend, MISSING_CREDENTIALS } from "./backendHeaders.js";
+import { openaiRoute, needsOpenAI, bundledSkillIds, skillDraftBody, skillMarkdownFromCompletion } from "./providerRoute.js";
 import { CodexAgent, type ApprovalRequest, type ApprovalDecision, type RunResult, buildChildEnv } from "./codex.js";
 import { ensureCodexHome } from "./codexHome.js";
 import { ask } from "./ask.js";
@@ -152,7 +153,7 @@ async function promptApproval(req: ApprovalRequest): Promise<ApprovalDecision> {
 }
 
 async function runAgent(cfg: AgentConfig, task: string, opts: Record<string, any>): Promise<RunResult> {
-  if (!cfg.token) fail("missing token: set OPENCLICKY_TOKEN or pass --token");
+  if (!canCallBackend(cfg)) fail(MISSING_CREDENTIALS);
   let streamed = false;
   const agent = new CodexAgent(cfg, {
     onEvent: note,
@@ -544,22 +545,24 @@ skills.command("path").description("print the library directory").action(() => v
 
 skills
   .command("create")
-  .description("draft a SKILL.md from a one-line request via the backend, save and activate it")
+  .description("draft a SKILL.md from a one-line request (own OpenAI key: on OpenAI directly; else via the backend), save and activate it")
   .argument("<request>", "what the skill should do")
   .option("--capability <name...>", "capabilities the skill may rely on (e.g. composio, computer-use)")
   .option("--backend-url <url>", "env BACKEND_URL")
   .option("--token <token>", "env OPENCLICKY_TOKEN")
   .action(async (request: string, opts) => {
     const cfg = configFrom(opts);
-    if (!cfg.token) fail("missing token: set OPENCLICKY_TOKEN or pass --token");
+    const route = openaiRoute(cfg, "/skills/create", "/chat/completions", { "content-type": "application/json" });
+    if (!route) fail(`skill creation ${needsOpenAI}`);
     try {
-      const r = await fetch(`${cfg.backendUrl}/skills/create`, {
+      const capabilities: string[] = opts.capability ?? [];
+      const r = await fetch(route!.url, {
         method: "POST",
-        headers: backendHeaders(cfg, { "content-type": "application/json" }),
-        body: JSON.stringify({ request, capabilities: opts.capability ?? [] }),
+        headers: route!.headers,
+        body: JSON.stringify(route!.direct ? skillDraftBody(request, capabilities, bundledSkillIds(cfg.root)) : { request, capabilities }),
       });
       if (!r.ok) fail(`skill creation failed (${r.status}): ${(await r.text()).slice(0, 300)}`);
-      const { markdown } = (await r.json()) as { markdown: string };
+      const markdown = route!.direct ? skillMarkdownFromCompletion(await r.json()) : ((await r.json()) as { markdown: string }).markdown;
       const skill = createSkillFiles(cfg.userSkillsDir, markdown);
       note(`saved ${skill.path}/SKILL.md (active)`);
       process.stdout.write(skill.id + "\n");

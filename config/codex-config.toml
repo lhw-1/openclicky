@@ -1,7 +1,7 @@
 # OpenClicky Codex CLI config template (derived from reference/codex-config.toml, HeyClicky v1.0.48).
 #
 # Rendered by agent/src/codexHome.ts into $OPENCLICKY_CODEX_HOME/config.toml on every run.
-# Placeholders (double-brace): MODEL_LINE, OPENCLICKY_ROOT, BACKEND_URL, WORKSPACE, MCP_SERVERS, USER_SKILLS_ACTIVE.
+# Placeholders (double-brace): MODEL_LINE, OPENCLICKY_ROOT, PROVIDER_ROUTE, WORKSPACE, MCP_SERVERS, USER_SKILLS_ACTIVE.
 #
 # Verified against Codex CLI 0.152.1 (`codex app-server --strict-config`).
 
@@ -16,19 +16,15 @@ model_instructions_file = "{{OPENCLICKY_ROOT}}/skills/ModelInstructions.md"
 js_repl = true
 multi_agent = true
 
-# Keys stay server-side. Codex never sees an OpenAI key: it calls the OpenClicky backend, which
-# holds the real provider key. Codex attaches `Authorization: Bearer $OPENCLICKY_SESSION_TOKEN`
-# (the `env_key` below) to every request; the backend accepts a Supabase JWT or a session token.
+# Own keys first. With the person's own OpenAI key (OPENCLICKY_OPENAI_KEY) Codex calls OpenAI directly
+# with it, and nothing goes through OpenClicky's servers. Without one, Codex calls the OpenClicky
+# backend with the account's token (`Authorization: Bearer $OPENCLICKY_SESSION_TOKEN`) and the
+# backend's key does the work. The two lines below are filled in by agent/src/codexHome.ts.
 [model_providers.openclicky]
-name = "OpenClicky backend"
-base_url = "{{BACKEND_URL}}/v1"
-# Codex 0.152.x rejects `wire_api = "chat"`, so the backend proxies the Responses API (/v1/responses).
+name = "OpenClicky"
+{{PROVIDER_ROUTE}}
+# Codex 0.152.x rejects `wire_api = "chat"`; both routes speak the Responses API (/v1/responses).
 wire_api = "responses"
-env_key = "OPENCLICKY_SESSION_TOKEN"
-# Bring your own key: when the user set OPENCLICKY_OPENAI_KEY / OPENCLICKY_ANTHROPIC_KEY, Codex sends them
-# to the backend as headers and the backend runs the request on them instead of its own keys (unset
-# variables send nothing).
-env_http_headers = { "x-openclicky-openai-key" = "OPENCLICKY_OPENAI_KEY", "x-openclicky-anthropic-key" = "OPENCLICKY_ANTHROPIC_KEY" }
 requires_openai_auth = false
 supports_websockets = false
 
