@@ -1179,7 +1179,7 @@ enum MicrophoneMenu {
            let device = MicrophoneDevices.available().first(where: { $0.uid == uid }) {
             return device.name
         }
-        return "mac default · \(MicrophoneDevices.defaultInputName() ?? "none found")"
+        return "automatic · \(MicrophoneDevices.effectiveInputName(preferredUID: nil) ?? "none found")"
     }
 
     /// Just the device's name ("External Microphone"), for a line with no room for more.
@@ -1188,13 +1188,13 @@ enum MicrophoneMenu {
            let device = MicrophoneDevices.available().first(where: { $0.uid == uid }) {
             return device.name
         }
-        return MicrophoneDevices.defaultInputName() ?? "no microphone"
+        return MicrophoneDevices.effectiveInputName(preferredUID: nil) ?? "no microphone"
     }
 
     static func present(settings: DictationSettings) {
         let target = MicrophoneMenuTarget(settings: settings)
         let menu = NSMenu()
-        let defaultItem = NSMenuItem(title: "Mac Default (\(MicrophoneDevices.defaultInputName() ?? "none"))", action: #selector(MicrophoneMenuTarget.choose(_:)), keyEquivalent: "")
+        let defaultItem = NSMenuItem(title: "Automatic (\(MicrophoneDevices.effectiveInputName(preferredUID: nil) ?? "none"))", action: #selector(MicrophoneMenuTarget.choose(_:)), keyEquivalent: "")
         defaultItem.target = target
         defaultItem.representedObject = ""
         defaultItem.state = settings.preferredMicrophoneUID == nil ? .on : .off

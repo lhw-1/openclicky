@@ -147,6 +147,15 @@ final class DictationTakeController: ObservableObject {
     private var pendingEditStartWork: DispatchWorkItem?
     private var inactivityTimer: Timer?
     private var lastLoudMomentAt = Date()
+    /// The loudest level the microphone reported during this take; nil until it reports any
+    /// (the tests drive takes without a microphone).
+    private var loudestLevelThisTake: CGFloat?
+    /// How many levels the microphone reported this take: a real one reports many a second, so
+    /// a handful is too little audio to call silent.
+    private var levelSamplesThisTake = 0
+    /// Below this the whole take was room noise: a microphone that hears nothing (the headphone
+    /// jack with speakers in it), whose silence the offline recogniser wrote down as "no".
+    static let silentTakeLevel: CGFloat = 0.03
     /// Closes the orb's transcript box a moment after it opened for a take.
     private var boxCloseWork: DispatchWorkItem?
     /// The box stays this long after a take whose words had nowhere to go; a click on it or a new
@@ -268,6 +277,10 @@ final class DictationTakeController: ObservableObject {
                 guard let self else { return }
                 self.orb.audioLevel = level
                 if level > 0.08 { self.lastLoudMomentAt = Date() }
+                if self.isTakeInProgress {
+                    self.loudestLevelThisTake = max(self.loudestLevelThisTake ?? 0, level)
+                    self.levelSamplesThisTake += 1
+                }
             }
             .store(in: &cancellables)
         dictationManager.errorMessagePublisher
@@ -457,6 +470,8 @@ final class DictationTakeController: ObservableObject {
         takeIsToggle = false
         takeReceivedFinalTranscript = false
         lastLoudMomentAt = Date()
+        loudestLevelThisTake = nil
+        levelSamplesThisTake = 0
         // The focused element is read now (a few AX calls); the window's captions, which can take
         // hundreds of milliseconds in a browser, are read once the microphone is open.
         fieldAtPress = host.readFocusedField()
@@ -632,6 +647,13 @@ final class DictationTakeController: ObservableObject {
         }
         guard !raw.isEmpty else {
             failTake("didn't catch that", takeID: thisTakeID)
+            return
+        }
+        // Words from a take the microphone never heard a voice in are the engine's guess at
+        // silence, not what was said: nothing is pasted.
+        if let loudestLevelThisTake, levelSamplesThisTake >= 10, loudestLevelThisTake < Self.silentTakeLevel, liveTypingAtFinish?.hasTyped != true {
+            AppLog.append("take \(thisTakeID.uuidString.prefix(8)) heard only silence (loudest \(String(format: "%.3f", Double(loudestLevelThisTake)))); dropped \(raw.count) characters")
+            failTake("didn't catch that. check the microphone", takeID: thisTakeID)
             return
         }
         let duration = Date().timeIntervalSince(takeStartedAt)
