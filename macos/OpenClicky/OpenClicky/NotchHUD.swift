@@ -113,9 +113,12 @@ final class NotchHUDModel: ObservableObject {
     let permissionWidth: CGFloat = 512
     let composerWidth: CGFloat = 460
     let composerContentHeight: CGFloat = 52
-    let fullWidth: CGFloat = 512
-    let homeTotalHeight: CGFloat = 232
-    let agentsTotalHeight: CGFloat = 392
+    /// A side drawer is a narrow column with its content stacked, not the notch panel moved.
+    var fullWidth: CGFloat { placement.isSideDrawer ? 360 : 512 }
+
+    /// The open panel's tab row: the band plus a little air above the controls, so the pills and
+    /// the round buttons never touch the top edge of the screen.
+    var tabBarHeight: CGFloat { topBandHeight + 6 }
 
     /// The band the tab bar sits in: the hardware notch, or at least 34 pt on a display without
     /// one (whose menu bar band may be 0 pt when that display shows no menu bar).
@@ -183,9 +186,10 @@ final class NotchHUDModel: ObservableObject {
     var composerHeight: CGFloat { geometry.notchHeight + composerContentHeight }
     var fullHeight: CGFloat {
         switch activeTab {
-        case .home: return max(homeTotalHeight, topBandHeight + 200)
-        case .agents: return max(agentsTotalHeight, topBandHeight + 360)
-        case .settings: return topBandHeight + 248
+        // The tab row, the body's top padding, the content, and room under the last control.
+        case .home: return tabBarHeight + DS.HUD.bodyTopPadding + (placement.isSideDrawer ? 336 : 212)
+        case .agents: return tabBarHeight + DS.HUD.bodyTopPadding + 352
+        case .settings: return tabBarHeight + DS.HUD.bodyTopPadding + (placement.isSideDrawer ? 386 : 270)
         }
     }
 

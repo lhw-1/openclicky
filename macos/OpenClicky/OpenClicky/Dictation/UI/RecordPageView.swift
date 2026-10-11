@@ -22,6 +22,9 @@ struct RecordPageView: View {
     @State private var greetingIndex = 0
     @State private var wordsPerDay: [(day: Date, words: Int)] = []
 
+    /// The page's width, for stacking the two columns in a narrow window.
+    @State private var pageWidth: CGFloat = 1000
+
     init(model: DictationWindowModel, companionManager: CompanionManager) {
         self.model = model
         self.companionManager = companionManager
@@ -43,7 +46,13 @@ struct RecordPageView: View {
                     engineBanner
                 }
 
-                HStack(alignment: .top, spacing: 32) {
+                // Two columns where there is room; in a narrow window the week and the pointer
+                // go under the takes instead of squeezing them into an empty strip.
+                let isNarrow = pageWidth < 720
+                let columns = isNarrow
+                    ? AnyLayout(VStackLayout(alignment: .leading, spacing: 24))
+                    : AnyLayout(HStackLayout(alignment: .top, spacing: 32))
+                columns {
                     VStack(alignment: .leading, spacing: 24) {
                         instructionCard
                         tryItHereStrip
@@ -55,13 +64,15 @@ struct RecordPageView: View {
                         thisWeekCard
                         PointerCard(companionManager: companionManager)
                     }
-                    .frame(width: 300)
+                    .frame(width: isNarrow ? nil : 300)
+                    .frame(maxWidth: isNarrow ? .infinity : nil, alignment: .leading)
                 }
             }
             .padding(.top, Paper.Metric.windowTop)
             .padding(.horizontal, Paper.Metric.windowSides)
             .padding(.bottom, 40)
         }
+        .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { pageWidth = $0 }
         .onAppear(perform: reload)
         .onReceive(controller.$historyVersion) { _ in reload() }
         .onReceive(controller.$lastTake.dropFirst().compactMap { $0 }) { take in

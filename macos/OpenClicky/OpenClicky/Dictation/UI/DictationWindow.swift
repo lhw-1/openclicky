@@ -95,12 +95,11 @@ final class DictationWindowController: NSWindowController, NSWindowDelegate {
     init(companionManager: CompanionManager) {
         self.companionManager = companionManager
         let window = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 1100, height: 720),
+            contentRect: NSRect(origin: .zero, size: Self.startingSize),
             styleMask: [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView],
             backing: .buffered, defer: false)
         window.title = "OpenClicky"
-        window.minSize = NSSize(width: 860, height: 560)
-        window.setFrameAutosaveName("OpenClickyMainWindow")
+        window.setFrameAutosaveName("OpenClickyWindow")
         window.isReleasedWhenClosed = false
         // A toolbar lets the split view put the page title and the sidebar button in the title bar.
         window.toolbar = NSToolbar(identifier: "OpenClickyMainToolbar")
@@ -111,14 +110,27 @@ final class DictationWindowController: NSWindowController, NSWindowDelegate {
         // The window keeps its own size; the view fills it (SwiftUI would otherwise size the window to fit).
         hostingController.sizingOptions = []
         window.contentViewController = hostingController
-        window.setContentSize(NSSize(width: 1100, height: 720))
-        window.setFrameUsingName("OpenClickyMainWindow")
+        // Set after the content view controller, which replaces the window's minimum with its own.
+        window.contentMinSize = Self.minimumSize
+        window.setContentSize(Self.startingSize)
+        window.setFrameUsingName("OpenClickyWindow")
         appearanceSubscription = window.followAppearanceSetting(of: companionManager.dictationSettings)
         if window.frame.origin == .zero { window.center() }
     }
 
     @available(*, unavailable)
     required init?(coder: NSCoder) { nil }
+
+    /// The sidebar (240 pt) plus a page that still lays out (the record page stacks its two
+    /// columns below about 720 pt); narrower, the split view squeezed the sidebar off its edge.
+    static let minimumSize = NSSize(width: 780, height: 560)
+
+    /// Tall enough that the whole sidebar shows without scrolling, and no wider than a settings
+    /// page needs; shorter on a screen that has less room.
+    static var startingSize: NSSize {
+        let room = NSScreen.main?.visibleFrame.size ?? NSSize(width: 1440, height: 900)
+        return NSSize(width: min(840, room.width - 40), height: min(880, room.height - 40))
+    }
 
     func show(section: DictationSection? = nil, settingsPage: DictationSettingsPage? = nil) {
         model.open(section: section, settingsPage: settingsPage)
@@ -213,6 +225,7 @@ struct DictationRootView: View {
         } detail: {
             detail(query: query, matches: matches, relevantItems: relevantItems)
         }
+        .frame(minWidth: DictationWindowController.minimumSize.width, minHeight: DictationWindowController.minimumSize.height)
         .onAppear {
             fnKeyState.refresh()
             reloadHistoryCount()
