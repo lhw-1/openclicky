@@ -107,7 +107,7 @@ final class DictationWindowModel: ObservableObject {
 final class DictationWindowController: NSWindowController, NSWindowDelegate {
     let model = DictationWindowModel()
     private let companionManager: CompanionManager
-    private var appearanceCancellable: AnyCancellable?
+    private var appearanceSubscription: AnyCancellable?
 
     init(companionManager: CompanionManager) {
         self.companionManager = companionManager
@@ -128,19 +128,12 @@ final class DictationWindowController: NSWindowController, NSWindowDelegate {
         // The window keeps its own size; the view fills it (SwiftUI would otherwise grow the window to its ideal height).
         hosting.sizingOptions = []
         window.contentView = hosting
-        applyAppearance()
-        appearanceCancellable = companionManager.dictationSettings.$appearance.sink { [weak self] _ in
-            DispatchQueue.main.async { self?.applyAppearance() }
-        }
+        appearanceSubscription = window.followAppearanceSetting(of: companionManager.dictationSettings)
         if window.frame.origin == .zero { window.center() }
     }
 
     @available(*, unavailable)
     required init?(coder: NSCoder) { nil }
-
-    private func applyAppearance() {
-        window?.appearance = companionManager.dictationSettings.appearance.nsAppearance
-    }
 
     func show(section: DictationSection? = nil, settingsPage: DictationSettingsPage? = nil) {
         model.open(section: section, settingsPage: settingsPage)
@@ -160,6 +153,21 @@ final class DictationWindowController: NSWindowController, NSWindowDelegate {
                 NSApp.setActivationPolicy(.accessory)
             }
         }
+    }
+}
+
+extension NSWindow {
+    /// Keeps this window light, dark or matching the system as the "appearance" setting says: set
+    /// now, and again on every change. Every window of the app goes through here (the onboarding
+    /// window once forgot to and stayed in the system look). Keep the returned subscription.
+    func followAppearanceSetting(of settings: DictationSettings) -> AnyCancellable {
+        appearance = settings.appearance.nsAppearance
+        // `$appearance` fires before the property changes, so the new value is read from the
+        // publisher; the change is applied on the next turn, outside the SwiftUI update that made it.
+        return settings.$appearance
+            .dropFirst()
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] newAppearance in self?.appearance = newAppearance.nsAppearance }
     }
 }
 
@@ -239,6 +247,12 @@ struct DictationRailView: View {
     @ObservedObject private var fnKeyState = FnKeyState.shared
     @State private var historyCount = 0
     @FocusState private var isSettingsSearchFieldFocused: Bool
+    // Where the scrolling list sits in its visible area, for the edge fades and the "more" chevron.
+    @State private var sidebarListFrame: CGRect = .zero
+    @State private var sidebarVisibleHeight: CGFloat = 0
+    // Each row's place within the list itself (unchanged by scrolling), to tell whether the selected
+    // row already shows in full before scrolling to it.
+    @State private var sidebarRowFramesInList: [DictationSidebarRow: CGRect] = [:]
 
     init(model: DictationWindowModel, companionManager: CompanionManager) {
         self.model = model
@@ -250,23 +264,27 @@ struct DictationRailView: View {
     var body: some View {
         let settingsSearchResults = settingsSearchMatches
         VStack(alignment: .leading, spacing: 0) {
+            // The wordmark and the hide-sidebar button stay put above the list. Inside the scrolling
+            // list they slid up under the window's close/minimise/zoom buttons whenever a lower row
+            // was scrolled into view, taking "record" with them.
+            HStack {
+                OpenClickyWordmark()
+                Spacer()
+                Button(action: { model.isRailCollapsed.toggle() }) {
+                    Image(systemName: "sidebar.left").font(.system(size: 13)).foregroundStyle(Paper.inkSecondary)
+                }
+                .buttonStyle(.plain).pointerCursor().help("Hide Sidebar (⌃⌘S)")
+            }
+            .padding(.top, 44)
+            .padding(.horizontal, 10)
+            .padding(.bottom, 12)
+
             // The list scrolls when it is taller than the window (it is, at the 600 pt minimum);
-            // incognito and the account stay pinned below it.
+            // incognito and the account stay pinned below it. An edge with more rows past it fades,
+            // and a chevron at the foot says there is more, since the list has no scroll bar.
             ScrollViewReader { sidebarScroller in
             ScrollView(showsIndicators: false) {
                 VStack(alignment: .leading, spacing: 2) {
-                    HStack {
-                        OpenClickyWordmark()
-                        Spacer()
-                        Button(action: { model.isRailCollapsed.toggle() }) {
-                            Image(systemName: "sidebar.left").font(.system(size: 13)).foregroundStyle(Paper.inkSecondary)
-                        }
-                        .buttonStyle(.plain).pointerCursor().help("Hide Sidebar (⌃⌘S)")
-                    }
-                    .padding(.top, 44)
-                    .padding(.horizontal, 10)
-                    .padding(.bottom, 18)
-
                     railButton(.section(.record), title: DictationSection.record.title) { Keycap(text: settings.dictationKey.keycapLabel) }
                     railButton(.section(.history), title: DictationSection.history.title) { railCount(historyCount) }
 
@@ -282,7 +300,35 @@ struct DictationRailView: View {
                         settingsPageRow(page, hitCount: model.isSearchingSettings ? settingsSearchResults.filter { $0.page == page }.count : nil)
                     }
                 }
+                .coordinateSpace(name: Self.sidebarListContentSpace)
+                .padding(.top, 6)
                 .padding(.bottom, 8)
+                .onGeometryChange(for: CGRect.self) { listGeometry in
+                    listGeometry.frame(in: .named(Self.sidebarListSpace))
+                } action: { newListFrame in
+                    sidebarListFrame = newListFrame
+                }
+            }
+            .coordinateSpace(name: Self.sidebarListSpace)
+            .onGeometryChange(for: CGFloat.self) { visibleGeometry in
+                visibleGeometry.size.height
+            } action: { newVisibleHeight in
+                sidebarVisibleHeight = newVisibleHeight
+            }
+            .mask(sidebarListFadeMask)
+            .overlay(alignment: .bottom) {
+                if sidebarListOverflow.hasMoreBelow {
+                    Button(action: {
+                        withAnimation(.easeOut(duration: 0.2)) { sidebarScroller.scrollTo(DictationSidebarRow.settingsPage(.account), anchor: .bottom) }
+                    }) {
+                        Image(systemName: "chevron.down").font(.system(size: 10, weight: .semibold)).foregroundStyle(Paper.inkSecondary)
+                            .frame(width: 44, height: 18)
+                            .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain).pointerCursor()
+                    .help("more settings below")
+                    .accessibilityLabel("show more settings")
+                }
             }
             // At the minimum height "privacy" and "account" sit below the fold; a page opened from
             // elsewhere (the HUD, the account footer, "change engine") scrolls its row into view.
@@ -327,9 +373,35 @@ struct DictationRailView: View {
         .onReceive(companionManager.dictationTakeController.$historyVersion) { _ in reloadHistoryCount() }
     }
 
+    private static let sidebarListSpace = "sidebarList"
+    private static let sidebarListContentSpace = "sidebarListContent"
+
+    private var sidebarListOverflow: SidebarListOverflow {
+        SidebarListOverflow(contentTop: sidebarListFrame.minY, contentHeight: sidebarListFrame.height, visibleHeight: sidebarVisibleHeight)
+    }
+
+    /// Opaque where rows show in full, fading to nothing over an edge that has more rows past it.
+    private var sidebarListFadeMask: some View {
+        let overflow = sidebarListOverflow
+        return VStack(spacing: 0) {
+            LinearGradient(colors: [.clear, .black], startPoint: .top, endPoint: .bottom)
+                .frame(height: overflow.hasMoreAbove ? SidebarListOverflow.topFadeHeight : 0)
+            Rectangle().fill(.black)
+            LinearGradient(colors: [.black, .clear], startPoint: .top, endPoint: .bottom)
+                .frame(height: overflow.hasMoreBelow ? SidebarListOverflow.bottomFadeHeight : 0)
+        }
+    }
+
+    /// A row that is out of sight or under a fade is brought to the middle of the list (the list's
+    /// ends stop it short, where there is no fade); a row in plain view stays where it is, so a
+    /// click does not move the list under the pointer.
     private func scrollSelectedRowIntoView(with sidebarScroller: ScrollViewProxy) {
         guard let selectedRow = model.selectedSidebarRow else { return }
-        withAnimation(.easeOut(duration: 0.15)) { sidebarScroller.scrollTo(selectedRow) }
+        if let rowFrameInList = sidebarRowFramesInList[selectedRow] {
+            let rowFrameInVisibleArea = rowFrameInList.offsetBy(dx: 0, dy: sidebarListFrame.minY)
+            if sidebarListOverflow.showsInFull(rowFrameInVisibleArea, visibleHeight: sidebarVisibleHeight) { return }
+        }
+        withAnimation(.easeOut(duration: 0.15)) { sidebarScroller.scrollTo(selectedRow, anchor: .center) }
     }
 
     /// Every relevant setting the search matches, for the result count and the per-page hit counts.
@@ -430,7 +502,44 @@ struct DictationRailView: View {
         .buttonStyle(.plain)
         .pointerCursor()
         .accessibilityAddTraits(selected ? .isSelected : [])
+        .onGeometryChange(for: CGRect.self) { rowGeometry in
+            rowGeometry.frame(in: .named(Self.sidebarListContentSpace))
+        } action: { newRowFrame in
+            sidebarRowFramesInList[row] = newRowFrame
+        }
         .id(row)
+    }
+}
+
+/// Whether the sidebar's scrolling list has rows hidden past its top or bottom edge. At the 600 pt
+/// minimum height the list is taller than the room it has, and with no scroll bar nothing said
+/// "privacy" and "account" were down there.
+struct SidebarListOverflow: Equatable {
+    /// How far the fades reach in from an edge with more rows past it.
+    static let topFadeHeight: CGFloat = 14
+    static let bottomFadeHeight: CGFloat = 36
+
+    let hasMoreAbove: Bool
+    let hasMoreBelow: Bool
+
+    /// Whether a row (its frame in the visible area's coordinates) shows whole and clear of any
+    /// fade. A row under a fade is drawn half-transparent: readable as "there is more", but not
+    /// where a page someone just opened should leave its row.
+    func showsInFull(_ rowFrame: CGRect, visibleHeight: CGFloat) -> Bool {
+        let clearTop = hasMoreAbove ? Self.topFadeHeight : 0
+        let clearBottom = visibleHeight - (hasMoreBelow ? Self.bottomFadeHeight : 0)
+        return rowFrame.minY >= clearTop - 0.5 && rowFrame.maxY <= clearBottom + 0.5
+    }
+
+    /// - Parameters:
+    ///   - contentTop: the list's top in the visible area's coordinates; negative once scrolled down.
+    ///   - contentHeight: the whole list's height.
+    ///   - visibleHeight: the height of the area the list scrolls in.
+    init(contentTop: CGFloat, contentHeight: CGFloat, visibleHeight: CGFloat) {
+        // Layout rounds to fractions of a point; less than a point out of sight is not "more".
+        let tolerance: CGFloat = 1
+        hasMoreAbove = contentTop < -tolerance
+        hasMoreBelow = contentTop + contentHeight > visibleHeight + tolerance
     }
 }
 
