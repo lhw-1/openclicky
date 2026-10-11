@@ -69,10 +69,18 @@ enum DictationEngineResolver {
 
     /// Whether a take's words may go to a model: the switch, and — for the offline engine, whose
     /// promise is that nothing leaves the Mac — only when that was explicitly allowed.
+    /// Every reader of "clean up my words with ai" asks here (the styles switch, the record page,
+    /// the take, live typing, the smoke run), so the switch never shows one thing while takes do another.
     @MainActor
     static func wantsModelPolish(settings: DictationSettings) -> Bool {
+        wantsModelPolish(settings: settings, engine: settings.engine)
+    }
+
+    /// The same, for an engine other than the chosen one (the smoke run names its own).
+    @MainActor
+    static func wantsModelPolish(settings: DictationSettings, engine: DictationEngineChoice) -> Bool {
         guard settings.polishWithModel else { return false }
-        if settings.engine == .offline { return settings.polishOfflineTakes }
+        if engine == .offline { return settings.polishOfflineTakes }
         return true
     }
 }
@@ -124,6 +132,8 @@ final class DictationTakeController: ObservableObject {
 
     private var cancellables: Set<AnyCancellable> = []
     private var currentEngine: DictationEngineChoice
+    /// The language the engine in use was built for.
+    private var currentLanguageCode: String
     private var pendingStartTask: Task<Void, Never>?
     /// A Hey Clicky press (control already down) waits out the tap window before it opens the
     /// microphone: a quick tap of the key with control is the hands-free gesture, not an edit.
@@ -157,12 +167,16 @@ final class DictationTakeController: ObservableObject {
         self.audioStore = audioStore
         self.earcons = DictationEarconPlayer(settings: settings)
         self.currentEngine = settings.engine
+        self.currentLanguageCode = settings.languageCode
         self.dictationManager = capture ?? BuddyDictationManager(transcriptionProvider: DictationEngineResolver.makeProvider(for: settings.engine, settings: settings))
         self.dictationManager.audioRetentionSink = { buffer in audioStore.append(buffer) }
         orb.onQuickRewrite = { [weak self] instruction in Task { await self?.rewriteLastTake(instruction: instruction) } }
         orb.onPasteFromBox = { [weak self] in self?.pasteFromBox() }
         bind()
     }
+
+    /// What the orb says when a Hey Clicky edit is asked for with the clean-up switch off.
+    static let heyClickyNeedsCleanUpMessage = "hey clicky needs “clean up my words with ai” on (styles)"
 
     /// The rewrites the box offers: Kivi's casual and formal keys, as chips, plus shorter.
     static let quickRewrites: [(label: String, instruction: String)] = [
@@ -223,13 +237,13 @@ final class DictationTakeController: ObservableObject {
     }
 
     private func bind() {
+        // @Published sends before the property changes, so the rebuild runs a moment later and reads
+        // the settings themselves. A change made while a take listens is picked up by the next take.
         settings.$engine.combineLatest(settings.$languageCode)
             .dropFirst()
-            .sink { [weak self] engine, _ in
-                guard let self, !self.isTakeInProgress else { return }
-                self.currentEngine = engine
-                self.dictationManager.replaceTranscriptionProvider(DictationEngineResolver.makeProvider(for: engine, settings: self.settings))
-                AppLog.append("dictation engine → \(engine.rawValue)")
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] _, _ in
+                self?.rebuildEngineIfSettingsChanged()
             }
             .store(in: &cancellables)
         dictationManager.audioPowerLevelPublisher
@@ -265,6 +279,17 @@ final class DictationTakeController: ObservableObject {
                 }
             }
             .store(in: &cancellables)
+    }
+
+    /// Builds the engine again when the settings name another engine or language than the one in
+    /// use. Never under a take; `beginTake` checks again, so a change made during one is not lost.
+    private func rebuildEngineIfSettingsChanged() {
+        guard !isTakeInProgress else { return }
+        guard settings.engine != currentEngine || settings.languageCode != currentLanguageCode else { return }
+        currentEngine = settings.engine
+        currentLanguageCode = settings.languageCode
+        dictationManager.replaceTranscriptionProvider(DictationEngineResolver.makeProvider(for: settings.engine, settings: settings))
+        AppLog.append("dictation engine → \(settings.engine.rawValue), language \(settings.languageCode)")
     }
 
     var engineDisplayName: String { dictationManager.transcriptionProviderDisplayName }
@@ -315,13 +340,15 @@ final class DictationTakeController: ObservableObject {
                 // An edit's words are an instruction, not text: nothing of it may be typed.
                 stopLiveTyping(reason: "the take became a hey clicky edit", takeID: takeID)
                 orb.phase = .editListening
-                orb.hint = "say your edit, then let go"
+                // With the clean-up off the edit is refused when the key comes up; say so now.
+                orb.hint = DictationEngineResolver.wantsModelPolish(settings: settings)
+                    ? "say your edit, then let go" : Self.heyClickyNeedsCleanUpMessage
             case .idle, .finishing:
                 break
             }
             return true
 
-        case .dictationReleased(let wasTap):
+        case .dictationReleased(let wasTap, let keyWasPressedDuringHold):
             if let pendingEditStartWork {
                 // Released inside the tap window: not an edit, nothing was opened.
                 pendingEditStartWork.cancel()
@@ -333,7 +360,11 @@ final class DictationTakeController: ObservableObject {
                 break
             case .starting, .listening:
                 if takeIsToggle { break }
-                if wasTap {
+                if keyWasPressedDuringHold {
+                    // The key was held for a shortcut (right ⌘ + C, fn + an arrow), not to talk:
+                    // finishing would paste room noise or end in "didn't catch that".
+                    cancelTake(reason: "cancelled — that was a shortcut")
+                } else if wasTap {
                     // A tap: keep listening until the next tap (or a double tap cancels).
                     takeIsToggle = true
                     orb.hint = "say it, then tap \(settings.dictationKey.keycapLabel)"
@@ -388,6 +419,15 @@ final class DictationTakeController: ObservableObject {
             scheduleIdle(after: 2.5)
             return
         }
+        if mode == .edit && !DictationEngineResolver.wantsModelPolish(settings: settings) {
+            // An edit is the selection sent to a model; with the clean-up off nothing may leave.
+            earcons.play(.blocked)
+            orb.phase = .failed(Self.heyClickyNeedsCleanUpMessage)
+            scheduleIdle(after: 2.5)
+            return
+        }
+        // An engine or language chosen while the last take listened takes effect now.
+        rebuildEngineIfSettingsChanged()
         let thisTakeID = UUID()
         takeID = thisTakeID
         state = .starting
@@ -584,6 +624,12 @@ final class DictationTakeController: ObservableObject {
         var formattingDegraded = false
         if mode == .edit {
             orb.phase = .working("finishing your edit")
+            // The selection would go to a model: only with "clean up my words with ai" on, the
+            // switch the privacy page names as what keeps words on this mac.
+            guard DictationEngineResolver.wantsModelPolish(settings: settings) else {
+                failTake(Self.heyClickyNeedsCleanUpMessage, takeID: thisTakeID)
+                return
+            }
             guard let polisher else {
                 failTake("hey clicky needs a model: add a sarvam key or sign in", takeID: thisTakeID)
                 return

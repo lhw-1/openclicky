@@ -1218,7 +1218,9 @@ final class CompanionManager: ObservableObject {
         }
         switch transition {
         case .pressed:
-            guard !buddyDictationManager.isDictationInProgress else {
+            // The fn take has its own manager: a take in progress (a tapped one keeps the microphone
+            // after the key is up) is the dictation this guard means too.
+            guard !buddyDictationManager.isDictationInProgress, !dictationTakeController.isTakeInProgress else {
                 AppLog.append("ask: ⌃⌥ ignored — the microphone is still busy with dictation")
                 showAskCaption("one moment — still finishing your dictation", holdSeconds: 3)
                 return

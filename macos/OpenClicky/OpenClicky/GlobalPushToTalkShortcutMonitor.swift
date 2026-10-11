@@ -136,7 +136,9 @@ final class GlobalPushToTalkShortcutMonitor: ObservableObject {
         }
 
         let eventKeyCode = UInt16(event.getIntegerValueField(.keyboardEventKeycode))
-        let modifierFlags = NSEvent.ModifierFlags(rawValue: UInt(event.flags.rawValue)).intersection(.deviceIndependentFlagsMask)
+        // The per-key device bits stay in: they tell the right control (or option, or command) from
+        // the left one when one of them is the dictation key. The recogniser picks the flags it reads.
+        let modifierFlags = NSEvent.ModifierFlags(rawValue: UInt(event.flags.rawValue))
         let shortcutEvents = shortcutRecognizer.handle(
             recognizerEventKind,
             keyCode: eventKeyCode,

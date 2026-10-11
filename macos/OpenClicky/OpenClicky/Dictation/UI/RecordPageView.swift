@@ -104,10 +104,15 @@ struct RecordPageView: View {
     }
 
     private var engineSentence: String {
+        Self.engineSentence(settings: settings, hasPolisher: DictationEngineResolver.makePolisher() != nil)
+    }
+
+    /// Where a take's voice and words go. The polish half reads the same rule the take does.
+    static func engineSentence(settings: DictationSettings, hasPolisher: Bool) -> String {
         let history = settings.incognito ? "incognito: nothing is saved." : "your history stays on this mac."
         switch settings.engine {
         case .offline:
-            if settings.polishOfflineTakes && DictationEngineResolver.makePolisher() != nil {
+            if DictationEngineResolver.wantsModelPolish(settings: settings) && hasPolisher {
                 return "your voice stays on this mac; the words go to a model for polish. " + history
             }
             return settings.incognito ? "your voice stays on this mac, and nothing is saved." : "your voice and your history stay on this mac."
