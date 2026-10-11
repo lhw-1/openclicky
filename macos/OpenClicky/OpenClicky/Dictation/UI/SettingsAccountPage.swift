@@ -46,16 +46,21 @@ extension SettingsCatalog {
                 keywords: ["openai", "api key", "byok", "own key", "openaiApiKey"],
                 view: AnyView(OwnOpenAIKeyEditor())),
             SettingsItem(
+                id: "account.anthropicKey", page: .account, section: "Your keys",
+                title: "Anthropic (Claude)", detail: "Answers your questions about the screen.",
+                keywords: ["anthropic", "claude", "api key", "byok", "own key", "anthropicApiKey"],
+                view: AnyView(AnthropicKeyEditor())),
+            SettingsItem(
                 id: "account.sarvamKey", page: .account, section: "Your keys",
                 title: "Sarvam", detail: "For the Sarvam engine.",
                 keywords: ["sarvam", "saaras", "api key", "api-subscription-key", "key"],
                 view: AnyView(SarvamKeyEditor())),
             SettingsItem(
                 id: "account.keysNote", page: .account, section: "Your keys",
-                title: "Where keys go", detail: "Keys are sent to the OpenClicky backend with each request and used instead of your free allowance. Stored in ~/.openclicky/shell.json.",
+                title: "Where keys go", detail: "Your keys go straight to that provider, never through OpenClicky, and are used instead of the free credits. Stored in ~/.openclicky/shell.json.",
                 keywords: ["shell.json", "byok"],
                 chrome: .footer,
-                view: AnyView(SettingsFootnote(text: "Keys are sent to the OpenClicky backend with each request and used instead of your free allowance. Stored in ~/.openclicky/shell.json."))),
+                view: AnyView(SettingsFootnote(text: "Your keys go straight to that provider, never through OpenClicky, and are used instead of the free credits. Stored in ~/.openclicky/shell.json."))),
             SettingsItem(
                 id: "account.backendHost", page: .account, section: "Backend",
                 title: "Host", detail: "Where OpenClicky’s model calls go. Change it in shell.json.",
@@ -268,6 +273,33 @@ private struct OwnOpenAIKeyEditor: View {
         let trimmed = openaiKey.trimmingCharacters(in: .whitespacesAndNewlines)
         OpenClickyConfiguration.update { $0.openaiApiKey = trimmed.isEmpty ? nil : trimmed }
         // A changed key is a changed credential: a live realtime session reconnects with it.
+        NotificationCenter.default.post(name: OpenClickyConfiguration.credentialsChangedNotification, object: nil)
+        status = trimmed.isEmpty ? "Key removed." : "✓ Saved."
+    }
+}
+
+/// The Anthropic key: Claude answers questions straight from Anthropic on it (ProviderRouter).
+private struct AnthropicKeyEditor: View {
+    @State private var anthropicKey = OpenClickyConfiguration.settings.anthropicApiKey ?? ""
+    @State private var status: String?
+
+    var body: some View {
+        SettingsRow(title: "Anthropic (Claude)", detail: status ?? "Answers your questions about the screen.") {
+            HStack(spacing: 8) {
+                SecureField("", text: $anthropicKey, prompt: Text("sk-ant-…"))
+                    .labelsHidden()
+                    .textFieldStyle(.roundedBorder)
+                    .frame(width: 180)
+                    .onSubmit(saveKey)
+                    .accessibilityLabel("Anthropic key")
+                Button("Save", action: saveKey)
+            }
+        }
+    }
+
+    private func saveKey() {
+        let trimmed = anthropicKey.trimmingCharacters(in: .whitespacesAndNewlines)
+        OpenClickyConfiguration.update { $0.anthropicApiKey = trimmed.isEmpty ? nil : trimmed }
         NotificationCenter.default.post(name: OpenClickyConfiguration.credentialsChangedNotification, object: nil)
         status = trimmed.isEmpty ? "Key removed." : "✓ Saved."
     }

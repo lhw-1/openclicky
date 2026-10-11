@@ -75,6 +75,9 @@ final class FirstRunTourController: ObservableObject {
     private var cancellables = Set<AnyCancellable>()
     private var previousVoiceState: CompanionVoiceState = .idle
 
+    /// The tour has been completed (or skipped, or predates this Mac's first run).
+    var isFinished: Bool { UserDefaults.standard.bool(forKey: Self.doneKey) }
+
     // MARK: Starting
 
     /// Called once at launch, after the island and the permission cards are up.

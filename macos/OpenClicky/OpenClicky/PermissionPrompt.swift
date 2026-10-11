@@ -5,11 +5,12 @@
 //  HeyClicky's permission cards, drawn in the notch island: one permission at a time, a row
 //  of dashes for progress, a line of copy, grant and later. The menu bar panel used to
 //  carry a list of four rows with Grant buttons; the island asks for them instead, in order:
-//    Microphone → Accessibility → Screen Recording → Screen Content
+//    Accessibility → Microphone → Screen Recording → Screen Content
+//  Accessibility comes first because the pointer can show (and help) from then on.
 //  Tapping the button once takes the macOS route for that permission (the system prompt, then
 //  System Settings on later taps) and the card moves to its `waiting` stage: for Accessibility
-//  that stage also opens the drag helper — the little panel you drag OpenClicky out of and into
-//  the Accessibility list, for when macOS doesn't add it there by itself.
+//  and Screen Recording that stage also opens the drag helper, the little panel you drag
+//  OpenClicky out of and into the list, for when macOS doesn't add it there by itself.
 //
 
 import AVFoundation
@@ -20,8 +21,8 @@ import SwiftUI
 // MARK: - Model
 
 enum PermissionStep: String, CaseIterable, Identifiable {
-    case microphone
     case accessibility
+    case microphone
     case screenRecording
     case screenContent
 
@@ -62,7 +63,7 @@ enum PermissionStep: String, CaseIterable, Identifiable {
         switch self {
         case .microphone: return "switch openclicky on in the microphone list."
         case .accessibility: return "drag me into the accessibility list."
-        case .screenRecording: return "quit and reopen after granting."
+        case .screenRecording: return "switch openclicky on (or drag me into the list), then quit & reopen."
         case .screenContent: return "waiting for the capture panel…"
         }
     }
@@ -214,7 +215,8 @@ final class PermissionPromptController: ObservableObject {
     private func setPrompt(_ prompt: PermissionPrompt?) {
         currentPrompt = prompt
         notchHUDManager?.setPermissionPrompt(prompt)
-        if prompt?.step == .accessibility && prompt?.stage == .waiting {
+        // Both lists accept the app dragged in when macOS has not put it there itself.
+        if (prompt?.step == .accessibility || prompt?.step == .screenRecording) && prompt?.stage == .waiting {
             dragHelper?.showAccessibilityDragHelper()
         } else {
             dragHelper?.hideAccessibilityDragHelper()
