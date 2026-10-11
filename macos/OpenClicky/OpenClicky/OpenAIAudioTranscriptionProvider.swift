@@ -21,6 +21,14 @@ final class OpenAIAudioTranscriptionProvider: BuddyTranscriptionProvider {
     // OpenAI key and picks the model. The app only needs the user's OpenClicky token.
     let displayName = "OpenClicky"
     let requiresSpeechRecognitionPermission = false
+    /// The language to transcribe in (a bare code such as "hi"); nil lets the model detect it. Read
+    /// when a take starts, on the main actor where the settings live. Dictation passes the styles
+    /// page's language; the ⌃⌥ lane keeps the HUD's.
+    let language: () -> String?
+
+    init(language: @escaping () -> String? = { ReplyLanguage.currentCode }) {
+        self.language = language
+    }
 
     var isConfigured: Bool {
         OpenClickyConfiguration.isConfigured
@@ -45,6 +53,7 @@ final class OpenAIAudioTranscriptionProvider: BuddyTranscriptionProvider {
 
         return OpenAIAudioTranscriptionSession(
             keyterms: keyterms,
+            language: language(),
             onTranscriptUpdate: onTranscriptUpdate,
             onFinalTranscriptReady: onFinalTranscriptReady,
             onError: onError
@@ -86,6 +95,7 @@ private final class OpenAIAudioTranscriptionSession: BuddyStreamingTranscription
     private static let targetSampleRate = 16_000
 
     private let keyterms: [String]
+    private let language: String?
     private let onTranscriptUpdate: (String) -> Void
     private let onFinalTranscriptReady: (String) -> Void
     private let onError: (Error) -> Void
@@ -108,11 +118,13 @@ private final class OpenAIAudioTranscriptionSession: BuddyStreamingTranscription
 
     init(
         keyterms: [String],
+        language: String?,
         onTranscriptUpdate: @escaping (String) -> Void,
         onFinalTranscriptReady: @escaping (String) -> Void,
         onError: @escaping (Error) -> Void
     ) {
         self.keyterms = keyterms
+        self.language = language
         self.onTranscriptUpdate = onTranscriptUpdate
         self.onFinalTranscriptReady = onFinalTranscriptReady
         self.onError = onError
@@ -153,6 +165,7 @@ private final class OpenAIAudioTranscriptionSession: BuddyStreamingTranscription
             print("[OpenAI Transcription] recorded \(String(format: "%.1f", recordedSeconds)) s, peak \(peakSampleMagnitude)/32767")
             if peakSampleMagnitude < Self.silencePeakThreshold {
                 print("[OpenAI Transcription] audio is silent (the microphone may be held by another engine); not uploading")
+                AppLog.append("transcription (openclicky): audio is silent (peak \(peakSampleMagnitude)/32767); not uploading")
                 self.transcriptionUploadTask = Task { [weak self] in
                     self?.deliverFinalTranscript("")
                 }
@@ -208,6 +221,7 @@ private final class OpenAIAudioTranscriptionSession: BuddyStreamingTranscription
         } catch {
             guard !stateQueue.sync(execute: { isCancelled }) else { return }
             print("[OpenAI Transcription] ❌ Upload failed (audio size: \(wavAudioData.count) bytes): \(error.localizedDescription)")
+            AppLog.append("transcription (openclicky): upload failed (\(wavAudioData.count) bytes): \(error.localizedDescription)")
             onError(error)
         }
     }
@@ -220,9 +234,11 @@ private final class OpenAIAudioTranscriptionSession: BuddyStreamingTranscription
 
         var requestBody: [String: Any] = [
             "audio": wavAudioData.base64EncodedString(),
-            "mime": "audio/wav",
-            "language": ReplyLanguage.currentCode
+            "mime": "audio/wav"
         ]
+        if let language, !language.isEmpty {
+            requestBody["language"] = language
+        }
         if let contextualPrompt = transcriptionPromptText() {
             requestBody["prompt"] = contextualPrompt
         }

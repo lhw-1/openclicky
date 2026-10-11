@@ -48,6 +48,7 @@ final class AppleSpeechTranscriptionProvider: BuddyTranscriptionProvider {
                     onError: onError)
             } catch {
                 print("🎙️ Apple Speech: SpeechAnalyzer unavailable (\(error.localizedDescription)), using SFSpeechRecognizer")
+                AppLog.append("transcription (this mac): SpeechAnalyzer unavailable (\(error.localizedDescription)), using SFSpeechRecognizer")
             }
         }
         guard let speechRecognizer = Self.makeBestAvailableSpeechRecognizer(preferredLocale: preferredLocale) else {
