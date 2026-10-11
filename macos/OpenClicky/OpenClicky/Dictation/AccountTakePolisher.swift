@@ -51,6 +51,31 @@ struct AccountTakePolisher: TakePolisher {
     }
 }
 
+/// Polish and edits on the person's own Anthropic key, straight to Anthropic: the request the
+/// backend's /v1/polish sends upstream (polish.ts), on Claude Haiku. No account involved.
+struct AnthropicTakePolisher: TakePolisher {
+    let anthropicKey: String
+    var send: @Sendable (URLRequest) async throws -> (Data, URLResponse) = { try await URLSession.shared.data(for: $0) }
+
+    var displayName: String { "Claude (your key)" }
+
+    func polish(system: String, user: String) async throws -> String {
+        var request = try DirectProviderRequests.anthropicPolish(key: anthropicKey, system: system, text: user)
+        request.timeoutInterval = 20
+        let (data, response) = try await send(request)
+        let status = (response as? HTTPURLResponse)?.statusCode ?? 0
+        guard (200..<300).contains(status) else {
+            AppLog.append("polish (own anthropic key): anthropic answered \(status)")
+            throw BackendPolishError.refused(status: status, message: String(decoding: data.prefix(200), as: UTF8.self))
+        }
+        guard let text = DirectProviderRequests.anthropicReplyText(from: data) else {
+            AppLog.append("polish (own anthropic key): the reply had no whole text")
+            throw BackendPolishError.unreadable
+        }
+        return text
+    }
+}
+
 /// Why a take was pasted with only the local clean-up, said once per session (every take hitting
 /// the same limit would otherwise repeat it). The orb still says "cleaned up locally"; this is the
 /// reason behind it, shown as the companion's quiet caption. Nil for a reason not worth saying

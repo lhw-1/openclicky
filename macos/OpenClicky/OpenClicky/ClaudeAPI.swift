@@ -56,13 +56,25 @@ class ClaudeAPI {
         warmUpTLSConnectionIfNeeded()
     }
 
-    private func makeAPIRequest() -> URLRequest {
-        var request = URLRequest(url: apiURL)
-        request.httpMethod = "POST"
+    /// The person's own Anthropic key goes straight to Anthropic with the same Messages body /chat
+    /// relays; without one, the backend's /chat on the account's token (`ProviderRouter`).
+    private func makeAPIRequest() throws -> URLRequest {
+        var request: URLRequest
+        switch ProviderRouter.current(for: .claude) {
+        case .anthropicDirect:
+            guard let anthropicKey = ProviderRouter.currentCredentials().anthropicKey else {
+                throw ProviderRouteUnavailable(capability: .claude, sentence: ProviderRouter.needsAnthropicKeySentence)
+            }
+            request = DirectProviderRequests.anthropicMessages(key: anthropicKey)
+        case .unavailable(let sentence):
+            throw ProviderRouteUnavailable(capability: .claude, sentence: sentence)
+        case .backend, .openAIDirect:
+            request = URLRequest(url: apiURL)
+            request.httpMethod = "POST"
+            request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+            OpenClickyConfiguration.authorize(&request)
+        }
         request.timeoutInterval = 120
-        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        // The OpenClicky backend requires the user's token on every model call.
-        OpenClickyConfiguration.authorize(&request)
         return request
     }
 
@@ -95,7 +107,9 @@ class ClaudeAPI {
 
         guard shouldStartTLSWarmup else { return }
 
-        guard var warmupURLComponents = URLComponents(url: apiURL, resolvingAgainstBaseURL: false) else {
+        // Warm the host the next question will go to: Anthropic on an own key, else the backend.
+        let warmupTarget = ProviderRouter.currentCredentials().anthropicKey != nil ? URL(string: DirectProviderRequests.anthropicMessagesURL)! : apiURL
+        guard var warmupURLComponents = URLComponents(url: warmupTarget, resolvingAgainstBaseURL: false) else {
             return
         }
 
@@ -130,7 +144,7 @@ class ClaudeAPI {
     ) async throws -> (text: String, toolCalls: [ClaudeToolCall], duration: TimeInterval) {
         let startTime = Date()
 
-        var request = makeAPIRequest()
+        var request = try makeAPIRequest()
 
         // Build messages array
         var messages: [[String: Any]] = []
@@ -257,7 +271,7 @@ class ClaudeAPI {
     ) async throws -> (text: String, duration: TimeInterval) {
         let startTime = Date()
 
-        var request = makeAPIRequest()
+        var request = try makeAPIRequest()
 
         var messages: [[String: Any]] = []
         for (userPlaceholder, assistantResponse) in conversationHistory {

@@ -28,7 +28,8 @@ nonisolated enum ScreenElementGrounder {
     /// Asks Claude where `label`/`text` is on `capture`'s screenshot. Nil when the backend is not
     /// configured, the request fails, or Claude answers [POINT:none].
     static func locate(label: String, text: String, userRequest: String?, in capture: CompanionScreenCapture) async -> Located? {
-        guard await OpenClickyConfiguration.isConfigured else { return nil }
+        // Own Anthropic key: Claude at Anthropic directly; else the backend's /chat on the account (ClaudeAPI routes it).
+        guard await ProviderRouter.current(for: .claude).unavailableSentence == nil else { return nil }
         let imageSize = CGSize(width: capture.screenshotWidthInPixels, height: capture.screenshotHeightInPixels)
         let api = await ClaudeAPI(proxyURL: "\(OpenClickyConfiguration.backendBaseURL)/chat", model: model)
         let reply = try? await api.analyzeImage(

@@ -30,13 +30,13 @@ final class OpenAIAudioTranscriptionProvider: BuddyTranscriptionProvider {
         self.language = language
     }
 
+    /// An own OpenAI key (straight to OpenAI) or an account (the backend).
     var isConfigured: Bool {
-        OpenClickyConfiguration.isConfigured
+        unavailableExplanation == nil
     }
 
     var unavailableExplanation: String? {
-        guard !isConfigured else { return nil }
-        return "OpenClicky transcription needs a token in ~/.openclicky/shell.json."
+        ProviderRouter.route(for: .transcription, credentials: ProviderRouter.currentCredentials()).unavailableSentence
     }
 
     func startStreamingSession(
@@ -227,24 +227,40 @@ private final class OpenAIAudioTranscriptionSession: BuddyStreamingTranscription
     }
 
     private func requestTranscription(for wavAudioData: Data) async throws -> String {
-        var request = URLRequest(url: try Self.transcriptionURL())
-        request.httpMethod = "POST"
-        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        OpenClickyConfiguration.authorize(&request)
+        let responseData: Data
+        let response: URLResponse
+        switch ProviderRouter.current(for: .transcription) {
+        case .openAIDirect:
+            // The person's own OpenAI key: the multipart upload the backend would have built, sent
+            // to OpenAI itself. The answer is the same `{ "text": … }`.
+            guard let openAIKey = ProviderRouter.currentCredentials().openAIKey else {
+                throw OpenAIAudioTranscriptionProviderError(message: ProviderRouter.needsOpenAIKeySentence)
+            }
+            let request = DirectProviderRequests.openAITranscription(
+                key: openAIKey, wav: wavAudioData, language: language, prompt: transcriptionPromptText())
+            (responseData, response) = try await urlSession.data(for: request)
+        case .unavailable(let sentence):
+            throw OpenAIAudioTranscriptionProviderError(message: sentence)
+        case .backend, .anthropicDirect:
+            var request = URLRequest(url: try Self.transcriptionURL())
+            request.httpMethod = "POST"
+            request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+            OpenClickyConfiguration.authorize(&request)
 
-        var requestBody: [String: Any] = [
-            "audio": wavAudioData.base64EncodedString(),
-            "mime": "audio/wav"
-        ]
-        if let language, !language.isEmpty {
-            requestBody["language"] = language
-        }
-        if let contextualPrompt = transcriptionPromptText() {
-            requestBody["prompt"] = contextualPrompt
-        }
-        request.httpBody = try JSONSerialization.data(withJSONObject: requestBody)
+            var requestBody: [String: Any] = [
+                "audio": wavAudioData.base64EncodedString(),
+                "mime": "audio/wav"
+            ]
+            if let language, !language.isEmpty {
+                requestBody["language"] = language
+            }
+            if let contextualPrompt = transcriptionPromptText() {
+                requestBody["prompt"] = contextualPrompt
+            }
+            request.httpBody = try JSONSerialization.data(withJSONObject: requestBody)
 
-        let (responseData, response) = try await BackendSignIn.send(request) { [urlSession] in try await urlSession.data(for: $0) }
+            (responseData, response) = try await BackendSignIn.send(request) { [urlSession] in try await urlSession.data(for: $0) }
+        }
 
         guard let httpResponse = response as? HTTPURLResponse else {
             throw OpenAIAudioTranscriptionProviderError(

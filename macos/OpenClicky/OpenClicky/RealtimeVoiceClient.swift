@@ -361,18 +361,31 @@ final class RealtimeVoiceClient: NSObject, ObservableObject {
 
     private func openConnection(mode: TurnMode) async throws {
         guard OpenClickyConfiguration.isConfigured else { throw RealtimeVoiceError.notConfigured }
-        // backendBaseURL is user-configurable (shell.json or an environment override), not a
-        // compile-time literal, so a malformed value must throw instead of crashing the app.
-        guard let secretRequestURL = URL(string: "\(OpenClickyConfiguration.backendBaseURL)/agent/realtime/session") else {
-            throw RealtimeVoiceError.invalidURL("OpenClicky backend URL is invalid: \(OpenClickyConfiguration.backendBaseURL)")
-        }
-        var secretRequest = URLRequest(url: secretRequestURL)
-        secretRequest.httpMethod = "POST"
-        secretRequest.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        OpenClickyConfiguration.authorize(&secretRequest)
         let connectInstructions = currentInstructions()
-        secretRequest.httpBody = try JSONSerialization.data(withJSONObject: ["voice": voice as Any, "instructions": connectInstructions].compactMapValues { $0 })
-        let (secretData, secretResponse) = try await BackendSignIn.send(secretRequest) { [urlSession] in try await urlSession.data(for: $0) }
+        let secretData: Data
+        let secretResponse: URLResponse
+        switch ProviderRouter.current(for: .realtime) {
+        case .openAIDirect:
+            // The person's own OpenAI key mints the client secret at OpenAI itself; the answer
+            // has the same shape as the backend's.
+            guard let openAIKey = ProviderRouter.currentCredentials().openAIKey else { throw RealtimeVoiceError.notConfigured }
+            let secretRequest = try DirectProviderRequests.openAIRealtimeSecret(key: openAIKey, instructions: connectInstructions, voice: voice)
+            (secretData, secretResponse) = try await urlSession.data(for: secretRequest)
+        case .unavailable(let sentence):
+            throw ProviderRouteUnavailable(capability: .realtime, sentence: sentence)
+        case .backend, .anthropicDirect:
+            // backendBaseURL is user-configurable (shell.json or an environment override), not a
+            // compile-time literal, so a malformed value must throw instead of crashing the app.
+            guard let secretRequestURL = URL(string: "\(OpenClickyConfiguration.backendBaseURL)/agent/realtime/session") else {
+                throw RealtimeVoiceError.invalidURL("OpenClicky backend URL is invalid: \(OpenClickyConfiguration.backendBaseURL)")
+            }
+            var secretRequest = URLRequest(url: secretRequestURL)
+            secretRequest.httpMethod = "POST"
+            secretRequest.setValue("application/json", forHTTPHeaderField: "Content-Type")
+            OpenClickyConfiguration.authorize(&secretRequest)
+            secretRequest.httpBody = try JSONSerialization.data(withJSONObject: ["voice": voice as Any, "instructions": connectInstructions].compactMapValues { $0 })
+            (secretData, secretResponse) = try await BackendSignIn.send(secretRequest) { [urlSession] in try await urlSession.data(for: $0) }
+        }
         let secretStatusCode = (secretResponse as? HTTPURLResponse)?.statusCode ?? 0
         guard (200...299).contains(secretStatusCode),
               let secretJSON = try JSONSerialization.jsonObject(with: secretData) as? [String: Any],

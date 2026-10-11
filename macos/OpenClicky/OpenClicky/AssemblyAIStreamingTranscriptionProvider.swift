@@ -24,8 +24,11 @@ final class AssemblyAIStreamingTranscriptionProvider: BuddyTranscriptionProvider
     let displayName = "AssemblyAI"
     let requiresSpeechRecognitionPermission = false
 
-    var isConfigured: Bool { true }
-    var unavailableExplanation: String? { nil }
+    /// The token is minted on OpenClicky's own AssemblyAI key, so this needs an account; an own key does not cover it.
+    var isConfigured: Bool { unavailableExplanation == nil }
+    var unavailableExplanation: String? {
+        ProviderRouter.route(for: .assemblyAIStreaming, credentials: ProviderRouter.currentCredentials()).unavailableSentence
+    }
 
     /// The language dictation was asked to hear (a bare code; nil = auto). Not sent: the streaming
     /// model detects and code-switches by itself, and the one steering parameter AssemblyAI
@@ -93,6 +96,9 @@ final class AssemblyAIStreamingTranscriptionProvider: BuddyTranscriptionProvider
 
     /// Calls the Cloudflare Worker to get a short-lived AssemblyAI token.
     private func fetchTemporaryToken() async throws -> String {
+        if let sentence = ProviderRouter.current(for: .assemblyAIStreaming).unavailableSentence {
+            throw AssemblyAIStreamingTranscriptionProviderError(message: sentence)
+        }
         // `tokenProxyURL` is built from the user-configurable backend URL (shell.json or an
         // environment override), not a compile-time literal, so a malformed value must throw
         // instead of crashing the app.

@@ -58,6 +58,18 @@ final class ElevenLabsTTSClient {
     /// The audio for `text` from the backend's /tts, without playing it. Used by `SpeechQueue` to
     /// fetch the next piece of an answer while the current one plays.
     func fetchAudio(for text: String) async throws -> Data {
+        switch ProviderRouter.current(for: .speech) {
+        case .openAIDirect:
+            // The person's own OpenAI key: OpenAI speech straight from OpenAI, as the backend's
+            // own-key path would have asked for it.
+            guard let openAIKey = ProviderRouter.currentCredentials().openAIKey else { break }
+            let (data, response) = try await session.data(for: try DirectProviderRequests.openAISpeech(key: openAIKey, text: text))
+            return try Self.audio(from: data, response: response)
+        case .unavailable(let sentence):
+            throw ProviderRouteUnavailable(capability: .speech, sentence: sentence)
+        case .backend, .anthropicDirect:
+            break
+        }
         var request = URLRequest(url: proxyURL)
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
@@ -76,7 +88,11 @@ final class ElevenLabsTTSClient {
         request.httpBody = try JSONSerialization.data(withJSONObject: body)
 
         let (data, response) = try await BackendSignIn.send(request) { [session] in try await session.data(for: $0) }
+        return try Self.audio(from: data, response: response)
+    }
 
+    /// The audio in a speech answer, or the error that says why there is none.
+    private static func audio(from data: Data, response: URLResponse) throws -> Data {
         guard let httpResponse = response as? HTTPURLResponse else {
             throw NSError(domain: "ElevenLabsTTS", code: -1,
                           userInfo: [NSLocalizedDescriptionKey: "Invalid response"])

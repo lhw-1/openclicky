@@ -145,11 +145,18 @@ struct AccountProfileTests {
 
     @Test func backendEnginesNeedYourOwnKeyOnAnAccount() {
         for engine in [DictationEngineChoice.openclicky, .assemblyai] {
-            #expect(DictationEngineResolver.unavailableReason(for: engine, kind: .account, isConfigured: true, sarvamKey: nil) == "needs your own key")
-            #expect(DictationEngineResolver.unavailableReason(for: engine, kind: .ownKeys, isConfigured: true, sarvamKey: nil) == nil)
-            #expect(DictationEngineResolver.unavailableReason(for: engine, kind: .signedOut, isConfigured: false, sarvamKey: nil) == "needs an openclicky account or your openai key")
+            #expect(DictationEngineResolver.unavailableReason(for: engine, kind: .account, isConfigured: true, signedIn: true, sarvamKey: nil) == "needs your own key")
+            #expect(DictationEngineResolver.unavailableReason(for: engine, kind: .ownKeys, isConfigured: true, signedIn: true, sarvamKey: nil) == nil)
+            #expect(DictationEngineResolver.unavailableReason(for: engine, kind: .signedOut, isConfigured: false, signedIn: false, sarvamKey: nil) == "needs an openclicky account or your openai key")
         }
-        #expect(DictationEngineResolver.unavailableReason(for: .offline, kind: .account, isConfigured: true, sarvamKey: nil) == nil)
+        #expect(DictationEngineResolver.unavailableReason(for: .offline, kind: .account, isConfigured: true, signedIn: true, sarvamKey: nil) == nil)
+    }
+
+    @Test func anOwnKeyWithNoAccountHearsThroughOpenAIButNotAssemblyAI() {
+        // Issue #4: an own key needs no account, but AssemblyAI is minted on OpenClicky's key.
+        #expect(DictationEngineResolver.unavailableReason(for: .openclicky, kind: .ownKeys, isConfigured: true, signedIn: false, sarvamKey: nil) == nil)
+        #expect(DictationEngineResolver.unavailableReason(for: .assemblyai, kind: .ownKeys, isConfigured: true, signedIn: false, sarvamKey: nil)
+                == "needs an openclicky account: assemblyai runs on openclicky's key")
     }
 
     @Test func teachingSkillsNeedsYourOwnKeyOnAnAccount() {

@@ -37,12 +37,13 @@ enum DictationEngineResolver {
     /// Nil when the engine can be used; otherwise one line saying what is missing.
     static func unavailableReason(for choice: DictationEngineChoice) -> String? {
         unavailableReason(for: choice, kind: AccountCapabilities.current().kind, isConfigured: OpenClickyConfiguration.isConfigured,
-                          sarvamKey: OpenClickyConfiguration.settings.sarvamKey)
+                          signedIn: OpenClickyConfiguration.hasAccountToken, sarvamKey: OpenClickyConfiguration.settings.sarvamKey)
     }
 
-    /// The backend engines hear through OpenAI (/agent/transcribe) and AssemblyAI (/transcribe-token),
-    /// neither of which a free account's grant covers.
-    static func unavailableReason(for choice: DictationEngineChoice, kind: AccountKind, isConfigured: Bool, sarvamKey: String?) -> String? {
+    /// The backend engines hear through OpenAI (/agent/transcribe, or OpenAI itself on an own key) and
+    /// AssemblyAI (/transcribe-token, minted on OpenClicky's key: account only), neither of which a
+    /// free account's grant covers.
+    static func unavailableReason(for choice: DictationEngineChoice, kind: AccountKind, isConfigured: Bool, signedIn: Bool, sarvamKey: String?) -> String? {
         switch choice {
         case .offline:
             return nil
@@ -51,15 +52,21 @@ enum DictationEngineResolver {
             return key.isEmpty ? "needs your sarvam key" : nil
         case .openclicky, .assemblyai:
             guard isConfigured else { return "needs an openclicky account or your openai key" }
-            return kind == .account ? "needs your own key" : nil
+            if kind == .account { return "needs your own key" }
+            if choice == .assemblyai && !signedIn { return "needs an openclicky account: assemblyai runs on openclicky's key" }
+            return nil
         }
     }
 
-    /// The model that polishes takes and answers Hey Clicky: Sarvam with a key, else the backend
-    /// with an account, else none.
+    /// The model that polishes takes and answers Hey Clicky: Sarvam with a key, else the person's
+    /// own OpenAI or Anthropic key, else the backend with an account, else none.
     static func makePolisher() -> (any TakePolisher)? {
         let sarvamKey = OpenClickyConfiguration.settings.sarvamKey?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         if !sarvamKey.isEmpty { return SarvamTakePolisher(client: SarvamSpeechClient(key: sarvamKey)) }
+        // Own keys first: an OpenAI key polishes on OpenAI (BackendTakePolisher routes it there),
+        // an Anthropic key alone polishes on Claude Haiku at Anthropic. No account needed for either.
+        let credentials = ProviderRouter.currentCredentials()
+        if credentials.openAIKey == nil, let anthropicKey = credentials.anthropicKey { return AnthropicTakePolisher(anthropicKey: anthropicKey) }
         switch AccountCapabilities.current().kind {
         case .account: return AccountTakePolisher()
         case .ownKeys: return BackendTakePolisher()
