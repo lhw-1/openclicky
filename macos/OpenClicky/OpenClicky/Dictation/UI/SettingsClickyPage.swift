@@ -303,9 +303,9 @@ private struct MacVoiceRow: View {
                     Button("Preview") { MacVoicePreview.shared.play() }.fixedSize()
                 }
             }
-            SettingsRow(title: "Better voices", detail: "Premium and Enhanced voices are small models macOS downloads once, then they run offline: Spoken Content, System voice, Manage Voices.") {
+            SettingsRow(title: "Better voices", detail: "Premium and Enhanced voices are small models macOS downloads once, then they run offline. Get Voices opens Read & Speak (Spoken Content on older macOS): System voice, Manage Voices.") {
                 Button("Get Voices…") {
-                    openExternalLink("x-apple.systempreferences:com.apple.preference.universalaccess?SpokenContent")
+                    openExternalLink("x-apple.systempreferences:com.apple.Accessibility-Settings.extension?SpokenContent")
                 }
                 .fixedSize()
             }

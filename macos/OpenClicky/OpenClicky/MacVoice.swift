@@ -6,8 +6,8 @@
 //  each piece of an answer to audio (not straight to the speakers), so it goes through the same
 //  SpeechQueue and player as the cloud voice: the next sentence renders while this one plays, and
 //  the island's stop button stops it the same way. The Premium and Enhanced voices are small
-//  neural models macOS downloads once (System Settings → Accessibility → Spoken Content → System
-//  voice → Manage Voices); the best one installed for the reply language is used unless one is
+//  neural models macOS downloads once (System Settings → Accessibility → Read & Speak, Spoken Content
+//  before macOS 26 → System voice → Manage Voices); the best one installed for the reply language is used unless one is
 //  picked in Settings → Clicky.
 //
 

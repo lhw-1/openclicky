@@ -1590,9 +1590,12 @@ final class CompanionManager: ObservableObject {
                     (userPlaceholder: entry.userTranscript, assistantResponse: entry.assistantResponse)
                 }
 
-                // Without the agent lane (an account, or no openclicky tool on this Mac) the quick
-                // actions are offered to whoever answers instead.
-                let tools = agentLaneRuns ? [] : RealtimeVoiceClient.anthropicToolDefinitions()
+                // Offered wherever the agent lane doesn't run (an account, or no openclicky tool on
+                // this Mac), and to a Claude Code or Codex plan through PlanToolProtocol's [ACTION: …] lines.
+                let tools = Self.offersQuickActionsToAskLane(
+                    agentLaneRuns: agentLaneRuns,
+                    answeringSource: ProviderRouter.route(for: .claude, credentials: ProviderRouter.currentCredentials()).answeringSource
+                ) ? RealtimeVoiceClient.anthropicToolDefinitions() : []
                 let toolsLine = tools.isEmpty ? "" : "\n\n" + Self.accountToolsInstruction
                 // The answer is spoken while it is still being written: each finished sentence goes to
                 // the voice, and the pointer moves when the voice starts (the prompt puts the tag first).
@@ -1979,6 +1982,14 @@ final class CompanionManager: ObservableObject {
         systemSpeechSynthesizer.stopSpeaking(at: .immediate)
         systemSpeechSynthesizer.speak(utterance)
         voiceState = .responding
+    }
+
+    /// The ask lane offers the quick actions where nothing else does them: whenever the agent lane
+    /// doesn't run (a free account, or no openclicky tool on this Mac), and to a plan, which the
+    /// agent lane's gate never sees as the one answering.
+    static func offersQuickActionsToAskLane(agentLaneRuns: Bool, answeringSource: AnswerSource?) -> Bool {
+        if !agentLaneRuns { return true }
+        return answeringSource == .claudeCodePlan || answeringSource == .codexPlan
     }
 
     static let accountToolsInstruction = "When the user asks you to open an app or a website, make or show a folder, change the volume or control playback, call the matching tool instead of describing the steps. For anything else you can only explain and point."

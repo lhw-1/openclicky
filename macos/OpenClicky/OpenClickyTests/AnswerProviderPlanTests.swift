@@ -96,6 +96,14 @@ private func sampleRequest(history: [AnswerRequest.Turn] = []) -> AnswerRequest 
     )
 }
 
+/// The sample request with the quick actions offered, as the ask lane sends it on a plan.
+private func sampleRequestOfferingQuickActions() -> AnswerRequest {
+    var request = sampleRequest()
+    request.userPrompt = "make a folder called test-plan-actions on my desktop"
+    request.tools = RealtimeVoiceClient.anthropicToolDefinitions().compactMap(ClaudeAPI.answerTool(fromAnthropicTool:))
+    return request
+}
+
 private func jsonLine(_ object: [String: Any]) -> String {
     String(decoding: try! JSONSerialization.data(withJSONObject: object), as: UTF8.self) + "\n"
 }
@@ -191,6 +199,42 @@ struct AnswerProviderPlanTests {
         #expect(!FileManager.default.fileExists(atPath: call.workingDirectory.path))
         #expect(call.environment["ANTHROPIC_API_KEY"] == nil)
         #expect(call.environment["PATH"]?.hasPrefix("/fake/bin:") == true)
+    }
+
+    @Test func claudeCodeTurnsAnActionLineIntoAToolCallAndNeverStreamsIt() async throws {
+        let actionLine = "[ACTION: create_folder {\"name\":\"test-plan-actions\",\"location\":\"desktop\"}]"
+        let fullAnswer = "making that folder now.\n" + actionLine
+        let resultLine = jsonLine(["type": "result", "subtype": "success", "is_error": false, "result": fullAnswer])
+        // The tag arrives split across deltas, as the model streams it.
+        let output = textDeltaLine("making that folder now.\n[ACT") + textDeltaLine("ION: create_folder {\"name\":\"test-plan-")
+            + textDeltaLine("actions\",\"location\":\"desktop\"}]") + resultLine
+        let runner = FakePlanCLIProcessRunner(standardOutputChunks: [output])
+        let provider = ClaudeCodeAnswerProvider(executablePath: "/fake/bin/claude", processRunner: runner)
+        let recorder = TextChunkRecorder()
+        let request = sampleRequestOfferingQuickActions()
+
+        let result = try await provider.answer(request) { recorder.append($0) }
+
+        #expect(result.text == "making that folder now.")
+        #expect(result.toolCalls == [ClaudeToolCall(id: "plan-action-1", name: "create_folder", arguments: ["name": "test-plan-actions", "location": "desktop"])])
+        #expect(recorder.chunks.joined() == "making that folder now.\n")
+        #expect(!recorder.chunks.joined().contains("ACT"))
+        let call = try #require(runner.calls.first)
+        let systemPrompt = try #require(value(after: "--system-prompt", in: call.arguments))
+        #expect(systemPrompt.hasPrefix("answer in lowercase\n\nQuick actions:"))
+        for tool in request.tools { #expect(systemPrompt.contains("- \(tool.name):")) }
+    }
+
+    @Test func claudeCodeWithoutToolsKeepsTheSystemPromptAndTheTextAsTheyAre() async throws {
+        let answer = "[ACTION: open_app {\"name\":\"Safari\"}]"
+        let runner = FakePlanCLIProcessRunner(standardOutputChunks: [textDeltaLine(answer), jsonLine(["type": "result", "subtype": "success", "is_error": false, "result": answer])])
+        let provider = ClaudeCodeAnswerProvider(executablePath: "/fake/bin/claude", processRunner: runner)
+
+        let result = try await provider.answer(sampleRequest()) { _ in }
+
+        #expect(result == AnswerResult(text: answer, toolCalls: []))
+        let call = try #require(runner.calls.first)
+        #expect(value(after: "--system-prompt", in: call.arguments) == "answer in lowercase")
     }
 
     @Test func claudeCodeStreamParserFallsBackToStreamedTextAndToTheAssistantMessage() {
@@ -343,6 +387,22 @@ struct AnswerProviderPlanTests {
         #expect(call.environment["OPENAI_API_KEY"] == nil)
         #expect(runner.sawWorkingDirectoryDuringRun)
         #expect(!FileManager.default.fileExists(atPath: call.workingDirectory.path))
+    }
+
+    @Test func codexTurnsAnActionLineIntoAToolCallAndSpeaksOnlyTheWords() async throws {
+        let runner = FakePlanCLIProcessRunner(
+            lastMessageFileContents: "opening spotify.\n```\n[ACTION: open_app {\"name\":\"Spotify\"}]\n```\n"
+        )
+        let provider = CodexAnswerProvider(executablePath: "/fake/bin/codex", processRunner: runner)
+        let recorder = TextChunkRecorder()
+        let request = sampleRequestOfferingQuickActions()
+
+        let result = try await provider.answer(request) { recorder.append($0) }
+
+        #expect(result == AnswerResult(text: "opening spotify.", toolCalls: [ClaudeToolCall(id: "plan-action-1", name: "open_app", arguments: ["name": "Spotify"])]))
+        #expect(recorder.chunks == ["opening spotify."])
+        let developerInstructions = try #require(runner.calls.first?.arguments.first { $0.hasPrefix("developer_instructions=") })
+        for tool in request.tools { #expect(developerInstructions.contains("- \(tool.name):")) }
     }
 
     @Test func codexFallsBackToTheLastAgentMessageWhenTheFileIsMissing() throws {

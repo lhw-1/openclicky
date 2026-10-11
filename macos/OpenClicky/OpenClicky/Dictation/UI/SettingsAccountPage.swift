@@ -65,10 +65,10 @@ extension SettingsCatalog {
                 view: AnyView(PlanSubscriptionRow(plan: .codexPlan))),
             SettingsItem(
                 id: "account.plansNote", page: .account, section: "Subscriptions",
-                title: "Plans answer, they don't act", detail: "A plan answers and points; quick actions like opening apps need a key or the free credits.",
+                title: "What a plan can do", detail: "A plan answers, points and does quick actions like opening apps; bigger tasks need the agent.",
                 keywords: ["subscription", "plan"],
                 chrome: .footer,
-                view: AnyView(SettingsFootnote(text: "A plan answers questions and points. Quick actions, like opening apps or making folders, run with a key or the free credits. Codex answers in one go, a few seconds after you ask."))),
+                view: AnyView(SettingsFootnote(text: "A plan answers questions, points, and does quick actions like opening apps or making folders. Bigger tasks need the agent. Codex answers in one go, a few seconds after you ask."))),
             SettingsItem(
                 id: "account.backendHost", page: .account, section: "Backend",
                 title: "Host", detail: "Where OpenClicky’s model calls go. Change it in shell.json.",
