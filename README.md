@@ -6,8 +6,19 @@ fn and talk, and your words are typed where your cursor is, cleaned up in the st
 offline by default with Apple's on-device recogniser, eleven Indian languages with your Sarvam key. And
 when it is more than a question, hand the task to a Codex agent. MIT licensed.
 
-[**Download OpenClicky for macOS**](https://github.com/prasanthsasikumar/openclicky/releases/latest)
-(Apple Silicon and Intel, macOS 14.2+, notarized) · [Website](https://openclicky.flowsxr.com) · [Discord](https://discord.gg/zGGERnM5eq) · [How it works](docs/architecture.md) · [Contributing](CONTRIBUTING.md)
+<p align="center">
+  <a href="https://github.com/prasanthsasikumar/openclicky/releases/latest"><img alt="Download for macOS" src="https://img.shields.io/badge/Download_for_macOS-F0452B?style=for-the-badge&logo=apple&logoColor=white"></a>
+  <a href="https://openclicky.flowsxr.com"><img alt="Website" src="https://img.shields.io/badge/Website-22201C?style=for-the-badge&logo=safari&logoColor=white"></a>
+  <a href="https://discord.gg/zGGERnM5eq"><img alt="Join the Discord" src="https://img.shields.io/badge/Discord-5865F2?style=for-the-badge&logo=discord&logoColor=white"></a>
+  <a href="docs/architecture.md"><img alt="How it works" src="https://img.shields.io/badge/How_it_works-5E5A52?style=for-the-badge"></a>
+  <a href="CONTRIBUTING.md"><img alt="Contributing" src="https://img.shields.io/badge/Contributing-5E5A52?style=for-the-badge"></a>
+</p>
+<p align="center">
+  <a href="https://github.com/prasanthsasikumar/openclicky/releases/latest"><img alt="Latest release" src="https://img.shields.io/github/v/release/prasanthsasikumar/openclicky?label=release&color=F0452B"></a>
+  <img alt="macOS 14.2 or later" src="https://img.shields.io/badge/macOS-14.2%2B-22201C?logo=apple">
+  <img alt="Apple Silicon and Intel, notarized" src="https://img.shields.io/badge/Apple_Silicon_%2B_Intel-notarized-22201C">
+  <a href="LICENSE"><img alt="MIT licence" src="https://img.shields.io/badge/licence-MIT-5E5A52"></a>
+</p>
 
 <p align="center"><img src="docs/media/demo.gif" width="720" alt="Asking out loud where battery health is: the pointer flies to Battery in System Settings. Then holding fn and talking: the sentence is typed into TextEdit."></p>
 
@@ -44,19 +55,23 @@ the selected text is rewritten.
 
 ### See it work
 
-| | |
-|---|---|
-| ![The record page: a greeting, the engine banner, the take box, recent takes, words today](docs/media/dictation-record.jpg) | ![History: takes grouped by day, searchable, with a question box](docs/media/dictation-history.jpg) |
-| **record.** The engine banner says where your voice goes; takes land in the box when this window is in front. | **history.** Every take with what you said and what was written; type a question and press enter to ask across them. |
-| ![Styles: language and script, then one style per group of apps](docs/media/dictation-styles.jpg) | ![Settings: the General page inside the same window, below the word pages in the sidebar](docs/media/dictation-settings.jpg) |
-| **styles.** Auto-detect or pin a language, native or roman script, and the apps written in each style. | **settings.** In the same window: General, Dictation, Keyboard, Clicky, The Orb, Privacy & Security, Account, About, with a search over every setting. |
+<table>
+  <tr>
+    <td width="50%" valign="top"><img src="docs/media/dictation-record.png" width="420" alt="The record page: a greeting, the engine banner, the take box, recent takes, words this week"><br><b>record.</b> The engine banner says where your voice goes; takes land in the box when this window is in front.</td>
+    <td width="50%" valign="top"><img src="docs/media/dictation-history.png" width="420" alt="History: takes grouped by day, searchable, with a question box"><br><b>history.</b> Every take with what you said and what was written; type a question and press enter to ask across them.</td>
+  </tr>
+  <tr>
+    <td width="50%" valign="top"><img src="docs/media/dictation-styles.png" width="420" alt="Styles: language and script, then one style per group of apps"><br><b>styles.</b> Auto-detect or pin a language, native or roman script, and the apps written in each style.</td>
+    <td width="50%" valign="top"><img src="docs/media/dictation-settings.png" width="420" alt="Settings: the General page inside the same window, below the word pages in the sidebar"><br><b>settings.</b> In the same window: General, Dictation, Keyboard, Clicky, The Orb, Privacy &amp; Security, Account, About, with a search over every setting.</td>
+  </tr>
+</table>
 
 <p align="center"><img src="docs/media/dictation-orb.png" width="120" alt="The orb: a small dark pill with two dashes"></p>
 
 The orb rests at the bottom of the screen and shows each take: bars while listening, "moving your
 words", "moved to text box". The first run happens on the island under the notch: one card per permission, then a short tour that waits for you to try each thing (dictate, ask, hand over a task):
 
-![The first-run tour on the island: your turn, ask me something, with the control and option keycaps](docs/media/dictation-onboarding.jpg)
+<p align="center"><img src="docs/media/dictation-onboarding.png" width="560" alt="The first-run tour on the island: your turn, ask me something, with the control and option keycaps"></p>
 
 ### What dictation gives you
 
