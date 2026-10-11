@@ -21,6 +21,8 @@ import SwiftUI
 
 enum FirstRunTourStep: String {
     case meet, dictate, talk, act, account, done
+    /// Not part of the tour: asked once, after a few uses (`noteUse`).
+    case openAtLogin
 
     /// The three practice steps get a progress dash each.
     var practiceIndex: Int? {
@@ -28,7 +30,7 @@ enum FirstRunTourStep: String {
         case .dictate: return 0
         case .talk: return 1
         case .act: return 2
-        case .meet, .account, .done: return nil
+        case .meet, .account, .done, .openAtLogin: return nil
         }
     }
 }
@@ -374,6 +376,7 @@ final class FirstRunTourController: ObservableObject {
             stepAfterAccount = nil
             go(to: next)
         case .done, .none: finish()
+        case .openAtLogin: closeOpenAtLoginOffer()
         }
     }
 
@@ -431,7 +434,49 @@ final class FirstRunTourController: ObservableObject {
             }
         case .done:
             companionManager?.recordedVoice.play(.tourDone)
+        case .openAtLogin:
+            break
         }
+        publish()
+    }
+
+    // MARK: Open at login
+
+    nonisolated static let useCountKey = "openclicky.useCount"
+    nonisolated static let openAtLoginAskedKey = "openclicky.openAtLoginAsked"
+    /// Uses (a dictation with words, a spoken answer) before the island asks about opening at login.
+    nonisolated static let usesBeforeOpenAtLoginOffer = 5
+
+    /// Whether this is the moment to ask: enough uses, setup done, not asked before, not already on.
+    nonisolated static func shouldOfferOpenAtLogin(useCount: Int, tourIsFinished: Bool, alreadyAsked: Bool, isOpenAtLogin: Bool) -> Bool {
+        useCount >= usesBeforeOpenAtLoginOffer && tourIsFinished && !alreadyAsked && !isOpenAtLogin
+    }
+
+    /// Counts one use; on the fifth, once the take or answer is over, the island asks (once) whether
+    /// OpenClicky should open when the Mac starts, so the dictation key always works.
+    func noteUse() {
+        let defaults = UserDefaults.standard
+        let useCount = defaults.integer(forKey: Self.useCountKey) + 1
+        defaults.set(useCount, forKey: Self.useCountKey)
+        guard step == nil, Self.shouldOfferOpenAtLogin(useCount: useCount, tourIsFinished: isFinished,
+                                                       alreadyAsked: defaults.bool(forKey: Self.openAtLoginAskedKey),
+                                                       isOpenAtLogin: SMAppServiceBridge.isEnabled) else { return }
+        // A moment after the answer or the paste, not on top of it.
+        DispatchQueue.main.asyncAfter(deadline: .now() + 4) { [weak self] in
+            guard let self, self.step == nil, self.companionManager?.voiceState == .idle else { return }
+            UserDefaults.standard.set(true, forKey: Self.openAtLoginAskedKey)
+            AppLog.append("open at login: offered after \(useCount) uses")
+            self.step = .openAtLogin
+            self.status = nil
+            self.statusIsGood = false
+            self.publish()
+        }
+    }
+
+    private func closeOpenAtLoginOffer() {
+        advanceWorkItem?.cancel()
+        step = nil
+        status = nil
         publish()
     }
 
@@ -494,6 +539,13 @@ final class FirstRunTourController: ObservableObject {
         case .done:
             companionManager.showSettings(.general)
             finish()
+        case .openAtLogin:
+            let isOn = SMAppServiceBridge.set(enabled: true)
+            AppLog.append("open at login: \(isOn ? "switched on" : "refused")")
+            status = isOn ? "✓ done. i’ll be here whenever your mac starts." : "macOS didn’t allow it. you can switch it on in settings → general."
+            statusIsGood = isOn
+            publish()
+            if isOn { scheduleAdvance(after: 2.4) }
         }
     }
 
@@ -503,6 +555,7 @@ final class FirstRunTourController: ObservableObject {
         case .meet: finish()
         case .done: finish()
         case .dictate, .account, .talk, .act: advance()
+        case .openAtLogin: closeOpenAtLoginOffer()
         }
     }
 
@@ -629,6 +682,12 @@ final class FirstRunTourController: ObservableObject {
                 detail: "hover the notch any time. keys, microphone and the rest live in settings.",
                 symbol: "checkmark.circle.fill",
                 primaryTitle: "open settings", secondaryTitle: "done")
+        case .openAtLogin:
+            return FirstRunTourCard(
+                step: .openAtLogin, title: "open me when your mac starts?",
+                detail: "then \(key) works from the moment you log in, without opening me first.",
+                symbol: "power", status: status, statusIsGood: statusIsGood,
+                primaryTitle: statusIsGood ? nil : "yes, open at login", secondaryTitle: statusIsGood ? "close" : "not now")
         }
     }
 }

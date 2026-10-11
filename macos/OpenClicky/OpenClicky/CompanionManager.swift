@@ -655,6 +655,8 @@ final class CompanionManager: ObservableObject {
     private var voiceStateCancellable: AnyCancellable?
     /// Loads Kokoro when a question starts (KokoroVoice.prepareForAnswer).
     private var kokoroPreparationCancellable: AnyCancellable?
+    /// Counts uses for the island's one-time "open at login?" offer (FirstRunTourController.noteUse).
+    private var useCountingCancellables = Set<AnyCancellable>()
     private var audioPowerCancellable: AnyCancellable?
     private var accessibilityCheckTimer: Timer?
     private var pendingKeyboardShortcutStartTask: Task<Void, Never>?
@@ -976,6 +978,17 @@ final class CompanionManager: ObservableObject {
                 guard let self, state == .listening || state == .processing, !self.isAlwaysListening else { return }
                 KokoroVoice.shared.prepareForAnswer()
             }
+        // A spoken answer and a dictation that produced words each count as a use.
+        $voiceState
+            .removeDuplicates()
+            .filter { $0 == .responding }
+            .sink { [weak self] _ in self?.firstRunTour.noteUse() }
+            .store(in: &useCountingCancellables)
+        dictationTakeController.$lastTake
+            .compactMap { $0 }
+            .filter { $0.status != .failed && !$0.displayText.isEmpty }
+            .sink { [weak self] _ in self?.firstRunTour.noteUse() }
+            .store(in: &useCountingCancellables)
         // Kokoro downloads on its own once setup is long done. A few seconds in, so the launch
         // itself stays quick.
         DispatchQueue.main.asyncAfter(deadline: .now() + 8) { [weak self] in

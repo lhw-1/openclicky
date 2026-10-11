@@ -131,6 +131,8 @@ final class UITour {
             ("06-act", .act, nil, false),
             ("06b-account", .account, nil, false),
             ("07-done", .done, nil, false),
+            ("08-open-at-login", .openAtLogin, nil, false),
+            ("09-open-at-login-on", .openAtLogin, "✓ done. i’ll be here whenever your mac starts.", true),
         ]
         for (name, step, status, isGood) in cards {
             tour.debugShow(step, status: status, isGood: isGood, companionManager: companionManager)

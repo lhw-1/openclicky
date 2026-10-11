@@ -31,6 +31,17 @@ struct HUDPlacementTests {
         #expect(island.width == 512)
     }
 
+    @Test func theIslandOffersOpenAtLoginOnceAfterFiveUses() {
+        func offer(_ uses: Int, finished: Bool = true, asked: Bool = false, on: Bool = false) -> Bool {
+            FirstRunTourController.shouldOfferOpenAtLogin(useCount: uses, tourIsFinished: finished, alreadyAsked: asked, isOpenAtLogin: on)
+        }
+        #expect(!offer(4))
+        #expect(offer(5))
+        #expect(!offer(9, finished: false))
+        #expect(!offer(9, asked: true))
+        #expect(!offer(9, on: true))
+    }
+
     @Test func notchIslandHangsCentredFromTheTop() {
         let island = model(.notch).islandFrame
         #expect(island.midX == screenFrame.midX)
