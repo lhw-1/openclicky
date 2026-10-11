@@ -40,8 +40,10 @@ struct FirstRunTourCard: Equatable {
     /// A line under the copy: what was heard, or why it did not work.
     var status: String?
     var statusIsGood = false
-    /// Nothing was heard: offer the microphone menu under the status.
-    var offersMicrophoneChange = false
+    /// The dictate step names the microphone it listens through, with a way to change it; it is
+    /// drawn louder once that microphone seems to hear nothing.
+    var microphoneName: String?
+    var microphoneNeedsAttention = false
     var primaryTitle: String?
     var secondaryTitle: String
 }
@@ -125,6 +127,21 @@ final class FirstRunTourController: ObservableObject {
             .compactMap { $0 }
             .sink { [weak self] _ in self?.taskStarted() }
             .store(in: &cancellables)
+        // A take that listens for a while and hears nothing: most likely the wrong microphone.
+        companionManager.dictationTakeController.$state
+            .removeDuplicates()
+            .sink { [weak self] takeState in self?.takeStateChanged(takeState) }
+            .store(in: &cancellables)
+        companionManager.orbModel.$audioLevel
+            .sink { [weak self] level in
+                guard let self, self.isWatchingForSilence else { return }
+                self.loudestLevelThisTake = max(self.loudestLevelThisTake, level)
+            }
+            .store(in: &cancellables)
+        companionManager.dictationSettings.$preferredMicrophoneUID
+            .dropFirst()
+            .sink { [weak self] _ in DispatchQueue.main.async { self?.publish() } }
+            .store(in: &cancellables)
         companionManager.dictationSettings.$dictationKey
             .dropFirst()
             .sink { [weak self] _ in DispatchQueue.main.async { self?.publish() } }
@@ -137,11 +154,43 @@ final class FirstRunTourController: ObservableObject {
         if take.status == .complete && !words.isEmpty {
             succeed(with: "✓ heard you: “\(words.prefix(60))\(words.count > 60 ? "…" : "")”")
         } else {
-            status = "didn’t catch any words. try again — or pick another microphone."
+            status = "didn’t catch any words. try again, or pick another microphone."
             statusIsGood = false
             offersMicrophoneChange = true
             publish()
         }
+    }
+
+    private var isWatchingForSilence = false
+    private var loudestLevelThisTake: CGFloat = 0
+    private var silenceCheckWorkItem: DispatchWorkItem?
+
+    /// Below this the orb's level is room noise, not a voice.
+    private static let voiceLevel: CGFloat = 0.05
+
+    private func takeStateChanged(_ takeState: DictationTakeController.TakeState) {
+        guard step == .dictate else { return }
+        if takeState == .listening {
+            isWatchingForSilence = true
+            loudestLevelThisTake = 0
+            silenceCheckWorkItem?.cancel()
+            let check = DispatchWorkItem { [weak self] in self?.checkForSilence() }
+            silenceCheckWorkItem = check
+            DispatchQueue.main.asyncAfter(deadline: .now() + 4, execute: check)
+        } else {
+            isWatchingForSilence = false
+            silenceCheckWorkItem?.cancel()
+        }
+    }
+
+    private func checkForSilence() {
+        guard step == .dictate, isWatchingForSilence, loudestLevelThisTake < Self.voiceLevel,
+              let companionManager else { return }
+        let name = MicrophoneMenu.deviceName(settings: companionManager.dictationSettings)
+        status = "i can’t hear anything through \(name). choose the microphone you’re using."
+        statusIsGood = false
+        offersMicrophoneChange = true
+        publish()
     }
 
     private func voiceStateChanged(_ voiceState: CompanionVoiceState) {
@@ -154,7 +203,7 @@ final class FirstRunTourController: ObservableObject {
 
     private func taskStarted() {
         guard step == .act else { return }
-        succeed(with: "✓ on it — results show up in the island.")
+        succeed(with: "✓ on it. results show up in the island.")
     }
 
     // MARK: Moving through the steps
@@ -240,8 +289,15 @@ final class FirstRunTourController: ObservableObject {
     /// The dictate step's "change microphone" link.
     func changeMicrophone() {
         guard let companionManager else { return }
+        let microphoneBefore = companionManager.dictationSettings.preferredMicrophoneUID
         MicrophoneMenu.present(settings: companionManager.dictationSettings)
-        status = "now: \(MicrophoneMenu.currentName(settings: companionManager.dictationSettings)). try again."
+        // A take still listening keeps the microphone it opened; end it so the next one uses the
+        // one just chosen.
+        if companionManager.dictationSettings.preferredMicrophoneUID != microphoneBefore,
+           companionManager.dictationTakeController.isTakeInProgress {
+            companionManager.dictationTakeController.cancelTake(reason: "cancelled")
+        }
+        status = "now listening through \(MicrophoneMenu.deviceName(settings: companionManager.dictationSettings)). try again."
         statusIsGood = false
         offersMicrophoneChange = true
         publish()
@@ -266,16 +322,17 @@ final class FirstRunTourController: ObservableObject {
         case .meet:
             return FirstRunTourCard(
                 step: .meet, title: "hi, i’m clicky",
-                detail: "your pointer’s new sidekick. i’ll show you three things — about a minute.",
+                detail: "your pointer’s new sidekick. i’ll show you three things. it takes about a minute.",
                 symbol: "hand.wave.fill",
                 primaryTitle: "let’s go", secondaryTitle: "skip tour")
         case .dictate:
-            let fnNote = needsFnFreed ? "macOS opens emoji on fn — let me switch that off first." : nil
+            let fnNote = needsFnFreed ? "macOS opens emoji on fn. let me switch that off first." : nil
             return FirstRunTourCard(
                 step: .dictate, title: "hold \(key) and say something",
                 detail: "try “hello openclicky, this is my first take”, then let go. if macOS asks to allow speech recognition, click allow.",
                 keys: [key], status: status ?? fnNote, statusIsGood: statusIsGood,
-                offersMicrophoneChange: offersMicrophoneChange,
+                microphoneName: companionManager.map { MicrophoneMenu.deviceName(settings: $0.dictationSettings) },
+                microphoneNeedsAttention: offersMicrophoneChange,
                 primaryTitle: needsFnFreed ? "free fn" : nil, secondaryTitle: "skip")
         case .talk:
             return FirstRunTourCard(
@@ -349,14 +406,21 @@ struct FirstRunTourCardView: View {
                         .lineLimit(2)
                         .fixedSize(horizontal: false, vertical: true)
                         .padding(.top, 2)
-                    if card.offersMicrophoneChange {
-                        Button("change microphone") { controller.changeMicrophone() }
-                            .buttonStyle(.plain)
-                            .font(.system(size: 12))
-                            .foregroundColor(DS.HUD.text)
-                            .underline()
-                            .pointerCursor()
+                }
+                if let microphoneName = card.microphoneName {
+                    Button(action: { controller.changeMicrophone() }) {
+                        HStack(spacing: 4) {
+                            Image(systemName: "mic.fill").font(.system(size: 10))
+                            Text("listening through \(microphoneName) ·").lineLimit(1)
+                            Text("change").underline()
+                        }
+                        .font(.system(size: 12, weight: card.microphoneNeedsAttention ? .semibold : .regular))
+                        .foregroundColor(card.microphoneNeedsAttention ? DS.HUD.text : DS.HUD.text3)
+                        .contentShape(Rectangle())
                     }
+                    .buttonStyle(.plain)
+                    .pointerCursor()
+                    .padding(.top, 2)
                 }
                 if let practiceIndex = card.step.practiceIndex {
                     progressDashes(current: practiceIndex).padding(.top, 5)

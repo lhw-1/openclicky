@@ -1182,6 +1182,15 @@ enum MicrophoneMenu {
         return "mac default · \(MicrophoneDevices.defaultInputName() ?? "none found")"
     }
 
+    /// Just the device's name ("External Microphone"), for a line with no room for more.
+    static func deviceName(settings: DictationSettings) -> String {
+        if let uid = settings.preferredMicrophoneUID,
+           let device = MicrophoneDevices.available().first(where: { $0.uid == uid }) {
+            return device.name
+        }
+        return MicrophoneDevices.defaultInputName() ?? "no microphone"
+    }
+
     static func present(settings: DictationSettings) {
         let target = MicrophoneMenuTarget(settings: settings)
         let menu = NSMenu()

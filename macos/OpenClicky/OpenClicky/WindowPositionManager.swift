@@ -129,17 +129,22 @@ class WindowPositionManager {
     /// through `open`, which asks LaunchServices for *an* app with this bundle id and can bring up
     /// a different copy (during development, the installed one instead of the build being tested).
     static func relaunchApp() {
-        guard let executableURL = Bundle.main.executableURL else { return }
+        // A shell outlives this process: it waits until this copy has quit, then asks Launch
+        // Services to open the app again. Running the executable as a child (what this did
+        // before) started a second copy while this one was still up, and it did not survive the
+        // quit, so "quit & reopen" only quit.
+        let bundlePath = Bundle.main.bundlePath
+        let processIdentifier = ProcessInfo.processInfo.processIdentifier
         let relaunchProcess = Process()
-        relaunchProcess.executableURL = executableURL
+        relaunchProcess.executableURL = URL(fileURLWithPath: "/bin/sh")
+        relaunchProcess.arguments = ["-c", "while kill -0 \(processIdentifier) 2>/dev/null; do sleep 0.2; done; sleep 0.5; /usr/bin/open \"$0\"", bundlePath]
         do {
             try relaunchProcess.run()
         } catch {
             print("⚠️ Relaunch failed: \(error)")
             return
         }
-        // Give the new instance a moment to come up before this one terminates.
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) {
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
             NSApp.terminate(nil)
         }
     }

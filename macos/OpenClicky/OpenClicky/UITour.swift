@@ -126,7 +126,7 @@ final class UITour {
             ("01-meet", .meet, nil, false),
             ("02-dictate", .dictate, nil, false),
             ("03-dictate-heard", .dictate, "✓ heard you: “hello openclicky, this is my first take”", true),
-            ("04-dictate-nothing", .dictate, "didn’t catch any words. try again — or pick another microphone.", false),
+            ("04-dictate-nothing", .dictate, "didn’t catch any words. try again, or pick another microphone.", false),
             ("05-talk", .talk, nil, false),
             ("06-act", .act, nil, false),
             ("07-done", .done, nil, false),

@@ -1146,8 +1146,22 @@ final class CompanionManager: ObservableObject {
             isOverlayVisible = true
         }
         DispatchQueue.main.asyncAfter(deadline: .now() + 1.6) { [weak self] in
-            self?.streamCursorCaption("hi! i’m clicky. i follow your pointer, and point at things when you ask.", holdSeconds: 6)
+            guard let self else { return }
+            self.streamCursorCaption("hi! i’m clicky. i follow your pointer, and point at things when you ask.", holdSeconds: 6)
+            self.playTourGreeting()
         }
+    }
+
+    /// "Hi! I'm Clicky. Let me show you three quick things." Recorded once (OpenAI speech, the
+    /// marin voice the app answers in) and bundled, so the hello needs no key and no network.
+    private var tourGreetingPlayer: AVAudioPlayer?
+
+    private func playTourGreeting() {
+        guard let url = Bundle.main.url(forResource: "clicky-hello", withExtension: "mp3"),
+              let player = try? AVAudioPlayer(contentsOf: url) else { return }
+        player.volume = 0.8
+        tourGreetingPlayer = player
+        player.play()
     }
 
     /// Starts the orb and keeps the event tap's dictation key in step with Settings.
@@ -1240,14 +1254,14 @@ final class CompanionManager: ObservableObject {
         guard usesRealtimeVoice else {
             // Say the real reason: a free account cannot use realtime at all, whatever the switch says.
             let reason = AccountCapabilities.current().usesRealtime
-                ? "hands-free needs fast voice — turn it on in the hud's settings"
-                : "hands-free needs your own openai key — settings, account"
+                ? "hands-free needs fast voice. turn it on in settings, clicky."
+                : "hands-free needs your own openai key. add it in settings, account."
             streamCursorCaption(reason, holdSeconds: 6)
             return
         }
         setAlwaysListening(!isAlwaysListening)
         let feedback = isAlwaysListening
-            ? "hands-free is on — just talk, i'm listening. tap fn + control twice to stop."
+            ? "hands-free is on. just talk, i'm listening. tap fn + control twice to stop."
             : "hands-free is off. hold control + option to talk."
         if isCursorDocked {
             showCaptionBesideMouseWhileDocked(feedback, holdSeconds: 6)
@@ -1269,7 +1283,7 @@ final class CompanionManager: ObservableObject {
             // after the key is up) is the dictation this guard means too.
             guard !buddyDictationManager.isDictationInProgress, !dictationTakeController.isTakeInProgress else {
                 AppLog.append("ask: ⌃⌥ ignored — the microphone is still busy with dictation")
-                showAskCaption("one moment — still finishing your dictation", holdSeconds: 3)
+                showAskCaption("you’re still dictating. tap \(dictationSettings.dictationKey.keycapLabel) to finish, then ask again.", holdSeconds: 4)
                 return
             }
             // Don't register push-to-talk while the onboarding video is playing
@@ -1328,7 +1342,7 @@ final class CompanionManager: ObservableObject {
                         let question = finalTranscript.trimmingCharacters(in: .whitespacesAndNewlines)
                         AppLog.append("ask: heard \(question.count) chars")
                         guard !question.isEmpty else {
-                            self.showAskCaption("didn't catch that — hold ⌃⌥ and ask again", holdSeconds: 3)
+                            self.showAskCaption("didn't catch that. hold ⌃⌥ and ask again.", holdSeconds: 3)
                             return
                         }
                         ClickyAnalytics.trackUserMessageSent(characterCount: finalTranscript.count)
@@ -1619,7 +1633,7 @@ final class CompanionManager: ObservableObject {
         let underlyingError: Error
     }
 
-    static let emptyAnswerSentence = "i didn't get an answer — please ask again."
+    static let emptyAnswerSentence = "i didn't get an answer. please ask again."
 
     /// An interrupted request: Swift's CancellationError, or URLSession's own (-999) when the task
     /// reading the answer stream was cancelled by a new question.
@@ -1638,13 +1652,13 @@ final class CompanionManager: ObservableObject {
         if let unavailable = error as? ProviderRouteUnavailable { return unavailable.sentence }
         if error is AskScreenCaptureError {
             return screenRecordingAllowed
-                ? "i couldn't see your screen just now — please ask again."
-                : "screen recording is off for openclicky — turn it on in system settings, privacy and security, screen recording."
+                ? "i couldn't see your screen just now. please ask again."
+                : "screen recording is off for openclicky. turn it on in system settings, privacy and security, screen recording."
         }
         if let urlError = error as? URLError {
             switch urlError.code {
             case .notConnectedToInternet, .networkConnectionLost, .timedOut, .cannotFindHost, .cannotConnectToHost, .dnsLookupFailed:
-                return "i couldn't reach openclicky — check your internet and ask again."
+                return "i couldn't reach openclicky. check your internet and ask again."
             default:
                 break
             }
@@ -1654,9 +1668,9 @@ final class CompanionManager: ObservableObject {
             return "something went wrong talking to the openclicky backend. check the backend and your token in the settings file."
         }
         if nsError.domain == "ClaudeAPI" && nsError.code == ClaudeAPI.midStreamErrorCode {
-            return "the answer stopped partway — please ask again."
+            return "the answer stopped partway. please ask again."
         }
-        return "something went wrong getting your answer — please ask again."
+        return "something went wrong getting your answer. please ask again."
     }
 
     // MARK: - Realtime push-to-talk
@@ -2051,7 +2065,7 @@ final class CompanionManager: ObservableObject {
         guard askOutcome == .transcribing else { return }
         askOutcome = .resolved
         AppLog.append("ask: nothing heard")
-        showAskCaption("didn't catch that — hold ⌃⌥ and ask again", holdSeconds: 3)
+        showAskCaption("didn't catch that. hold ⌃⌥ and ask again.", holdSeconds: 3)
     }
 
     private func showAskDictationError(_ errorMessage: String) {
@@ -2175,7 +2189,7 @@ final class CompanionManager: ObservableObject {
     /// buddy is docked the text types out in the notch island instead; a hidden buddy is shown
     /// for the duration.
     func explainWhatOpenClickyDoes() {
-        let message = "hi, i'm openclicky. hold control + option and ask about anything on your screen — "
+        let message = "hi, i'm openclicky. hold control + option and ask about anything on your screen. "
             + "i'll answer out loud and point at what you need. tap control twice to type instead, "
             + "hold fn to dictate into any app, and real work goes to the agent."
         if isCursorDocked {
