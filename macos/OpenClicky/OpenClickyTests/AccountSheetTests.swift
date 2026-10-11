@@ -42,13 +42,6 @@ struct AccountSheetTests {
         #expect(line == "$4.50 of $10 this month · $0.20 of $2 today · 1,234 spoken characters of 20,000")
     }
 
-    @Test func theIslandShowsHowMuchIsUsed() {
-        #expect(NotchSettingsView.planDescription(kind: .account, summary: summary(spentMonth: 4.5)) == "account · 45% used")
-        #expect(NotchSettingsView.planDescription(kind: .account, summary: nil) == "account")
-        #expect(NotchSettingsView.planDescription(kind: .ownKeys, summary: nil) == "your own key")
-        #expect(NotchSettingsView.planDescription(kind: .signedOut, summary: nil) == "not signed in")
-    }
-
     @Test func aClosedSheetIsACancellationNotAFailure() {
         #expect(OpenClickyAuthSession.isCancellation(CancellationError()))
         #expect(OpenClickyAuthSession.isCancellation(URLError(.cancelled)))

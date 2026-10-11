@@ -2,8 +2,8 @@
 //  DictationWindowNavigationTests.swift
 //  OpenClickyTests
 //
-//  The window's one sidebar: which row is selected for a section or settings page, how every
-//  entry point lands on the page it asks for, and how the settings search gives way to a page.
+//  The one window's navigation: your pages and the settings pages share one sidebar; every entry
+//  point lands on the page it asks for, and a settings search gives way to a page.
 //
 
 import Testing
@@ -11,77 +11,57 @@ import Testing
 
 @MainActor
 struct DictationWindowNavigationTests {
-    @Test func mainSectionsSelectTheirOwnRow() {
+    @Test func everySectionAndSettingsPageCanBeSelected() {
         let model = DictationWindowModel()
-        for section in DictationSection.allCases where section != .settings {
-            model.select(.section(section))
-            #expect(model.selectedSidebarRow == .section(section))
+        for section in DictationSection.allCases {
+            model.select(section)
+            #expect(model.destination == .section(section))
         }
-    }
-
-    @Test func eachSettingsPageSelectsItsRowInTheSettingsGroup() {
-        let model = DictationWindowModel()
         for page in DictationSettingsPage.allCases {
-            model.select(.settingsPage(page))
-            #expect(model.section == .settings)
-            #expect(model.settingsPage == page)
-            #expect(model.selectedSidebarRow == .settingsPage(page))
+            model.select(.settings(page))
+            #expect(model.destination == .settings(page))
         }
     }
 
-    @Test func openingASettingsPageLandsOnItEvenWithASectionGiven() {
+    @Test func aSettingsPageWinsOverASection() {
         let model = DictationWindowModel()
-        model.open(section: .history, settingsPage: .voice)
-        #expect(model.selectedSidebarRow == .settingsPage(.voice))
+        model.open(section: .history, settingsPage: .dictation)
+        #expect(model.destination == .settings(.dictation))
     }
 
     @Test func openingWithNothingKeepsWhereTheWindowWas() {
         let model = DictationWindowModel()
-        model.select(.settingsPage(.orb))
-        model.settingsSearchText = "paste"
+        model.select(.settings(.orb))
+        model.searchText = "paste"
         model.open()
-        #expect(model.settingsPage == .orb)
-        #expect(model.settingsSearchText == "paste")
+        #expect(model.destination == .settings(.orb))
+        #expect(model.searchText == "paste")
     }
 
     @Test func openingAPageClearsALeftoverSearch() {
-        // Otherwise "change engine" or the HUD's "open all settings" would leave the results on screen.
+        // Otherwise "change engine" or the island's "open settings…" would leave results on screen.
         let model = DictationWindowModel()
-        model.settingsSearchText = "microphone"
+        model.searchText = "microphone"
         model.open(settingsPage: .account)
-        #expect(!model.isSearchingSettings)
-        #expect(model.selectedSidebarRow == .settingsPage(.account))
-    }
-
-    @Test func searchingSelectsNoRowAndClearingReturnsToTheSelectedPage() {
-        let model = DictationWindowModel()
-        model.select(.settingsPage(.privacy))
-        model.settingsSearchText = "  key "
-        #expect(model.isSearchingSettings)
-        #expect(model.trimmedSettingsSearchText == "key")
-        #expect(model.selectedSidebarRow == nil)
-        model.settingsSearchText = ""
-        #expect(model.selectedSidebarRow == .settingsPage(.privacy))
+        #expect(!model.isSearching)
+        #expect(model.destination == .settings(.account))
     }
 
     @Test func whitespaceIsNotASearch() {
         let model = DictationWindowModel()
-        model.settingsSearchText = "   "
-        #expect(!model.isSearchingSettings)
-        #expect(model.selectedSidebarRow == .section(.record))
+        model.searchText = "   "
+        #expect(!model.isSearching)
+        model.searchText = "  key "
+        #expect(model.trimmedSearchText == "key")
     }
 
-    @Test func choosingAnyRowClearsTheSearch() {
-        let model = DictationWindowModel()
-        model.settingsSearchText = "orb"
-        model.select(.section(.styles))
-        #expect(model.settingsSearchText.isEmpty)
-        #expect(model.selectedSidebarRow == .section(.styles))
+    @Test func spokenExpansionsAreCalledSnippets() {
+        // "shortcuts" read as keyboard shortcuts; the keyboard lives in Settings → Keyboard.
+        #expect(DictationSection.shortcuts.title == "snippets")
+        #expect(DictationSection.shortcuts.sidebarTitle == "Snippets")
     }
 
-    @Test func theKeyboardPageIsNotCalledPlainShortcuts() {
-        // The spoken "shortcuts" page sits in the same sidebar; the keyboard page needs its own name.
-        #expect(DictationSettingsPage.shortcuts.title != DictationSection.shortcuts.title)
-        #expect(DictationSettingsPage.shortcuts.title == "keys & shortcuts")
+    @Test func thereAreEightSettingsPages() {
+        #expect(DictationSettingsPage.allCases.map(\.title) == ["General", "Dictation", "Keyboard", "Clicky", "The Orb", "Privacy & Security", "Account", "About"])
     }
 }

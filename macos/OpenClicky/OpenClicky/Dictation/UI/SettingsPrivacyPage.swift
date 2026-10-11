@@ -2,9 +2,9 @@
 //  SettingsPrivacyPage.swift
 //  OpenClicky
 //
-//  Settings → privacy (was permissions + privacy & data): what openclicky can see, and what it
-//  keeps. The three permissions with their live state, reading nearby text, what is kept on this
-//  mac and for how long, where each file lives, and a summary of what leaves the mac.
+//  Settings → Privacy & Security: what OpenClicky can use, and what it keeps. The three
+//  permissions with their live state, reading nearby text, what is kept on this Mac and for how
+//  long, where each file lives, and (under them) what leaves the Mac.
 //
 
 import AppKit
@@ -15,86 +15,87 @@ import SwiftUI
 
 extension SettingsCatalog {
     func privacyItems() -> [SettingsItem] {
-        [
+        func path(_ url: URL) -> String { url.path.replacingOccurrences(of: NSHomeDirectory(), with: "~") }
+        return [
             SettingsItem(
-                id: "privacy.microphone", page: .privacy, section: "what it can use",
-                title: "microphone", detail: "openclicky listens only when you start a take. with this mac as the engine, audio never leaves it.",
+                id: "privacy.microphone", page: .privacy, section: "Permissions",
+                title: "Microphone", detail: PrivacyPermission.microphone.detail,
                 keywords: ["permission", "mic", "audio", "grant"],
                 view: AnyView(PermissionRow(permission: .microphone))),
             SettingsItem(
-                id: "privacy.accessibility", page: .privacy, section: "what it can use",
-                title: "accessibility", detail: "lets openclicky type and paste takes into other apps and read nearby text. terminals get the words when you let go.",
+                id: "privacy.accessibility", page: .privacy, section: "Permissions",
+                title: "Accessibility", detail: PrivacyPermission.accessibility.detail,
                 keywords: ["permission", "paste", "grant", "keys", "event tap", "terminal", "live typing"],
                 view: AnyView(PermissionRow(permission: .accessibility))),
             SettingsItem(
-                id: "privacy.speechRecognition", page: .privacy, section: "what it can use",
-                title: "speech recognition", detail: "apple’s on-device recogniser, for this mac as the engine.",
+                id: "privacy.speechRecognition", page: .privacy, section: "Permissions",
+                title: "Speech recognition", detail: PrivacyPermission.speechRecognition.detail,
                 keywords: ["permission", "offline", "apple", "grant", "siri"],
                 view: AnyView(PermissionRow(permission: .speechRecognition))),
             SettingsItem(
-                id: "privacy.readNearbyText", page: .privacy, section: "what it can use",
-                title: "read nearby text", detail: "helps spell names and terms on screen right. off stops nearby-text capture.",
+                id: "privacy.readNearbyText", page: .privacy, section: "Permissions",
+                title: "Read nearby text", detail: "Helps spell names and terms on screen right.",
                 keywords: ["context", "screen", "spelling", "names", "accessibility"],
-                view: AnyView(SettingsRow(title: "read nearby text", detail: "helps spell names and terms on screen right. off stops nearby-text capture.") {
+                view: AnyView(SettingsRow(title: "Read nearby text", detail: "Helps spell names and terms on screen right.") {
                     SettingsToggle(settings: settings, keyPath: \.readNearbyText)
                 })),
             SettingsItem(
-                id: "privacy.memoryOnThisMac", page: .privacy, section: "what it keeps",
-                title: "keep my memory on this mac only", detail: "history, dictionary and styles stay here. with this mac as the engine and “clean up my words with ai” off, nothing you dictate leaves this mac. questions to clicky (⌃⌥, hands-free) still go online.",
+                id: "privacy.memoryOnThisMac", page: .privacy, section: "What it keeps",
+                title: "Keep my memory on this Mac only", detail: "History, dictionary and styles stay here. Questions to Clicky still go online.",
                 keywords: ["local", "memory", "cloud", "sync", "data"],
-                view: AnyView(SettingsRow(title: "keep my memory on this mac only", detail: "history, dictionary and styles stay here. with this mac as the engine and “clean up my words with ai” off, nothing you dictate leaves this mac. questions to clicky (⌃⌥, hands-free) still go online.") {
+                view: AnyView(SettingsRow(title: "Keep my memory on this Mac only", detail: "History, dictionary and styles stay here. Questions to Clicky still go online.") {
                     SettingsToggle(settings: settings, keyPath: \.keepMemoryOnThisMac)
                 })),
             SettingsItem(
-                id: "privacy.incognito", page: .privacy, section: "what it keeps",
-                title: "incognito", detail: "takes still paste, but nothing is saved to history.",
+                id: "privacy.incognito", page: .privacy, section: "What it keeps",
+                title: "Incognito", detail: "Takes still paste, but nothing is saved to history.",
                 keywords: ["private", "history", "don't save"],
-                view: AnyView(SettingsRow(title: "incognito", detail: "takes still paste, but nothing is saved to history.") {
+                view: AnyView(SettingsRow(title: "Incognito", detail: "Takes still paste, but nothing is saved to history.") {
                     SettingsToggle(settings: settings, keyPath: \.incognito)
                 })),
             SettingsItem(
-                id: "privacy.clipboardHistory", page: .privacy, section: "what it keeps",
-                title: "clipboard history", detail: "capture what you copy, so it shows in history too.",
+                id: "privacy.clipboardHistory", page: .privacy, section: "What it keeps",
+                title: "Clipboard history", detail: "Capture what you copy, so it shows in history too.",
                 keywords: ["clipboard", "copy", "pasteboard"],
-                view: AnyView(SettingsRow(title: "clipboard history", detail: "capture what you copy, so it shows in history too.") {
+                view: AnyView(SettingsRow(title: "Clipboard history", detail: "Capture what you copy, so it shows in history too.") {
                     SettingsToggle(settings: settings, keyPath: \.clipboardHistoryEnabled)
                 })),
             SettingsItem(
-                id: "privacy.retryFailedTakes", page: .privacy, section: "what it keeps",
-                title: "retry failed takes", detail: "keeps the recording of a take a network engine couldn’t finish (up to 100 takes or 1 GB) until you retry or delete it. off removes them now.",
+                id: "privacy.retryFailedTakes", page: .privacy, section: "What it keeps",
+                title: "Keep failed takes to retry", detail: "Up to 100 takes or 1 GB. Off removes them now.",
                 keywords: ["retry", "audio", "recording", "failed", "network"],
                 view: AnyView(RetryFailedTakesRow(settings: settings, companionManager: companionManager))),
             SettingsItem(
-                id: "privacy.deleteTakes", page: .privacy, section: "what it keeps",
-                title: "delete my takes", detail: "wipes every take from this mac now. your dictionary and shortcuts stay.",
+                id: "privacy.deleteTakes", page: .privacy, section: "What it keeps",
+                title: "Delete all takes", detail: "Your dictionary and snippets stay.",
                 keywords: ["delete", "wipe", "history", "erase", "data"],
                 view: AnyView(DeleteTakesRow(companionManager: companionManager))),
             SettingsItem(
-                id: "privacy.whereHistory", page: .privacy, section: "where things live",
-                title: "history", detail: TakeStore.defaultFileURL.path.replacingOccurrences(of: NSHomeDirectory(), with: "~"),
+                id: "privacy.whereHistory", page: .privacy, section: "Where things live",
+                title: "History", detail: path(TakeStore.defaultFileURL),
                 keywords: ["sqlite", "database", "file", "folder", "takes"],
-                view: AnyView(SettingsRow(title: "history", detail: TakeStore.defaultFileURL.path.replacingOccurrences(of: NSHomeDirectory(), with: "~")) {
-                    Button("show") { NSWorkspace.shared.activateFileViewerSelecting([TakeStore.defaultFileURL]) }.buttonStyle(PaperPillButtonStyle())
+                view: AnyView(SettingsRow(title: "History", detail: path(TakeStore.defaultFileURL)) {
+                    Button("Show in Finder") { NSWorkspace.shared.activateFileViewerSelecting([TakeStore.defaultFileURL]) }
                 })),
             SettingsItem(
-                id: "privacy.whereSpace", page: .privacy, section: "where things live",
-                title: "styles, dictionary, shortcuts", detail: DictationSpaceStore.defaultDirectoryURL.path.replacingOccurrences(of: NSHomeDirectory(), with: "~"),
-                keywords: ["json", "file", "folder"],
-                view: AnyView(SettingsRow(title: "styles, dictionary, shortcuts", detail: DictationSpaceStore.defaultDirectoryURL.path.replacingOccurrences(of: NSHomeDirectory(), with: "~")) {
-                    Button("show") { NSWorkspace.shared.open(DictationSpaceStore.defaultDirectoryURL) }.buttonStyle(PaperPillButtonStyle())
+                id: "privacy.whereSpace", page: .privacy, section: "Where things live",
+                title: "Styles, dictionary, snippets", detail: path(DictationSpaceStore.defaultDirectoryURL),
+                keywords: ["json", "file", "folder", "shortcuts"],
+                view: AnyView(SettingsRow(title: "Styles, dictionary, snippets", detail: path(DictationSpaceStore.defaultDirectoryURL)) {
+                    Button("Show in Finder") { NSWorkspace.shared.open(DictationSpaceStore.defaultDirectoryURL) }
                 })),
             SettingsItem(
-                id: "privacy.whereKeys", page: .privacy, section: "where things live",
-                title: "keys and account", detail: "~/.openclicky/shell.json",
+                id: "privacy.whereKeys", page: .privacy, section: "Where things live",
+                title: "Keys and account", detail: "~/.openclicky/shell.json",
                 keywords: ["shell.json", "token", "file", "key"],
-                view: AnyView(SettingsRow(title: "keys and account", detail: "~/.openclicky/shell.json") {
-                    Button("show") { OpenClickyConfiguration.revealSettingsFile() }.buttonStyle(PaperPillButtonStyle())
+                view: AnyView(SettingsRow(title: "Keys and account", detail: "~/.openclicky/shell.json") {
+                    Button("Show in Finder") { OpenClickyConfiguration.revealSettingsFile() }
                 })),
             SettingsItem(
-                id: "privacy.summary", page: .privacy, section: "where things live",
-                title: "privacy summary", detail: "with this mac as the engine, what you dictate stays on it unless you turn on “clean up my words with ai” — hey clicky edits need it on too. the other engines send audio to the provider you chose, with your key or account. questions to clicky always go online: ⌃⌥ sends what you asked and a picture of your screen, and fast voice and hands-free send your voice to openai.",
+                id: "privacy.summary", page: .privacy, section: "Where things live",
+                title: "Privacy summary", detail: PrivacySummaryNote.text,
                 keywords: ["policy", "privacy", "what leaves", "readme"],
-                chrome: .bare,
+                chrome: .footer,
                 view: AnyView(PrivacySummaryNote())),
         ]
     }
@@ -107,17 +108,17 @@ private enum PrivacyPermission {
 
     var title: String {
         switch self {
-        case .microphone: return "microphone"
-        case .accessibility: return "accessibility"
-        case .speechRecognition: return "speech recognition"
+        case .microphone: return "Microphone"
+        case .accessibility: return "Accessibility"
+        case .speechRecognition: return "Speech recognition"
         }
     }
 
     var detail: String {
         switch self {
-        case .microphone: return "openclicky listens only when you start a take. with this mac as the engine, audio never leaves it."
-        case .accessibility: return "lets openclicky type and paste takes into other apps and read nearby text. terminals get the words when you let go."
-        case .speechRecognition: return "apple’s on-device recogniser, for this mac as the engine."
+        case .microphone: return "Listens only during a take. With This Mac as the engine, audio never leaves it."
+        case .accessibility: return "Pastes into other apps and reads nearby text. Terminals get the words when you let go."
+        case .speechRecognition: return "Apple’s on-device recogniser, for This Mac."
         }
     }
 
@@ -150,7 +151,7 @@ private enum PrivacyPermission {
 }
 
 /// A permission's live state, polled like the island's permission cards. Accessibility takes
-/// effect without a relaunch here (the event tap restarts on the next poll), so "granted" is
+/// effect without a relaunch here (the event tap restarts on the next poll), so "Allowed" is
 /// the true state as soon as macOS says so.
 private struct PermissionRow: View {
     let permission: PrivacyPermission
@@ -164,7 +165,7 @@ private struct PermissionRow: View {
 
     private var detail: String {
         if permission == .accessibility && !isGranted {
-            return permission.detail + " can’t see openclicky in the list? the island’s permission card can drag it in for you, and reset a stale row."
+            return permission.detail + " Can’t see OpenClicky in the list? The island’s permission card can drag it in for you, and reset a stale row."
         }
         return permission.detail
     }
@@ -172,14 +173,15 @@ private struct PermissionRow: View {
     var body: some View {
         SettingsRow(title: permission.title, detail: detail) {
             if isGranted {
-                HStack(spacing: 4) {
-                    Image(systemName: "checkmark").font(.system(size: 10, weight: .bold))
-                    Text("granted").font(Paper.body(12))
+                HStack(spacing: 6) {
+                    Circle().fill(SettingsLook.success).frame(width: 8, height: 8)
+                    Text("Allowed").font(SettingsLook.rowTitle).foregroundStyle(.secondary)
                 }
-                .foregroundStyle(Paper.success)
                 .accessibilityElement(children: .combine)
             } else {
-                Button("grant") { permission.request() }.buttonStyle(PaperPillButtonStyle(prominent: true))
+                Button("Allow…") { permission.request() }
+                    .buttonStyle(.borderedProminent)
+                    .tint(SettingsLook.accent)
             }
         }
         .onReceive(pollTimer) { _ in isGranted = permission.isGranted }
@@ -193,8 +195,8 @@ private struct RetryFailedTakesRow: View {
     let companionManager: CompanionManager
 
     var body: some View {
-        SettingsRow(title: "retry failed takes", detail: "keeps the recording of a take a network engine couldn’t finish (up to 100 takes or 1 GB) until you retry or delete it. off removes them now.") {
-            PaperToggle(isOn: Binding(get: { settings.retainFailedTakeAudio }, set: { isOn in
+        SettingsRow(title: "Keep failed takes to retry", detail: "Up to 100 takes or 1 GB. Off removes them now.") {
+            SettingsSwitch(isOn: Binding(get: { settings.retainFailedTakeAudio }, set: { isOn in
                 settings.retainFailedTakeAudio = isOn
                 if !isOn { companionManager.dictationTakeController.audioStore.discardAll() }
             }))
@@ -207,33 +209,35 @@ private struct DeleteTakesRow: View {
     @State private var isConfirmingDelete = false
 
     var body: some View {
-        SettingsRow(title: "delete my takes", detail: "wipes every take from this mac now. your dictionary and shortcuts stay.") {
-            Button("delete history…") { isConfirmingDelete = true }.buttonStyle(PaperPillButtonStyle(destructive: true))
+        SettingsRow(title: "Delete all takes", detail: "Your dictionary and snippets stay.") {
+            Button("Delete History…", role: .destructive) { isConfirmingDelete = true }
+                .foregroundStyle(SettingsLook.danger)
         }
-        .confirmationDialog("delete every take on this mac?", isPresented: $isConfirmingDelete) {
-            Button("delete all history", role: .destructive) {
+        .confirmationDialog("Delete every take on this Mac?", isPresented: $isConfirmingDelete) {
+            Button("Delete All History", role: .destructive) {
                 try? companionManager.dictationTakeStore?.deleteAll()
                 companionManager.dictationTakeController.audioStore.discardAll()
                 companionManager.dictationTakeController.historyDidChange()
             }
-        } message: { Text("this can't be undone.") }
+        } message: { Text("This can’t be undone.") }
     }
 }
 
 private struct PrivacySummaryNote: View {
+    static let text = "With This Mac as the engine, what you dictate stays on this Mac unless AI clean-up is on (edits need it too). The other engines send audio to the provider you chose. Questions to Clicky always go online with a picture of your screen, and fast voice and hands-free send your voice to OpenAI."
     @Environment(\.settingsSearchQuery) private var searchQuery
 
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
-            Text(settingsHighlighted("with this mac as the engine, what you dictate stays on it unless you turn on “clean up my words with ai” — hey clicky edits need it on too. the other engines send audio to the provider you chose, with your key or account. questions to clicky always go online: ⌃⌥ sends what you asked and a picture of your screen, and fast voice and hands-free send your voice to openai.", query: searchQuery))
+            Text(settingsHighlighted(Self.text, query: searchQuery))
                 .fixedSize(horizontal: false, vertical: true)
-            HStack(spacing: 4) {
-                Text("the full privacy policy is in the project’s")
-                Button("README ↗") { openExternalLink("https://github.com/prasanthsasikumar/openclicky#readme") }
-                    .buttonStyle(.plain).foregroundStyle(Paper.accentFill).pointerCursor()
+            HStack(spacing: 3) {
+                Text("The full privacy policy is in the project’s")
+                Button("README") { openExternalLink("https://github.com/prasanthsasikumar/openclicky#readme") }
+                    .buttonStyle(.link)
+                Text(".")
             }
         }
-        .font(Paper.caption).foregroundStyle(Paper.inkSecondary)
-        .padding(.top, 8).padding(.leading, 2)
+        .font(SettingsLook.caption).foregroundStyle(.secondary)
     }
 }

@@ -89,7 +89,7 @@ struct RecordPageView: View {
             Text(unavailableReason?.lowercased() ?? engineSentence)
                 .font(Paper.body(13)).foregroundStyle(unavailableReason == nil ? Paper.ink : Paper.danger)
                 .lineLimit(1)
-            Button("change engine") { model.open(settingsPage: .voice) }
+            Button("change engine") { companionManager.showSettings(.dictation) }
                 .buttonStyle(.plain).font(Paper.body(13)).foregroundStyle(Paper.accentFill).pointerCursor()
         }
     }
@@ -197,7 +197,7 @@ struct RecordPageView: View {
                 (Text("recent takes").font(Paper.body(13, weight: .semibold)).foregroundColor(Paper.ink)
                     + Text(recentDayLabel.map { " · \($0)" } ?? "").font(Paper.body(13)).foregroundColor(Paper.inkTertiary))
                 Spacer()
-                Button(stats.allTimeTakes > 0 ? "all \(stats.allTimeTakes) takes →" : "history →") { model.section = .history }
+                Button(stats.allTimeTakes > 0 ? "all \(stats.allTimeTakes) takes →" : "history →") { model.select(.history) }
                     .buttonStyle(.plain).font(Paper.body(13)).foregroundStyle(Paper.accentFill).pointerCursor()
             }
             .padding(.bottom, 8)

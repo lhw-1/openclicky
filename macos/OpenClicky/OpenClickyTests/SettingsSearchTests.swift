@@ -17,7 +17,7 @@ struct SettingsSearchTests {
     }
 
     @Test func matchesTitleDetailKeywordsAndPageCaseInsensitively() {
-        let openAtLogin = item("login", page: .general, section: "behavior", title: "open at login", detail: "start openclicky when you log in.", keywords: ["startup"])
+        let openAtLogin = item("login", page: .general, section: "Startup", title: "Open at login", detail: "Start OpenClicky when you log in.", keywords: ["startup"])
         #expect(openAtLogin.matches("Login"))
         #expect(openAtLogin.matches("log in"))
         #expect(openAtLogin.matches("startup"))
@@ -26,20 +26,30 @@ struct SettingsSearchTests {
     }
 
     @Test func everyWordOfTheQueryMustMatch() {
-        let sounds = item("sounds", page: .orb, section: "feedback", title: "sounds", detail: "tones when a take starts.")
+        let sounds = item("sounds", page: .orb, section: "Feedback", title: "Sounds", detail: "Tones when a take starts.")
         #expect(sounds.matches("take tones"))
         #expect(!sounds.matches("take haptics"))
     }
 
-    @Test func resultsGroupByPageAndSectionInOrder() {
+    @Test func resultsGroupByPageInOrder() {
         let items = [
-            item("a", page: .shortcuts, section: "dictation", title: "dictation key"),
-            item("b", page: .shortcuts, section: "dictation", title: "cancel a take"),
-            item("c", page: .shortcuts, section: "the companion", title: "hands-free"),
+            item("a", page: .keyboard, section: "Dictation", title: "Dictation key"),
+            item("b", page: .keyboard, section: "Dictation", title: "Cancel a take"),
+            item("c", page: .clicky, section: "Pointer", title: "Show the pointer"),
         ]
-        let groups = SettingsSectionGroup.groups(items) { "\($0.page.title) › \($0.section)" }
-        #expect(groups.map(\.title) == ["keys & shortcuts › dictation", "keys & shortcuts › the companion"])
+        let groups = SettingsSectionGroup.groups(items) { $0.page.title }
+        #expect(groups.map(\.title) == ["Keyboard", "Clicky"])
         #expect(groups.first?.items.count == 2)
+    }
+
+    @Test func aFooterJoinsTheSectionBeforeIt() {
+        var footer = item("f", page: .privacy, section: "Where things live", title: "Privacy summary")
+        footer.chrome = .footer
+        let items = [item("a", page: .privacy, section: "Where things live", title: "History"), footer]
+        let groups = SettingsSectionGroup.groups(items)
+        #expect(groups.count == 1)
+        #expect(groups.first?.items.map(\.id) == ["a"])
+        #expect(groups.first?.footers.map(\.id) == ["f"])
     }
 
     @Test func highlightMarksEveryOccurrence() {

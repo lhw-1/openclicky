@@ -259,7 +259,7 @@ struct OnboardingView: View {
                 }
                 .foregroundStyle(Paper.success).padding(.top, 6)
             } else {
-                EmailAccountForm(onSignedIn: {}, onUseOwnKey: { companionManager.showDictationWindow(settingsPage: .account) })
+                EmailAccountForm(onSignedIn: {}, onUseOwnKey: { companionManager.showSettings(.account) })
                 if let note = OpenClickyAuthSession.signUpClosedNote(accountsOpen: authSession.accountsOpen) {
                     Text(note).font(Paper.caption).foregroundStyle(Paper.inkSecondary).fixedSize(horizontal: false, vertical: true)
                 }

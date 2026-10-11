@@ -94,15 +94,15 @@ final class UITour {
         settings.appearance = appearance
         defer { settings.appearance = originalAppearance }
         var index = 0
-        for section in DictationSection.allCases where section != .settings {
+        for section in DictationSection.allCases {
             index += 1
             companionManager.showDictationWindow(section: section)
             await shootWindow(named: String(format: "window-%@-%02d-%@", appearanceName, index, section.rawValue), window: mainWindow, scrolls: scrolls)
         }
         for page in DictationSettingsPage.allCases {
             index += 1
-            companionManager.showDictationWindow(settingsPage: page)
-            await shootWindow(named: String(format: "window-%@-%02d-settings-%@", appearanceName, index, page.rawValue), window: mainWindow, scrolls: scrolls)
+            companionManager.showSettings(page)
+            await shootWindow(named: String(format: "settings-%@-%02d-%@", appearanceName, index, page.rawValue), window: mainWindow, scrolls: scrolls)
         }
     }
 
@@ -250,7 +250,9 @@ final class UITour {
     private static func scroll(_ scrollView: NSScrollView, toTopOffset offset: CGFloat, documentHeight: CGFloat) {
         let isFlipped = scrollView.documentView?.isFlipped ?? true
         let visibleHeight = scrollView.contentView.bounds.height
-        let y = isFlipped ? offset : max(0, documentHeight - visibleHeight - offset)
+        // A scroll view under a toolbar starts above zero, by the toolbar's inset.
+        let top = -scrollView.contentInsets.top
+        let y = isFlipped ? top + offset : max(0, documentHeight - visibleHeight - offset)
         scrollView.contentView.scroll(to: NSPoint(x: 0, y: y))
         scrollView.reflectScrolledClipView(scrollView.contentView)
     }

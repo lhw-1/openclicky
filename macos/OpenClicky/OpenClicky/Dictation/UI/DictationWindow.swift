@@ -2,101 +2,84 @@
 //  DictationWindow.swift
 //  OpenClicky
 //
-//  The main window: one sidebar on the left (record, history; how it writes: dictionary,
-//  shortcuts, styles; settings: a search field and the six settings pages; incognito and the
-//  account pinned at the foot) and a page on the right. Settings used to be a separate mode that
-//  swapped the sidebar for its own rail behind a small "settings ⌘," row, which people missed;
-//  now every page is one click away in the same list. One window, reopened from the menu bar,
-//  the orb's menu or the Dock, remembering its frame.
+//  OpenClicky's one window. A native sidebar on the left lists your words (record, history; how
+//  it writes: dictionary, snippets, styles) and then Settings (eight pages: general, dictation,
+//  keyboard, clicky, the orb, privacy & security, account, about), with a search field that
+//  filters every setting; incognito and the account sit at its foot. Every way in (⌘,, the menu
+//  bar, the island, the orb's menu, the Dock) opens this window at the page it asks for. It is
+//  reopened rather than recreated, and remembers its frame.
 //
 
 import AppKit
 import Combine
 import SwiftUI
 
+/// The window's own pages: your words.
 enum DictationSection: String, CaseIterable, Identifiable {
-    case record, history, dictionary, shortcuts, styles, settings
-    var id: String { rawValue }
-
-    var title: String { rawValue }
-
-    var symbol: String {
-        switch self {
-        case .record: return "mic"
-        case .history: return "clock"
-        case .dictionary: return "sparkles"
-        case .shortcuts: return "bolt"
-        case .styles: return "pencil.line"
-        case .settings: return "gearshape"
-        }
-    }
-}
-
-/// Six pages, each answering one question. `voice` was engine + microphone; `privacy` took in
-/// permissions; `account` took in plan & usage; `general` took in about.
-enum DictationSettingsPage: String, CaseIterable, Identifiable {
-    case general, shortcuts, orb, voice, privacy, account
+    case record, history, dictionary, shortcuts, styles
     var id: String { rawValue }
 
     var title: String {
         switch self {
-        case .orb: return "the orb"
-        // The sidebar also lists the spoken "shortcuts" (phrases that expand as you dictate) under
-        // "how it writes"; two rows both called "shortcuts" would read as a duplicate. This page
-        // is the keyboard: the dictation key, cancel, hands-free.
-        case .shortcuts: return "keys & shortcuts"
+        // Spoken text expansions, renamed so they are never confused with keyboard shortcuts.
+        case .shortcuts: return "snippets"
         default: return rawValue
+        }
+    }
+
+    /// The sidebar's name for the page ("Snippets").
+    var sidebarTitle: String { title.prefix(1).uppercased() + title.dropFirst() }
+
+    var symbol: String {
+        switch self {
+        case .record: return "mic.fill"
+        case .history: return "clock.fill"
+        case .dictionary: return "character.book.closed.fill"
+        case .shortcuts: return "text.bubble.fill"
+        case .styles: return "paintbrush.pointed.fill"
+        }
+    }
+
+    var tint: Color {
+        switch self {
+        case .record: return Color(red: 0.824, green: 0.306, blue: 0.165)
+        case .history: return Color(red: 0.345, green: 0.337, blue: 0.839)
+        case .dictionary: return Color(red: 0.686, green: 0.322, blue: 0.871)
+        case .shortcuts: return Color(red: 0.188, green: 0.69, blue: 0.78)
+        case .styles: return Color(red: 1.0, green: 0.176, blue: 0.333)
         }
     }
 }
 
-/// One row of the window's sidebar: a main page or one of the settings pages.
-enum DictationSidebarRow: Hashable {
+/// What the window shows: one of your pages or one settings page.
+enum DictationDestination: Hashable {
     case section(DictationSection)
-    case settingsPage(DictationSettingsPage)
+    case settings(DictationSettingsPage)
 }
 
 @MainActor
 final class DictationWindowModel: ObservableObject {
-    @Published var section: DictationSection = .record
-    @Published var settingsPage: DictationSettingsPage = .general
+    @Published var destination: DictationDestination = .section(.record)
     @Published var pendingHistorySearch: String?
-    @Published var isRailCollapsed = false
-    /// What is typed in the sidebar's "search settings" field. While it holds words the main area
-    /// shows matching settings from every page, whatever row is selected; empty shows that row's page.
-    @Published var settingsSearchText = ""
+    /// While this holds words the window shows matching settings from every page.
+    @Published var searchText = ""
 
-    var trimmedSettingsSearchText: String {
-        settingsSearchText.trimmingCharacters(in: .whitespacesAndNewlines)
+    var trimmedSearchText: String { searchText.trimmingCharacters(in: .whitespacesAndNewlines) }
+    var isSearching: Bool { !trimmedSearchText.isEmpty }
+
+    /// A click in the sidebar. Clears any search so the chosen page is what shows.
+    func select(_ chosenDestination: DictationDestination) {
+        searchText = ""
+        destination = chosenDestination
     }
 
-    var isSearchingSettings: Bool { !trimmedSettingsSearchText.isEmpty }
+    func select(_ section: DictationSection) { select(.section(section)) }
 
-    /// The row drawn as selected. None while searching: the results span every page, so
-    /// highlighting one row would claim they belong to it.
-    var selectedSidebarRow: DictationSidebarRow? {
-        guard !isSearchingSettings else { return nil }
-        return section == .settings ? .settingsPage(settingsPage) : .section(section)
-    }
-
-    /// A click on a sidebar row. Clears any search so the chosen page is what shows.
-    func select(_ row: DictationSidebarRow) {
-        settingsSearchText = ""
-        switch row {
-        case .section(let chosenSection):
-            section = chosenSection
-        case .settingsPage(let chosenPage):
-            section = .settings
-            settingsPage = chosenPage
-        }
-    }
-
-    /// Every way into the window (menu bar, HUD, links on the pages) comes through here. A settings
-    /// page wins over a section, and a leftover search is cleared, or it would hide the page asked for.
-    /// With neither, the window just comes forward as it was.
+    /// Every way into the window comes through here. A settings page wins over a section; with
+    /// neither, the window just comes forward as it was (a leftover search included).
     func open(section requestedSection: DictationSection? = nil, settingsPage requestedPage: DictationSettingsPage? = nil) {
         if let requestedPage {
-            select(.settingsPage(requestedPage))
+            select(.settings(requestedPage))
         } else if let requestedSection {
             select(.section(requestedSection))
         }
@@ -112,22 +95,24 @@ final class DictationWindowController: NSWindowController, NSWindowDelegate {
     init(companionManager: CompanionManager) {
         self.companionManager = companionManager
         let window = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 1180, height: 760),
+            contentRect: NSRect(x: 0, y: 0, width: 1100, height: 720),
             styleMask: [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView],
             backing: .buffered, defer: false)
-        window.title = "openclicky"
-        window.titlebarAppearsTransparent = true
-        window.titleVisibility = .hidden
-        window.minSize = NSSize(width: 900, height: 600)
-        window.setFrameAutosaveName("OpenClickyDictationWindow")
+        window.title = "OpenClicky"
+        window.minSize = NSSize(width: 860, height: 560)
+        window.setFrameAutosaveName("OpenClickyMainWindow")
         window.isReleasedWhenClosed = false
-        window.backgroundColor = NSColor(Paper.background)
+        // A toolbar lets the split view put the page title and the sidebar button in the title bar.
+        window.toolbar = NSToolbar(identifier: "OpenClickyMainToolbar")
+        window.toolbarStyle = .unified
         super.init(window: window)
         window.delegate = self
-        let hosting = NSHostingView(rootView: DictationRootView(model: model, companionManager: companionManager))
-        // The window keeps its own size; the view fills it (SwiftUI would otherwise grow the window to its ideal height).
-        hosting.sizingOptions = []
-        window.contentView = hosting
+        let hostingController = NSHostingController(rootView: DictationRootView(model: model, companionManager: companionManager))
+        // The window keeps its own size; the view fills it (SwiftUI would otherwise size the window to fit).
+        hostingController.sizingOptions = []
+        window.contentViewController = hostingController
+        window.setContentSize(NSSize(width: 1100, height: 720))
+        window.setFrameUsingName("OpenClickyMainWindow")
         appearanceSubscription = window.followAppearanceSetting(of: companionManager.dictationSettings)
         if window.frame.origin == .zero { window.center() }
     }
@@ -137,13 +122,13 @@ final class DictationWindowController: NSWindowController, NSWindowDelegate {
 
     func show(section: DictationSection? = nil, settingsPage: DictationSettingsPage? = nil) {
         model.open(section: section, settingsPage: settingsPage)
-        // The sidebar may have been hidden with its toggle; a request for a page should show where it is.
-        if section != nil || settingsPage != nil { model.isRailCollapsed = false }
         // A menu-bar-only app is not active when the window opens from the status item.
         NSApp.setActivationPolicy(.regular)
         NSApp.activate(ignoringOtherApps: true)
         showWindow(nil)
         window?.makeKeyAndOrderFront(nil)
+        // No field starts with the keyboard: a key field taking it would scroll a settings page.
+        window?.makeFirstResponder(nil)
     }
 
     func windowWillClose(_ notification: Notification) {
@@ -176,83 +161,13 @@ extension NSWindow {
 struct DictationRootView: View {
     @ObservedObject var model: DictationWindowModel
     let companionManager: CompanionManager
-
-    var body: some View {
-        HStack(spacing: 0) {
-            if !model.isRailCollapsed {
-                DictationRailView(model: model, companionManager: companionManager)
-                    .frame(width: Paper.Metric.mainRail)
-                Rectangle().fill(Paper.hairline).frame(width: 1)
-            }
-            Group {
-                if model.isSearchingSettings {
-                    // Search results replace whatever page is open; clearing the field brings it back.
-                    DictationSettingsView(model: model, companionManager: companionManager)
-                } else {
-                    switch model.section {
-                    case .record: RecordPageView(model: model, companionManager: companionManager)
-                    case .history: HistoryPageView(model: model, companionManager: companionManager)
-                    case .dictionary: DictionaryPageView(spaceStore: companionManager.dictationSpaceStore)
-                    case .shortcuts: ShortcutsPageView(spaceStore: companionManager.dictationSpaceStore)
-                    case .styles: StylesPageView(companionManager: companionManager)
-                    case .settings: DictationSettingsView(model: model, companionManager: companionManager)
-                    }
-                }
-            }
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
-        }
-        .background(Paper.background)
-        // ⌘, opens general settings. It sits on the root, not on a sidebar row, so it still works
-        // with the sidebar hidden; and AppKit offers a key equivalent to the key window before the
-        // menu bar, whose Settings item would open the app's empty settings scene.
-        .background(
-            Button("settings") { model.select(.settingsPage(.general)) }
-                .keyboardShortcut(",", modifiers: .command)
-                .hidden()
-                .accessibilityHidden(true)
-        )
-        // ⌃⌘S shows or hides the sidebar, the Mac's usual shortcut for it.
-        .background(
-            Button("toggle sidebar") { model.isRailCollapsed.toggle() }
-                .keyboardShortcut("s", modifiers: [.control, .command])
-                .hidden()
-                .accessibilityHidden(true)
-        )
-        // With the sidebar hidden its own button goes with it, so the same button sits beside the
-        // window's close/minimise/zoom buttons to bring it back.
-        .overlay(alignment: .topLeading) {
-            if model.isRailCollapsed {
-                Button(action: { model.isRailCollapsed = false }) {
-                    Image(systemName: "sidebar.left").font(.system(size: 13)).foregroundStyle(Paper.inkSecondary)
-                        .frame(width: 26, height: 22)
-                        .contentShape(Rectangle())
-                }
-                .buttonStyle(.plain).pointerCursor().help("Show Sidebar (⌃⌘S)")
-                .accessibilityLabel("show sidebar")
-                .padding(.leading, 84)
-                .padding(.top, 9)
-            }
-        }
-        .ignoresSafeArea()
-    }
-}
-
-struct DictationRailView: View {
-    @ObservedObject var model: DictationWindowModel
-    let companionManager: CompanionManager
     @ObservedObject private var settings: DictationSettings
     @ObservedObject private var spaceStore: DictationSpaceStore
-    @ObservedObject private var authSession = OpenClickyAuthSession.shared
-    // Observed so the per-page hit counts follow items whose relevance depends on it (the fn banner).
+    // Observed so rows whose relevance depends on them (the fn banner, the sign-in rows) refresh.
     @ObservedObject private var fnKeyState = FnKeyState.shared
+    @ObservedObject private var authSession = OpenClickyAuthSession.shared
+    @ObservedObject private var shellSettingsRevision = ShellSettingsRevision.shared
     @State private var historyCount = 0
-    @FocusState private var isSettingsSearchFieldFocused: Bool
-    // Where the scrolling list sits in its visible area, for the edge fades and the "more" chevron.
-    @State private var sidebarListFrame: CGRect = .zero
-    @State private var sidebarVisibleHeight: CGFloat = 0
-    // Each row's place within the list itself (unchanged by scrolling), to tell whether the selected
-    // row already shows in full before scrolling to it.
-    @State private var sidebarRowFramesInList: [DictationSidebarRow: CGRect] = [:]
 
     init(model: DictationWindowModel, companionManager: CompanionManager) {
         self.model = model
@@ -261,311 +176,181 @@ struct DictationRailView: View {
         self.spaceStore = companionManager.dictationSpaceStore
     }
 
+    private var catalog: SettingsCatalog { SettingsCatalog(settings: settings, companionManager: companionManager) }
+
     var body: some View {
-        let settingsSearchResults = settingsSearchMatches
-        VStack(alignment: .leading, spacing: 0) {
-            // The wordmark and the hide-sidebar button stay put above the list. Inside the scrolling
-            // list they slid up under the window's close/minimise/zoom buttons whenever a lower row
-            // was scrolled into view, taking "record" with them.
-            HStack {
-                OpenClickyWordmark()
-                Spacer()
-                Button(action: { model.isRailCollapsed.toggle() }) {
-                    Image(systemName: "sidebar.left").font(.system(size: 13)).foregroundStyle(Paper.inkSecondary)
+        let relevantItems = catalog.allItems.filter { $0.isRelevant() }
+        let query = model.trimmedSearchText
+        let matches = query.isEmpty ? [] : relevantItems.filter { $0.matches(query) }
+        NavigationSplitView {
+            VStack(spacing: 0) {
+            List(selection: Binding(
+                get: { model.isSearching ? nil : model.destination },
+                set: { chosen in if let chosen { model.select(chosen) } }
+            )) {
+                Section {
+                    sectionRow(.record)
+                    sectionRow(.history, count: historyCount)
                 }
-                .buttonStyle(.plain).pointerCursor().help("Hide Sidebar (⌃⌘S)")
-            }
-            .padding(.top, 44)
-            .padding(.horizontal, 10)
-            .padding(.bottom, 12)
-
-            // The list scrolls when it is taller than the window (it is, at the 600 pt minimum);
-            // incognito and the account stay pinned below it. An edge with more rows past it fades,
-            // and a chevron at the foot says there is more, since the list has no scroll bar.
-            ScrollViewReader { sidebarScroller in
-            ScrollView(showsIndicators: false) {
-                VStack(alignment: .leading, spacing: 2) {
-                    railButton(.section(.record), title: DictationSection.record.title) { Keycap(text: settings.dictationKey.keycapLabel) }
-                    railButton(.section(.history), title: DictationSection.history.title) { railCount(historyCount) }
-
-                    railGroupLabel("how it writes")
-                    railButton(.section(.dictionary), title: DictationSection.dictionary.title) { railCount(spaceStore.space.dictionary.count) }
-                    railButton(.section(.shortcuts), title: DictationSection.shortcuts.title) { railCount(spaceStore.space.shortcuts.count) }
-                    railButton(.section(.styles), title: DictationSection.styles.title) { railCount(spaceStore.space.styles.count) }
-
-                    railGroupLabel("settings")
-                    settingsSearchField(resultCount: settingsSearchResults.count)
-                        .padding(.bottom, 6)
+                Section("How it writes") {
+                    sectionRow(.dictionary, count: spaceStore.space.dictionary.count)
+                    sectionRow(.shortcuts, count: spaceStore.space.shortcuts.count)
+                    sectionRow(.styles, count: spaceStore.space.styles.count)
+                }
+                Section("Settings") {
                     ForEach(DictationSettingsPage.allCases) { page in
-                        settingsPageRow(page, hitCount: model.isSearchingSettings ? settingsSearchResults.filter { $0.page == page }.count : nil)
+                        SidebarIconLabel(title: page.title, symbol: page.symbol, tint: page.tint)
+                            .opacity(model.isSearching && !matches.contains { $0.page == page } ? 0.35 : 1)
+                            .tag(DictationDestination.settings(page))
                     }
                 }
-                .coordinateSpace(name: Self.sidebarListContentSpace)
-                .padding(.top, 6)
-                .padding(.bottom, 8)
-                .onGeometryChange(for: CGRect.self) { listGeometry in
-                    listGeometry.frame(in: .named(Self.sidebarListSpace))
-                } action: { newListFrame in
-                    sidebarListFrame = newListFrame
+            }
+            .listStyle(.sidebar)
+            .searchable(text: $model.searchText, placement: .sidebar, prompt: "Search settings")
+            SidebarFooter(settings: settings, companionManager: companionManager, model: model)
+            }
+            .navigationSplitViewColumnWidth(240)
+        } detail: {
+            detail(query: query, matches: matches, relevantItems: relevantItems)
+        }
+        .onAppear {
+            fnKeyState.refresh()
+            reloadHistoryCount()
+        }
+        .onReceive(companionManager.dictationTakeController.$historyVersion) { _ in reloadHistoryCount() }
+        // ⌘, opens General. It sits on the root so it works wherever the focus is; AppKit offers a
+        // key equivalent to the key window before the menu bar, whose Settings item would open the
+        // app's empty settings scene.
+        .background(
+            Button("Settings") { model.select(.settings(.general)) }
+                .keyboardShortcut(",", modifiers: .command)
+                .hidden()
+                .accessibilityHidden(true)
+        )
+    }
+
+    @ViewBuilder
+    private func detail(query: String, matches: [SettingsItem], relevantItems: [SettingsItem]) -> some View {
+        if !query.isEmpty {
+            Group {
+                if matches.isEmpty {
+                    Text("No settings match “\(query)”.")
+                        .foregroundStyle(.secondary)
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                } else {
+                    SettingsFormView(groups: SettingsSectionGroup.groups(matches, title: { $0.page.title }))
+                        .environment(\.settingsSearchQuery, query)
                 }
             }
-            .coordinateSpace(name: Self.sidebarListSpace)
-            .onGeometryChange(for: CGFloat.self) { visibleGeometry in
-                visibleGeometry.size.height
-            } action: { newVisibleHeight in
-                sidebarVisibleHeight = newVisibleHeight
+            .navigationTitle("Search Results")
+        } else {
+            switch model.destination {
+            case .settings(let page):
+                SettingsFormView(groups: SettingsSectionGroup.groups(relevantItems.filter { $0.page == page }))
+                    .id(page)
+                    .navigationTitle(page.title)
+            case .section(let section):
+                sectionPage(section)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .background(Paper.background)
+                    .navigationTitle(section.sidebarTitle)
             }
-            .mask(sidebarListFadeMask)
-            .overlay(alignment: .bottom) {
-                if sidebarListOverflow.hasMoreBelow {
-                    Button(action: {
-                        withAnimation(.easeOut(duration: 0.2)) { sidebarScroller.scrollTo(DictationSidebarRow.settingsPage(.account), anchor: .bottom) }
-                    }) {
-                        Image(systemName: "chevron.down").font(.system(size: 10, weight: .semibold)).foregroundStyle(Paper.inkSecondary)
-                            .frame(width: 44, height: 18)
-                            .contentShape(Rectangle())
-                    }
-                    .buttonStyle(.plain).pointerCursor()
-                    .help("more settings below")
-                    .accessibilityLabel("show more settings")
-                }
-            }
-            // At the minimum height "privacy" and "account" sit below the fold; a page opened from
-            // elsewhere (the HUD, the account footer, "change engine") scrolls its row into view.
-            .onAppear { scrollSelectedRowIntoView(with: sidebarScroller) }
-            .onChange(of: model.selectedSidebarRow) { _ in scrollSelectedRowIntoView(with: sidebarScroller) }
-            }
+        }
+    }
 
-            Toggle(isOn: $settings.incognito) {
-                Text("incognito").font(Paper.body(13)).foregroundStyle(Paper.ink)
-            }
-            .toggleStyle(RailSwitchStyle())
-            .help(settings.incognito ? "incognito is on — takes paste but are not saved" : "incognito is off — takes are saved to history on this mac")
-            .overlay(alignment: .top) { Rectangle().fill(Paper.hairline).frame(height: 1) }
-            .padding(.top, 2)
+    @ViewBuilder
+    private func sectionPage(_ section: DictationSection) -> some View {
+        switch section {
+        case .record: RecordPageView(model: model, companionManager: companionManager)
+        case .history: HistoryPageView(model: model, companionManager: companionManager)
+        case .dictionary: DictionaryPageView(spaceStore: companionManager.dictationSpaceStore)
+        case .shortcuts: ShortcutsPageView(spaceStore: companionManager.dictationSpaceStore)
+        case .styles: StylesPageView(companionManager: companionManager)
+        }
+    }
 
-            Button(action: { model.select(.settingsPage(.account)) }) {
+    private func sectionRow(_ section: DictationSection, count: Int? = nil) -> some View {
+        SidebarIconLabel(title: section.sidebarTitle, symbol: section.symbol, tint: section.tint)
+            .badge(count ?? 0)
+            .tag(DictationDestination.section(section))
+    }
+
+    private func reloadHistoryCount() {
+        historyCount = (try? companionManager.dictationTakeStore?.stats().allTimeTakes) ?? 0
+    }
+}
+
+/// A sidebar row like System Settings': a white icon in a coloured rounded square, and the name.
+struct SidebarIconLabel: View {
+    let title: String
+    let symbol: String
+    let tint: Color
+
+    var body: some View {
+        Label {
+            Text(title)
+        } icon: {
+            Image(systemName: symbol)
+                .font(.system(size: 11, weight: .semibold))
+                .foregroundStyle(.white)
+                .frame(width: 20, height: 20)
+                .background(RoundedRectangle(cornerRadius: 5, style: .continuous).fill(tint.gradient))
+        }
+    }
+}
+
+/// The sidebar's foot: incognito, and who is signed in (a click opens Account).
+private struct SidebarFooter: View {
+    @ObservedObject var settings: DictationSettings
+    let companionManager: CompanionManager
+    @ObservedObject var model: DictationWindowModel
+    @ObservedObject private var authSession = OpenClickyAuthSession.shared
+
+    var body: some View {
+        VStack(spacing: 0) {
+            Divider()
+            HStack {
+                Text("Incognito").font(.system(size: 13))
+                Spacer()
+                SettingsSwitch(isOn: $settings.incognito)
+            }
+            .padding(.horizontal, 14)
+            .padding(.vertical, 8)
+            .help(settings.incognito ? "Incognito is on — takes paste but are not saved." : "Incognito is off — takes are saved to history on this Mac.")
+            Divider()
+            Button(action: { model.select(.settings(.account)) }) {
                 HStack(spacing: 10) {
                     ZStack {
-                        Circle().fill(Paper.accentSoft)
-                        Text(accountInitial).font(Paper.body(13, weight: .semibold)).foregroundStyle(Paper.ink)
+                        Circle().fill(authSession.accountEmail == nil ? Color(nsColor: .tertiaryLabelColor) : SettingsLook.accent)
+                        Text(accountInitial).font(.system(size: 13, weight: .semibold)).foregroundStyle(.white)
                     }
-                    .frame(width: 30, height: 30)
+                    .frame(width: 28, height: 28)
                     VStack(alignment: .leading, spacing: 1) {
-                        Text(accountName).font(Paper.rowTitle).foregroundStyle(Paper.ink).lineLimit(1).truncationMode(.tail)
-                        Text(accountState).font(Paper.micro).foregroundStyle(Paper.inkTertiary).lineLimit(1)
+                        Text(accountName).font(.system(size: 13, weight: .medium)).lineLimit(1).truncationMode(.tail)
+                        Text(authSession.accountEmail == nil ? "Personal · no account" : "Signed in")
+                            .font(.system(size: 11)).foregroundStyle(.secondary).lineLimit(1)
                     }
                     Spacer(minLength: 0)
                 }
-                .padding(10)
+                .padding(.horizontal, 14)
+                .padding(.vertical, 10)
                 .contentShape(Rectangle())
             }
-            .buttonStyle(.plain).pointerCursor()
-            .help("account")
-            .overlay(alignment: .top) { Rectangle().fill(Paper.hairline).frame(height: 1) }
-            .padding(.top, 8)
+            .buttonStyle(.plain)
+            .help("Account")
         }
-        .padding(.horizontal, 12)
-        .padding(.bottom, 12)
-        .frame(maxHeight: .infinity)
-        .background(Paper.rail)
-        .onAppear(perform: reloadHistoryCount)
-        .onReceive(companionManager.dictationTakeController.$historyVersion) { _ in reloadHistoryCount() }
-    }
-
-    private static let sidebarListSpace = "sidebarList"
-    private static let sidebarListContentSpace = "sidebarListContent"
-
-    private var sidebarListOverflow: SidebarListOverflow {
-        SidebarListOverflow(contentTop: sidebarListFrame.minY, contentHeight: sidebarListFrame.height, visibleHeight: sidebarVisibleHeight)
-    }
-
-    /// Opaque where rows show in full, fading to nothing over an edge that has more rows past it.
-    private var sidebarListFadeMask: some View {
-        let overflow = sidebarListOverflow
-        return VStack(spacing: 0) {
-            LinearGradient(colors: [.clear, .black], startPoint: .top, endPoint: .bottom)
-                .frame(height: overflow.hasMoreAbove ? SidebarListOverflow.topFadeHeight : 0)
-            Rectangle().fill(.black)
-            LinearGradient(colors: [.black, .clear], startPoint: .top, endPoint: .bottom)
-                .frame(height: overflow.hasMoreBelow ? SidebarListOverflow.bottomFadeHeight : 0)
-        }
-    }
-
-    /// A row that is out of sight or under a fade is brought to the middle of the list (the list's
-    /// ends stop it short, where there is no fade); a row in plain view stays where it is, so a
-    /// click does not move the list under the pointer.
-    private func scrollSelectedRowIntoView(with sidebarScroller: ScrollViewProxy) {
-        guard let selectedRow = model.selectedSidebarRow else { return }
-        if let rowFrameInList = sidebarRowFramesInList[selectedRow] {
-            let rowFrameInVisibleArea = rowFrameInList.offsetBy(dx: 0, dy: sidebarListFrame.minY)
-            if sidebarListOverflow.showsInFull(rowFrameInVisibleArea, visibleHeight: sidebarVisibleHeight) { return }
-        }
-        withAnimation(.easeOut(duration: 0.15)) { sidebarScroller.scrollTo(selectedRow, anchor: .center) }
-    }
-
-    /// Every relevant setting the search matches, for the result count and the per-page hit counts.
-    private var settingsSearchMatches: [SettingsItem] {
-        guard model.isSearchingSettings else { return [] }
-        let query = model.trimmedSettingsSearchText
-        return SettingsCatalog(settings: settings, companionManager: companionManager, windowModel: model)
-            .allItems.filter { $0.isRelevant() && $0.matches(query) }
-    }
-
-    /// The small label above a group of rows ("how it writes", "settings").
-    private func railGroupLabel(_ text: String) -> some View {
-        Text(text)
-            .font(Paper.micro).foregroundStyle(Paper.inkTertiary)
-            .padding(.top, 16).padding(.bottom, 4).padding(.leading, 10)
-            .accessibilityAddTraits(.isHeader)
-    }
-
-    private func settingsSearchField(resultCount: Int) -> some View {
-        HStack(spacing: 6) {
-            Image(systemName: "magnifyingglass").font(.system(size: 11)).foregroundStyle(Paper.inkTertiary)
-            TextField("search settings", text: $model.settingsSearchText)
-                .textFieldStyle(.plain)
-                .font(Paper.body(13))
-                .foregroundStyle(Paper.ink)
-                .focused($isSettingsSearchFieldFocused)
-                .onExitCommand { model.settingsSearchText = "" }
-            if model.isSearchingSettings {
-                Button(action: { model.settingsSearchText = "" }) {
-                    Text("\(resultCount) · esc")
-                        .font(Paper.micro).foregroundStyle(Paper.inkTertiary).monospacedDigit()
-                }
-                .buttonStyle(.plain).pointerCursor()
-                .help("\(resultCount) \(resultCount == 1 ? "result" : "results") — clear the search")
-            }
-        }
-        .padding(.horizontal, 10)
-        .frame(height: Paper.Metric.fieldHeight)
-        .background(RoundedRectangle(cornerRadius: Paper.Metric.controlRadius, style: .continuous).fill(Paper.cardRaised))
-        .overlay(RoundedRectangle(cornerRadius: Paper.Metric.controlRadius, style: .continuous)
-            .strokeBorder(isSettingsSearchFieldFocused ? Paper.accentFill : Paper.hairline, lineWidth: isSettingsSearchFieldFocused ? 2 : 1))
-    }
-
-    /// A settings page's row. "general" carries the ⌘, hint; while searching each row carries its
-    /// hit count instead, and a page with no hits is dimmed.
-    private func settingsPageRow(_ page: DictationSettingsPage, hitCount: Int?) -> some View {
-        let isDimmed = hitCount == 0
-        return railButton(.settingsPage(page), title: page.title, isDimmed: isDimmed) {
-            if let hitCount {
-                if hitCount > 0 { railCount(hitCount) }
-            } else if page == .general {
-                Text("⌘ ,").font(Paper.micro).foregroundStyle(Paper.inkTertiary)
-            }
-        }
-        .accessibilityLabel(hitCount.map { "\(page.title), \($0) results" } ?? page.title)
     }
 
     /// "Prasanth S." — the first name and the initial of the last, or the signed-in address's name.
     private var accountName: String {
         if let email = authSession.accountEmail { return String(email.split(separator: "@").first ?? "") }
         let nameParts = NSFullUserName().split(separator: " ")
-        guard let firstName = nameParts.first else { return "you" }
+        guard let firstName = nameParts.first else { return "You" }
         if nameParts.count > 1, let lastInitial = nameParts.last?.first { return "\(firstName) \(lastInitial)." }
         return String(firstName)
     }
 
-    private var accountState: String {
-        authSession.accountEmail == nil ? "personal · no account" : "signed in · openclicky account"
-    }
-
-    private var accountInitial: String {
-        String(accountName.prefix(1)).lowercased()
-    }
-
-    private func reloadHistoryCount() {
-        historyCount = (try? companionManager.dictationTakeStore?.stats().allTimeTakes) ?? 0
-    }
-
-    private func railCount(_ count: Int) -> some View {
-        Text("\(count)").font(Paper.caption).foregroundStyle(Paper.inkTertiary).monospacedDigit()
-    }
-
-    private func railButton<Trailing: View>(_ row: DictationSidebarRow, title: String, isDimmed: Bool = false, @ViewBuilder trailing: () -> Trailing) -> some View {
-        let selected = model.selectedSidebarRow == row
-        return Button(action: { model.select(row) }) {
-            HStack(spacing: 8) {
-                Text(title).font(Paper.body(13, weight: selected ? .semibold : .regular))
-                    .foregroundStyle(isDimmed ? Paper.inkTertiary : Paper.ink)
-                    .lineLimit(1)
-                Spacer()
-                trailing()
-            }
-            .padding(.horizontal, 10)
-            .frame(height: Paper.Metric.railItemHeight)
-            .background(RoundedRectangle(cornerRadius: Paper.Metric.railItemRadius, style: .continuous).fill(selected ? Paper.selection : Color.clear))
-            .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-        .pointerCursor()
-        .accessibilityAddTraits(selected ? .isSelected : [])
-        .onGeometryChange(for: CGRect.self) { rowGeometry in
-            rowGeometry.frame(in: .named(Self.sidebarListContentSpace))
-        } action: { newRowFrame in
-            sidebarRowFramesInList[row] = newRowFrame
-        }
-        .id(row)
-    }
-}
-
-/// Whether the sidebar's scrolling list has rows hidden past its top or bottom edge. At the 600 pt
-/// minimum height the list is taller than the room it has, and with no scroll bar nothing said
-/// "privacy" and "account" were down there.
-struct SidebarListOverflow: Equatable {
-    /// How far the fades reach in from an edge with more rows past it.
-    static let topFadeHeight: CGFloat = 14
-    static let bottomFadeHeight: CGFloat = 36
-
-    let hasMoreAbove: Bool
-    let hasMoreBelow: Bool
-
-    /// Whether a row (its frame in the visible area's coordinates) shows whole and clear of any
-    /// fade. A row under a fade is drawn half-transparent: readable as "there is more", but not
-    /// where a page someone just opened should leave its row.
-    func showsInFull(_ rowFrame: CGRect, visibleHeight: CGFloat) -> Bool {
-        let clearTop = hasMoreAbove ? Self.topFadeHeight : 0
-        let clearBottom = visibleHeight - (hasMoreBelow ? Self.bottomFadeHeight : 0)
-        return rowFrame.minY >= clearTop - 0.5 && rowFrame.maxY <= clearBottom + 0.5
-    }
-
-    /// - Parameters:
-    ///   - contentTop: the list's top in the visible area's coordinates; negative once scrolled down.
-    ///   - contentHeight: the whole list's height.
-    ///   - visibleHeight: the height of the area the list scrolls in.
-    init(contentTop: CGFloat, contentHeight: CGFloat, visibleHeight: CGFloat) {
-        // Layout rounds to fractions of a point; less than a point out of sight is not "more".
-        let tolerance: CGFloat = 1
-        hasMoreAbove = contentTop < -tolerance
-        hasMoreBelow = contentTop + contentHeight > visibleHeight + tolerance
-    }
-}
-
-/// A labelled rail row with a small switch on the right ("incognito").
-private struct RailSwitchStyle: ToggleStyle {
-    func makeBody(configuration: Configuration) -> some View {
-        Button(action: { configuration.isOn.toggle() }) {
-            HStack {
-                configuration.label
-                Spacer()
-                Capsule()
-                    .fill(configuration.isOn ? Paper.success : Paper.hairline)
-                    .frame(width: 28, height: 16)
-                    .overlay(alignment: configuration.isOn ? .trailing : .leading) {
-                        Circle().fill(Color.white).frame(width: 12, height: 12).padding(2)
-                    }
-                    .animation(.easeOut(duration: 0.15), value: configuration.isOn)
-            }
-            .padding(.horizontal, 10)
-            .frame(height: Paper.Metric.railItemHeight)
-            .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-        .pointerCursor()
-        .accessibilityValue(configuration.isOn ? "on" : "off")
-    }
+    private var accountInitial: String { String(accountName.prefix(1)).uppercased() }
 }
 
 /// A page's scrolling body with the standard margins.

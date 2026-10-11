@@ -185,7 +185,7 @@ final class NotchHUDModel: ObservableObject {
         switch activeTab {
         case .home: return max(homeTotalHeight, topBandHeight + 200)
         case .agents: return max(agentsTotalHeight, topBandHeight + 360)
-        case .settings: return topBandHeight + 520
+        case .settings: return topBandHeight + 248
         }
     }
 
