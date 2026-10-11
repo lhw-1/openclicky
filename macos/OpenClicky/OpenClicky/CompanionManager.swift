@@ -655,7 +655,9 @@ final class CompanionManager: ObservableObject {
             microphone: hasMicrophonePermission,
             accessibility: hasAccessibilityPermission,
             screenRecording: hasScreenRecordingPermission,
-            screenContent: hasScreenContentPermission
+            // While the quiet capture is checking, its card is held back: after the Screen
+            // Recording relaunch it flashed up for a second before the check said yes.
+            screenContent: hasScreenContentPermission || isCheckingScreenContentQuietly
         )
     }
 
@@ -904,6 +906,8 @@ final class CompanionManager: ObservableObject {
         // Track individual permission grants as they happen
         if !previouslyHadAccessibility && hasAccessibilityPermission {
             ClickyAnalytics.trackPermissionGranted(permission: "accessibility")
+            // First of the permission cards: from here the pointer can show, and help with the rest.
+            showPointerDuringSetupIfWanted(flyingFromTheNotch: true)
         }
         if !previouslyHadScreenRecording && hasScreenRecordingPermission {
             ClickyAnalytics.trackPermissionGranted(permission: "screen_recording")
@@ -937,6 +941,10 @@ final class CompanionManager: ObservableObject {
             }
         }
         permissionPromptController.openSettings = { [weak self] in self?.showSettings() }
+        // Back after the Screen Recording relaunch: check Screen Content now, before any card shows.
+        checkScreenContentQuietlyOnce()
+        // Accessibility already granted (a relaunch partway through setup): the pointer is back.
+        if hasAccessibilityPermission { showPointerDuringSetupIfWanted(flyingFromTheNotch: false) }
         permissionPromptController.start(notchHUDManager: notchHUDManager)
         permissionPromptController.update(with: permissionStatus)
         // The welcome tour waits for the last permission, then takes the island.
@@ -1015,6 +1023,7 @@ final class CompanionManager: ObservableObject {
     }
 
     private var didCheckScreenContentQuietly = false
+    private var isCheckingScreenContentQuietly = false
 
     /// Screen Recording is on (often after the relaunch it needs) but Screen Content has not been
     /// recorded as granted: try one capture before the island asks. With Screen Recording allowed
@@ -1022,8 +1031,16 @@ final class CompanionManager: ObservableObject {
     private func checkScreenContentQuietlyOnce() {
         guard !didCheckScreenContentQuietly, hasScreenRecordingPermission, !hasScreenContentPermission, !isRequestingScreenContent else { return }
         didCheckScreenContentQuietly = true
+        isCheckingScreenContentQuietly = true
         AppLog.append("permissions: screen recording is on; checking screen content with one capture")
         requestScreenContentPermission()
+        // The capture answers within a moment; the card comes back only if it said no.
+        Task { @MainActor [weak self] in
+            while self?.isRequestingScreenContent == true { try? await Task.sleep(nanoseconds: 100_000_000) }
+            guard let self else { return }
+            self.isCheckingScreenContentQuietly = false
+            self.permissionPromptController.update(with: self.permissionStatus)
+        }
     }
 
     private func bindAudioPowerLevel() {
@@ -1155,9 +1172,21 @@ final class CompanionManager: ObservableObject {
     /// "hand me a task" step watches it.
     @Published private(set) var lastSuccessfulQuickActionAt: Date?
 
-    /// The tour's first moment: the pointer flies out of the notch to the mouse and says hello.
+    /// During setup (the tour not done yet), the pointer shows as soon as Accessibility is in,
+    /// flying out of the notch the first time, so it is there for the remaining cards.
+    private func showPointerDuringSetupIfWanted(flyingFromTheNotch: Bool) {
+        // Only a first run: someone who used OpenClicky before has finished onboarding already.
+        guard !firstRunTour.isFinished, !hasCompletedOnboarding, isClickyCursorEnabled, !isCursorDocked, !isOverlayVisible else { return }
+        if flyingFromTheNotch { cursorLaunchOriginScreenLocation = notchHUDManager.dockPoint }
+        overlayWindowManager.hasShownOverlayBefore = true
+        overlayWindowManager.showOverlay(onScreens: NSScreen.screens, companionManager: self)
+        isOverlayVisible = true
+    }
+
+    /// The tour's first moment: the pointer flies out of the notch to the mouse and says hello
+    /// (already out since Accessibility was granted, it just says hello).
     func introducePointerForTour() {
-        if !isCursorDocked {
+        if !isCursorDocked && !isOverlayVisible {
             cursorLaunchOriginScreenLocation = notchHUDManager.dockPoint
             overlayWindowManager.hasShownOverlayBefore = true
             overlayWindowManager.showOverlay(onScreens: NSScreen.screens, companionManager: self)

@@ -35,12 +35,13 @@ struct PermissionPromptTests {
 
     @Test func asksForOneStepAtATimeInOrder() {
         var status = PermissionStatus()
-        #expect(PermissionPromptController.nextStep(for: status) == .microphone)
-
-        status.microphone = true
+        // Accessibility first: from then on the pointer can show and help with the rest.
         #expect(PermissionPromptController.nextStep(for: status) == .accessibility)
 
         status.accessibility = true
+        #expect(PermissionPromptController.nextStep(for: status) == .microphone)
+
+        status.microphone = true
         #expect(PermissionPromptController.nextStep(for: status) == .screenRecording)
 
         // Screen Content is never asked for before Screen Recording: capturing is what
@@ -57,7 +58,7 @@ struct PermissionPromptTests {
         let controller = makeController(spy)
 
         controller.update(with: PermissionStatus())
-        #expect(controller.currentPrompt?.step == .microphone)
+        #expect(controller.currentPrompt?.step == .accessibility)
 
         controller.update(with: PermissionStatus(microphone: true, accessibility: true,
                                                  screenRecording: true, screenContent: true))
@@ -71,12 +72,12 @@ struct PermissionPromptTests {
 
         controller.update(with: PermissionStatus())
         controller.grant()
-        #expect(spy.requestedSteps == [.microphone])
+        #expect(spy.requestedSteps == [.accessibility])
         #expect(controller.currentPrompt?.stage == .waiting)
 
-        // The poll sees the microphone land: the card moves on, back to its asking stage.
-        controller.update(with: PermissionStatus(microphone: true))
-        #expect(controller.currentPrompt?.step == .accessibility)
+        // The poll sees accessibility land: the card moves on, back to its asking stage.
+        controller.update(with: PermissionStatus(accessibility: true))
+        #expect(controller.currentPrompt?.step == .microphone)
         #expect(controller.currentPrompt?.stage == .ask)
     }
 
@@ -84,28 +85,32 @@ struct PermissionPromptTests {
         let spy = Spy()
         let controller = makeController(spy)
 
-        controller.update(with: PermissionStatus(microphone: true))
+        controller.update(with: PermissionStatus(accessibility: true))
         let prompt = controller.currentPrompt
-        #expect(prompt?.status.isGranted(.microphone) == true)
-        #expect(prompt?.status.isGranted(.accessibility) == false)
+        #expect(prompt?.status.isGranted(.accessibility) == true)
+        #expect(prompt?.status.isGranted(.microphone) == false)
         #expect(PermissionStep.allCases.count == 4)
     }
 
-    @Test func theDragHelperOpensOnlyWhileTheAccessibilityStepIsWaiting() {
+    /// Both lists take the app dragged in: the helper opens while the accessibility or the screen
+    /// recording card waits, and never for the microphone.
+    @Test func theDragHelperOpensWhileAccessibilityOrScreenRecordingWaits() {
         let spy = Spy()
         let controller = makeController(spy)
 
         controller.update(with: PermissionStatus())
-        controller.grant()
-        #expect(!spy.isDragHelperShown, "the microphone step has nothing to drag")
-
-        controller.update(with: PermissionStatus(microphone: true))
         #expect(!spy.isDragHelperShown, "not before the user asks to grant it")
         controller.grant()
         #expect(spy.isDragHelperShown)
 
-        controller.update(with: PermissionStatus(microphone: true, accessibility: true))
+        controller.update(with: PermissionStatus(accessibility: true))
         #expect(!spy.isDragHelperShown, "the list accepted the drop")
+        controller.grant()
+        #expect(!spy.isDragHelperShown, "the microphone step has nothing to drag")
+
+        controller.update(with: PermissionStatus(microphone: true, accessibility: true))
+        controller.grant()
+        #expect(spy.isDragHelperShown, "screen recording's list takes the drag too")
     }
 
     /// The escape hatch for a stale TCC row: the list shows OpenClicky switched on, but the
@@ -115,16 +120,16 @@ struct PermissionPromptTests {
         let controller = makeController(spy)
 
         controller.update(with: PermissionStatus())
-        controller.grant()
-        #expect(controller.currentPrompt?.offersAccessibilityTrustReset == false,
-                "the microphone card has no TCC row to reset")
-
-        controller.update(with: PermissionStatus(microphone: true))
         #expect(controller.currentPrompt?.offersAccessibilityTrustReset == false,
                 "not before the user has tried granting it")
 
         controller.grant()
         #expect(controller.currentPrompt?.offersAccessibilityTrustReset == true)
+
+        controller.update(with: PermissionStatus(accessibility: true))
+        controller.grant()
+        #expect(controller.currentPrompt?.offersAccessibilityTrustReset == false,
+                "the microphone card has no TCC row to reset")
     }
 
     @Test func resettingAccessibilityTrustClearsTheRowAndRelaunches() {
