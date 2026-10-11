@@ -28,6 +28,8 @@ struct HistoryPageView: View {
     @State private var answer: String?
     @State private var answerSources: [TakeRecord] = []
     @State private var isAsking = false
+    /// The last read or write of the history file that failed, said under the search field.
+    @State private var historyProblem: String?
     @FocusState private var isQueryFocused: Bool
 
     init(model: DictationWindowModel, companionManager: CompanionManager) {
@@ -44,6 +46,15 @@ struct HistoryPageView: View {
                 filterMenu
             }
             .onChange(of: query) { _, _ in reload() }
+
+            // Without these lines a take missing from history, or a delete that did nothing, has
+            // no explanation anywhere.
+            if companionManager.dictationTakeStore == nil {
+                Text("history can't be saved on this mac right now — takes still paste. the log says why.")
+                    .font(Paper.body(12)).foregroundStyle(Paper.danger)
+            } else if let historyProblem {
+                Text(historyProblem).font(Paper.body(12)).foregroundStyle(Paper.danger)
+            }
 
             if isAsking || answer != nil { answerCard }
 
@@ -259,7 +270,14 @@ struct HistoryPageView: View {
         guard let store = companionManager.dictationTakeStore else { return }
         appsUsed = (try? store.appsUsed()) ?? []
         revisedTakeIDs = (try? store.revisedTakeIDs()) ?? []
-        var rows = (try? store.recent(limit: 500, query: query.isEmpty ? nil : query, mode: modeFilter, appBundleID: appFilter)) ?? []
+        var rows: [TakeRecord]
+        do {
+            rows = try store.recent(limit: 500, query: query.isEmpty ? nil : query, mode: modeFilter, appBundleID: appFilter)
+        } catch {
+            AppLog.append("history couldn't be read: \(error.localizedDescription)")
+            historyProblem = "history couldn't be read just now — the log says why."
+            rows = []
+        }
         if !settings.clipboardHistoryEnabled, modeFilter == nil { rows = rows.filter { $0.mode != .clipboard } }
         takes = rows
     }
@@ -270,9 +288,26 @@ struct HistoryPageView: View {
     }
 
     private func delete(_ take: TakeRecord) {
-        try? companionManager.dictationTakeStore?.delete(takeID: take.id)
+        if !HistoryWrite.perform("delete", takeID: take.id, { try companionManager.dictationTakeStore?.delete(takeID: take.id) }) {
+            historyProblem = "couldn't delete that take — the log says why."
+        }
         if selectedTakeID == take.id { selectedTakeID = nil }
         controller.historyDidChange()
+    }
+}
+
+/// A change this page makes to the history file (delete, pin, save an edit). A failure — the file
+/// locked by another OpenClicky past the busy timeout, a full disk — is logged rather than lost.
+private enum HistoryWrite {
+    @discardableResult
+    static func perform(_ whatIsWritten: String, takeID: UUID, _ write: () throws -> Void) -> Bool {
+        do {
+            try write()
+            return true
+        } catch {
+            AppLog.append("history \(whatIsWritten) failed for take \(takeID.uuidString.prefix(8)): \(error.localizedDescription)")
+            return false
+        }
     }
 }
 
@@ -439,7 +474,7 @@ struct TakeInspectorView: View {
                     NSPasteboard.general.setString(text, forType: .string)
                 }.buttonStyle(PaperPillButtonStyle())
                 Button(take.pinned ? "unpin" : "pin") {
-                    try? companionManager.dictationTakeStore?.setPinned(!take.pinned, takeID: take.id)
+                    HistoryWrite.perform(take.pinned ? "unpin" : "pin", takeID: take.id, { try companionManager.dictationTakeStore?.setPinned(!take.pinned, takeID: take.id) })
                     companionManager.dictationTakeController.historyDidChange()
                     onClose()
                 }.buttonStyle(PaperPillButtonStyle())
@@ -450,14 +485,14 @@ struct TakeInspectorView: View {
                     DispatchQueue.main.asyncAfter(deadline: .now() + 0.45) { _ = FrontAppTextInserter.insert(text) }
                 }.buttonStyle(PaperPillButtonStyle()).help("hides openclicky, then pastes into the app behind it")
                 Button("delete") {
-                    try? companionManager.dictationTakeStore?.delete(takeID: take.id)
+                    HistoryWrite.perform("delete", takeID: take.id, { try companionManager.dictationTakeStore?.delete(takeID: take.id) })
                     companionManager.dictationTakeController.historyDidChange()
                     onClose()
                 }.buttonStyle(PaperPillButtonStyle(destructive: true))
                 Spacer()
                 if text != take.displayText {
                     Button("save edit") {
-                        try? companionManager.dictationTakeStore?.revise(takeID: take.id, newText: text, editor: "history")
+                        HistoryWrite.perform("save edit", takeID: take.id, { try companionManager.dictationTakeStore?.revise(takeID: take.id, newText: text, editor: "history") })
                         companionManager.dictationTakeController.historyDidChange()
                         onClose()
                     }.buttonStyle(PaperPillButtonStyle(prominent: true))

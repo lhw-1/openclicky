@@ -77,6 +77,9 @@ final class TakeStore: @unchecked Sendable {
         guard sqlite3_open_v2(fileURL.path, &database, SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE | SQLITE_OPEN_FULLMUTEX, nil) == SQLITE_OK else {
             throw TakeStoreError(message: "could not open \(fileURL.path)")
         }
+        // The installed app and a Debug build share this file: a write that meets the other's lock
+        // waits up to two seconds for it instead of failing at once with SQLITE_BUSY.
+        sqlite3_busy_timeout(database, 2000)
         try execute("PRAGMA journal_mode = WAL")
         try execute("PRAGMA foreign_keys = ON")
         try execute("""

@@ -6,6 +6,7 @@
 //
 
 import Foundation
+import SQLite3
 import Testing
 @testable import OpenClicky
 
@@ -86,5 +87,21 @@ struct TakeStoreTests {
         try store.insert(TakeRecord(rawText: "a", formattedText: "A."))
         try store.deleteAll()
         #expect(try store.recent().isEmpty)
+    }
+
+    /// Two OpenClicky processes (the installed app and a Debug build) share one file: a write that
+    /// meets the other's lock waits for it instead of failing at once with SQLITE_BUSY (F-33).
+    @Test func aWriteWaitsOutAnotherProcesssLock() throws {
+        let store = try makeStore()
+        var otherConnection: OpaquePointer?
+        #expect(sqlite3_open_v2(store.fileURL.path, &otherConnection, SQLITE_OPEN_READWRITE | SQLITE_OPEN_FULLMUTEX, nil) == SQLITE_OK)
+        defer { sqlite3_close(otherConnection) }
+        #expect(sqlite3_exec(otherConnection, "BEGIN IMMEDIATE", nil, nil, nil) == SQLITE_OK)
+        let lockHolder = otherConnection
+        DispatchQueue.global().asyncAfter(deadline: .now() + 0.3) {
+            sqlite3_exec(lockHolder, "COMMIT", nil, nil, nil)
+        }
+        try store.insert(TakeRecord(rawText: "while locked", formattedText: "While locked."))
+        #expect(try store.recent().first?.rawText == "while locked")
     }
 }
