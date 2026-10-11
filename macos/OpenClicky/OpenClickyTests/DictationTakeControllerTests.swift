@@ -301,6 +301,21 @@ struct DictationTakeControllerTests {
         #expect(h.orb.phase == .failed("didn't catch that"))
     }
 
+    /// The tour's practice take is heard and recorded but never typed or pasted into the app in
+    /// front (a new user's first words went into their terminal).
+    @Test @MainActor func aPracticeTakeIsKeptOffTheAppInFront() async throws {
+        let h = try Harness()
+        h.controller.holdsTakesOnTheIsland = true
+        h.controller.handle(.dictationPressed)
+        await h.waitUntil { h.controller.state == .listening }
+        h.controller.handle(.dictationReleased(wasTap: false))
+        h.capture.deliverFinal("this is a test")
+        await h.waitUntil { h.controller.state == .idle }
+        #expect(h.pasted.texts.isEmpty)
+        #expect(h.controller.lastTake?.pasteOutcome == .leftInOrb)
+        #expect(h.controller.lastTake?.displayText.lowercased().contains("this is a test") == true)
+    }
+
     /// Speakers in the headphone jack: its input hears nothing, and the offline recogniser wrote
     /// the silence down as "no", which was pasted. A take whose microphone never heard a voice
     /// pastes nothing; the same words from a microphone that did are pasted.

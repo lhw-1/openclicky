@@ -136,6 +136,8 @@ final class DictationTakeController: ObservableObject {
     var afterMicrophoneCloses: (() -> Void)?
     /// A take's words when the window wants them (the onboarding's first take, the record page box).
     var onTakeFinished: ((TakeRecord) -> Void)?
+    /// The first-run tour's practice: takes are heard and recorded but never typed or pasted.
+    var holdsTakesOnTheIsland = false
 
     private var cancellables: Set<AnyCancellable> = []
     private var currentEngine: DictationEngineChoice
@@ -712,7 +714,12 @@ final class DictationTakeController: ObservableObject {
         let frontNow = host.frontAppBundleID()
         var pasteOutcome = TakeRecord.PasteOutcome.none
         var pasteMessage = "moved to text box"
-        if field.isSecure || host.isSecureInputOn() {
+        if holdsTakesOnTheIsland {
+            // The tour's practice take: shown on the island, never typed into the app in front
+            // (a new user's first words went into their terminal).
+            pasteOutcome = .leftInOrb
+            pasteMessage = "practice take, kept here"
+        } else if field.isSecure || host.isSecureInputOn() {
             // Not copied either: a password should not sit on the clipboard (it can sync to other
             // devices). It stays in history only.
             pasteOutcome = .leftInOrb
@@ -787,7 +794,7 @@ final class DictationTakeController: ObservableObject {
     /// password field, it is not a terminal or OpenClicky's own window (`LiveTypingExclusions`),
     /// and secure input is off.
     private func makeLiveTypingSessionIfWanted(mode: TakeMode, focusedTarget: FocusedTextTarget?) -> LiveTypingSession? {
-        guard mode == .dictate, !fieldAtPress.isSecure, !host.isSecureInputOn(),
+        guard mode == .dictate, !holdsTakesOnTheIsland, !fieldAtPress.isSecure, !host.isSecureInputOn(),
               let focusedTarget, focusedTarget.acceptsLiveTyping else { return nil }
         if let reason = LiveTypingExclusions.reasonNotToType(into: focusedTarget, fieldBundleID: fieldAtPress.appBundleID) {
             AppLog.append("take \(takeID.uuidString.prefix(8)) not typed live: \(reason); the words paste at release")

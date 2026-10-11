@@ -620,6 +620,17 @@ final class NotchHUDManager {
         return nil
     }
 
+    /// Where the tour card's main button sits on screen (AppKit coordinates) and the display it is
+    /// on: the card's right column, its first button, worked out from the card's layout (12 pt
+    /// top padding, the buttons centred against a 56 pt row, a 30 pt primary button).
+    func tourPrimaryButtonLocation() -> (CGPoint, CGRect)? {
+        guard let instance = primaryInstance, instance.model.expansion == .tour else { return nil }
+        let island = instance.model.islandFrame
+        let contentTop = island.maxY - instance.model.cardTopInset - 12
+        let location = CGPoint(x: island.maxX - DS.HUD.bodySidePadding - 43, y: contentTop - 13)
+        return (location, instance.model.geometry.screenFrame)
+    }
+
     /// Gives the keyboard to the tour card's field (the account step's email or code). Like the
     /// composer, the app activates and the field is made first responder until it takes.
     func focusTourField() {

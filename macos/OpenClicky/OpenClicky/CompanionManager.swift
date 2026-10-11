@@ -1171,6 +1171,21 @@ final class CompanionManager: ObservableObject {
         }
     }
 
+    /// Flies the pointer to the tour card's main button ("let’s go") with a short bubble, for
+    /// someone who has not moved since the hello.
+    func pointAtTourPrimaryButton(saying bubbleText: String) {
+        guard let (location, displayFrame) = notchHUDManager.tourPrimaryButtonLocation() else { return }
+        if !isOverlayVisible {
+            overlayWindowManager.hasShownOverlayBefore = true
+            overlayWindowManager.showOverlay(onScreens: NSScreen.screens, companionManager: self)
+            isOverlayVisible = true
+        }
+        detectedElementBubbleText = bubbleText
+        detectedElementScreenLocation = location
+        detectedElementDisplayFrame = displayFrame
+        detectedElementPointToken &+= 1
+    }
+
     /// The tour's "watch this" before asking: a screenshot, one specific thing on screen pointed
     /// at, and a few words about it said out loud, so asking makes sense before it is tried.
     /// `onFinished` runs once the pointer and the voice are done (or the demo could not run).

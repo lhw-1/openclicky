@@ -300,6 +300,30 @@ final class FirstRunTourController: ObservableObject {
     /// instead, which is how asking gets switched on.
     private var accountCardAsksForEmail: Bool { !OpenClickyConfiguration.isConfigured }
 
+    private var idleWatchTimer: Timer?
+
+    /// Runs `action` once the mouse has stayed put for 2 s, starting `delay` seconds from now.
+    private func watchForIdleMouse(after delay: TimeInterval, action: @escaping @MainActor () -> Void) {
+        idleWatchTimer?.invalidate()
+        var lastLocation = NSEvent.mouseLocation
+        var stillSince = Date().addingTimeInterval(delay)
+        idleWatchTimer = Timer.scheduledTimer(withTimeInterval: 0.25, repeats: true) { [weak self] timer in
+            Task { @MainActor in
+                guard let self else { timer.invalidate(); return }
+                let location = NSEvent.mouseLocation
+                if hypot(location.x - lastLocation.x, location.y - lastLocation.y) > 2 {
+                    lastLocation = location
+                    stillSince = max(Date(), stillSince)
+                    return
+                }
+                guard Date().timeIntervalSince(stillSince) >= 2 else { return }
+                timer.invalidate()
+                self.idleWatchTimer = nil
+                action()
+            }
+        }
+    }
+
     /// Clicky is pointing at something and talking about it before the talk step's "your turn".
     private var isShowingDemo = false
     /// The step "set up" left from (asking or a task with nothing set up), to come back to once
@@ -352,6 +376,8 @@ final class FirstRunTourController: ObservableObject {
     private func go(to newStep: FirstRunTourStep) {
         advanceWorkItem?.cancel()
         step = newStep
+        companionManager?.dictationTakeController.holdsTakesOnTheIsland = newStep == .dictate
+        idleWatchTimer?.invalidate()
         status = nil
         statusIsGood = false
         offersMicrophoneChange = false
@@ -361,6 +387,11 @@ final class FirstRunTourController: ObservableObject {
         case .meet:
             companionManager?.hasCompletedOnboarding = true
             companionManager?.introducePointerForTour()
+            // Still after the hello? The pointer goes and points at "let’s go".
+            watchForIdleMouse(after: 4) { [weak self] in
+                guard let self, self.step == .meet else { return }
+                self.companionManager?.pointAtTourPrimaryButton(saying: "tap let’s go")
+            }
             // Nothing to type to get going: a Mac with no key and no account starts as a guest on
             // OpenClicky's credits, so asking and tasks work in this very tour.
             if !OpenClickyConfiguration.isConfigured {
@@ -402,6 +433,8 @@ final class FirstRunTourController: ObservableObject {
 
     private func finish() {
         advanceWorkItem?.cancel()
+        idleWatchTimer?.invalidate()
+        companionManager?.dictationTakeController.holdsTakesOnTheIsland = false
         step = nil
         let defaults = UserDefaults.standard
         defaults.set(true, forKey: Self.doneKey)
@@ -563,7 +596,7 @@ final class FirstRunTourController: ObservableObject {
         case .account:
             return FirstRunTourCard(
                 step: .account, title: "you’re on a free account",
-                detail: "it has a limited number of free credits. already pay for openai, claude or another ai? add that key in settings and use it right here.",
+                detail: "it has a limited number of free credits. if you already pay for openai, claude or another ai, add that key in settings and use it right here.",
                 symbol: "sparkles", primaryTitle: "add my key", secondaryTitle: "continue")
         case .talk where isShowingDemo:
             return FirstRunTourCard(
