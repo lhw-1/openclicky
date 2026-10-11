@@ -290,12 +290,15 @@ final class FirstRunTourController: ObservableObject {
         }
     }
 
-    /// The tour's last question, which can be skipped: an email for the free account. Asked of a
-    /// guest without one (or anyone the guest start could not cover), never at the start.
-    private var needsEmailStep: Bool {
-        guard !OpenClickyConfiguration.usesOwnKeys else { return false }
-        return OpenClickyAuthSession.shared.accountEmail == nil && OpenClickyAuthSession.shared.accountsOpen != false
+    /// The tour's last note before "all set", on a free account: it has limited credits, and an
+    /// AI subscription the person already pays for can be used instead by adding its key.
+    private var needsFreeAccountNote: Bool {
+        OpenClickyConfiguration.hasAccountToken && !OpenClickyConfiguration.usesOwnKeys
     }
+
+    /// No key and no account (the guest start did not work): the account card asks for an email
+    /// instead, which is how asking gets switched on.
+    private var accountCardAsksForEmail: Bool { !OpenClickyConfiguration.isConfigured }
 
     /// Clicky is pointing at something and talking about it before the talk step's "your turn".
     private var isShowingDemo = false
@@ -337,7 +340,7 @@ final class FirstRunTourController: ObservableObject {
         case .meet: go(to: .dictate)
         case .dictate: go(to: .talk)
         case .talk: go(to: .act)
-        case .act: go(to: needsEmailStep ? .account : .done)
+        case .act: go(to: needsFreeAccountNote ? .account : .done)
         case .account:
             let next = stepAfterAccount ?? .done
             stepAfterAccount = nil
@@ -385,9 +388,12 @@ final class FirstRunTourController: ObservableObject {
             if OpenClickyConfiguration.isConfigured { companionManager?.recordedVoice.play(.tourAct) }
         case .account:
             fieldText = ""
-            OpenClickyAuthSession.shared.forgetSettledFlow()
-            companionManager?.recordedVoice.play(.tourAccount)
-            focusField()
+            if accountCardAsksForEmail {
+                OpenClickyAuthSession.shared.forgetSettledFlow()
+                focusField()
+            } else {
+                companionManager?.recordedVoice.play(.tourAccount)
+            }
         case .done:
             companionManager?.recordedVoice.play(.tourDone)
         }
@@ -430,9 +436,16 @@ final class FirstRunTourController: ObservableObject {
                 publish()
             }
         case .account:
-            submitField()
+            if accountCardAsksForEmail {
+                submitField()
+            } else {
+                // "add my key": Settings → Account has the key fields; the tour carries on.
+                companionManager.showSettings(.account)
+                advance()
+            }
         case .talk, .act:
-            guard !OpenClickyConfiguration.isConfigured else { return }
+            // Tried it (or would rather not): "next" moves on, as the success would.
+            guard !OpenClickyConfiguration.isConfigured else { advance(); return }
             if OpenClickyAuthSession.shared.accountsOpen != false {
                 stepAfterAccount = step
                 go(to: .account)
@@ -539,14 +552,19 @@ final class FirstRunTourController: ObservableObject {
                 microphoneName: companionManager.map { MicrophoneMenu.deviceName(settings: $0.dictationSettings) },
                 microphoneNeedsAttention: offersMicrophoneChange,
                 primaryTitle: needsFnFreed ? "free fn" : (suggestsBuiltInMicrophone ? "use built-in mic" : nil), secondaryTitle: "skip")
-        case .account:
+        case .account where accountCardAsksForEmail:
             let needsCode: Bool = { if case .needsCode = OpenClickyAuthSession.shared.emailFlow { return true } else { return false } }()
             return FirstRunTourCard(
-                step: .account, title: "keep your free account?",
-                detail: "add your email so your free allowance stays yours. no password. you can skip this.",
+                step: .account, title: "switch on asking",
+                detail: "add your email for a free account and i’ll answer questions and do things for you. no password.",
                 symbol: "envelope.fill", status: status, statusIsGood: statusIsGood,
                 field: needsCode ? .code : .email,
                 primaryTitle: needsCode ? "confirm" : "start", secondaryTitle: "skip")
+        case .account:
+            return FirstRunTourCard(
+                step: .account, title: "you’re on a free account",
+                detail: "it has a limited number of free credits. already pay for openai, claude or another ai? add that key in settings and use it right here.",
+                symbol: "sparkles", primaryTitle: "add my key", secondaryTitle: "continue")
         case .talk where isShowingDemo:
             return FirstRunTourCard(
                 step: .talk, title: "watch this",
@@ -559,13 +577,13 @@ final class FirstRunTourController: ObservableObject {
                     ? "hold control + option and ask “what’s this?” about anything on your screen. i answer out loud and point."
                     : "about anything on your screen, out loud, and i’ll point at it. add your email to switch it on, free.",
                 keys: ["⌃", "⌥"], status: status, statusIsGood: statusIsGood,
-                primaryTitle: canAsk ? nil : "add email", secondaryTitle: "skip")
+                primaryTitle: canAsk ? "next" : "add email", secondaryTitle: "skip")
         case .act:
             return FirstRunTourCard(
                 step: .act, title: canAsk ? "hand me a task" : "i can do things for you too",
                 detail: canAsk ? taskExamples : "open apps, make folders, and more, just by asking. add your email to switch it on, free.",
                 keys: ["⌃", "⌥"], status: status, statusIsGood: statusIsGood,
-                primaryTitle: canAsk ? nil : "add email", secondaryTitle: "skip")
+                primaryTitle: canAsk ? "next" : "add email", secondaryTitle: "skip")
         case .done:
             return FirstRunTourCard(
                 step: .done, title: "you’re all set",
