@@ -653,6 +653,8 @@ final class CompanionManager: ObservableObject {
 
     private var shortcutTransitionCancellable: AnyCancellable?
     private var voiceStateCancellable: AnyCancellable?
+    /// Loads Kokoro when a question starts (KokoroVoice.prepareForAnswer).
+    private var kokoroPreparationCancellable: AnyCancellable?
     private var audioPowerCancellable: AnyCancellable?
     private var accessibilityCheckTimer: Timer?
     private var pendingKeyboardShortcutStartTask: Task<Void, Never>?
@@ -966,8 +968,16 @@ final class CompanionManager: ObservableObject {
         permissionPromptController.update(with: permissionStatus)
         // The welcome tour waits for the last permission, then takes the island.
         firstRunTour.start(companionManager: self)
-        // Kokoro: warm it if it speaks, or download it if setup is long done. A few seconds in, so
-        // the launch itself stays quick.
+        // Kokoro comes into memory only when a question starts: pressing the ask shortcut or sending
+        // a typed question. Hands-free answers in OpenAI's realtime voice and never needs it.
+        kokoroPreparationCancellable = $voiceState
+            .removeDuplicates()
+            .sink { [weak self] state in
+                guard let self, state == .listening || state == .processing, !self.isAlwaysListening else { return }
+                KokoroVoice.shared.prepareForAnswer()
+            }
+        // Kokoro downloads on its own once setup is long done. A few seconds in, so the launch
+        // itself stays quick.
         DispatchQueue.main.asyncAfter(deadline: .now() + 8) { [weak self] in
             guard let self else { return }
             KokoroVoice.shared.startAutomaticSetup(tourIsFinished: self.firstRunTour.isFinished)

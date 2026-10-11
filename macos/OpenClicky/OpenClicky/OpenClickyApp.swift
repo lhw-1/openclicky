@@ -12,7 +12,17 @@ import ServiceManagement
 import SwiftUI
 import Sparkle
 
+/// The entry point. The Kokoro helper (the same binary, started by the app with a flag) branches
+/// off here, before SwiftUI creates the app delegate and with it the island, the menu bar item and
+/// the shortcut tap.
 @main
+enum OpenClickyMain {
+    static func main() {
+        if CommandLine.arguments.contains(KokoroHelper.flag) { KokoroHelper.run() }
+        OpenClickyApp.main()
+    }
+}
+
 struct OpenClickyApp: App {
     @NSApplicationDelegateAdaptor(CompanionAppDelegate.self) var appDelegate
 
@@ -233,6 +243,10 @@ final class CompanionAppDelegate: NSObject, NSApplicationDelegate {
                         print("voice-smoke: \(voice.rawValue) error \(error.localizedDescription)")
                         exit(1)
                     }
+                }
+                // With a short idle time set, stay long enough for Kokoro to unload.
+                if let idle = ProcessInfo.processInfo.environment["OPENCLICKY_KOKORO_IDLE_SECONDS"].flatMap(UInt64.init) {
+                    try? await Task.sleep(nanoseconds: (idle + 3) * 1_000_000_000)
                 }
                 exit(0)
             }

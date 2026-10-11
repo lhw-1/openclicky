@@ -2,15 +2,16 @@
 //  KokoroEngine.swift
 //  OpenClicky
 //
-//  Runs Kokoro through sherpa-onnx's C API, loaded with dlopen from the downloaded folder (see
-//  KokoroVoice.swift). One loaded model at a time, used from one serial queue: generation is
-//  CPU-bound, and SpeechQueue asks for the next sentence while the current one plays.
+//  Runs Kokoro through sherpa-onnx's C API, loaded with dlopen from the app's Frameworks folder.
+//  Only ever used inside the Kokoro helper process (KokoroHelper.swift): freeing the model in the
+//  app gave back almost none of its memory (sherpa-onnx keeps ~300 MB allocated), while ending the
+//  helper gives back all of it.
 //
 
 import Foundation
 
-final class KokoroEngine: @unchecked Sendable {
-    struct Request: Sendable {
+final class KokoroEngine {
+    struct Request: Codable, Sendable {
         let text: String
         let speakerID: Int
         /// sherpa-onnx's `lang` hint; English and Mandarin go by the model's lexicons instead.
@@ -31,31 +32,12 @@ final class KokoroEngine: @unchecked Sendable {
         let destroyAudio: DestroyAudioFunction
     }
 
-    private let queue = DispatchQueue(label: "org.openclicky.kokoro", qos: .userInitiated)
-    // Everything below is touched only on `queue`.
     private var library: Library?
     private var tts: OpaquePointer?
     private var loadedLanguageHint: String?
 
-    func audio(for request: Request) async throws -> Data {
-        try await withCheckedThrowingContinuation { continuation in
-            queue.async {
-                do { continuation.resume(returning: try self.generate(request)) } catch { continuation.resume(throwing: error) }
-            }
-        }
-    }
-
-    func unload() {
-        queue.async {
-            if let tts = self.tts { self.library?.destroy(tts) }
-            self.tts = nil
-            self.loadedLanguageHint = nil
-        }
-    }
-
-    // MARK: On the queue
-
-    private func generate(_ request: Request) throws -> Data {
+    /// `request.text` spoken, as WAV bytes; loads the model first if it isn't (about 0.8 s).
+    func generate(_ request: Request) throws -> Data {
         let library = try loadLibrary(from: request.libraryFolder)
         if tts == nil || loadedLanguageHint != request.languageHint {
             if let tts { library.destroy(tts) }

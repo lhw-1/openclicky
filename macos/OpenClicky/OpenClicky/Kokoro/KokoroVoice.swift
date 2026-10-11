@@ -8,9 +8,13 @@
 //  the model (350 MB) is downloaded, when Kokoro is picked in Settings, checked against a pinned
 //  SHA-256 and unpacked into Application Support.
 //
-//  The model stays loaded once used: loading takes about three seconds, while a sentence then
-//  takes about 0.3× its spoken length on an M2 Pro and 0.55× under Rosetta (the closest stand-in
-//  measured for an Intel Mac). The int8 model is smaller but was slower on both (0.86× / 1.3×).
+//  The loaded model takes about 400 MB of memory, so it lives in a helper process
+//  (KokoroHelper.swift) that runs only around a conversation: `prepareForAnswer` starts and warms
+//  it the moment the ask shortcut is pressed (well inside the listening and thinking that follow),
+//  and it is ended after three minutes without an answer, or at once when macOS reports memory
+//  pressure. A loaded model speaks a sentence in
+//  about 0.3× its length on an M2 Pro and 0.55× under Rosetta (the closest stand-in measured for
+//  an Intel Mac). The int8 model is smaller but was slower on both (0.86× / 1.3×).
 //
 
 import Combine
@@ -73,10 +77,52 @@ final class KokoroVoice: ObservableObject {
     }
 
     private var downloadTask: Task<Void, Never>?
-    private let engine = KokoroEngine()
+    private let engine = KokoroHelperClient()
+    /// How long the model stays in memory after the last answer it spoke.
+    nonisolated static let idleUnloadSeconds: UInt64 = 180
+    private var idleUnloadTask: Task<Void, Never>?
+    private var memoryPressureSource: DispatchSourceMemoryPressure?
 
     private init() {
         state = Self.isInstalled ? .installed : .notInstalled
+        // macOS is short of memory: give the 400 MB back now; the next question loads it again.
+        let source = DispatchSource.makeMemoryPressureSource(eventMask: [.warning, .critical], queue: .main)
+        source.setEventHandler { [weak self] in
+            Task { @MainActor in self?.unload(reason: "memory pressure") }
+        }
+        source.resume()
+        memoryPressureSource = source
+    }
+
+    // MARK: Memory
+
+    /// Called when the ask shortcut is pressed or a typed question is sent: loads and warms the
+    /// model while the question is still being heard, if Kokoro is the voice.
+    func prepareForAnswer() {
+        warmUpIfSpeaking()
+    }
+
+    /// Restarts the idle clock; when it runs out the model leaves memory.
+    private func scheduleIdleUnload() {
+        idleUnloadTask?.cancel()
+        idleUnloadTask = Task { [weak self] in
+            var seconds = Self.idleUnloadSeconds
+            #if DEBUG
+            // Lets the voice smoke see the unload without waiting three minutes.
+            if let override = ProcessInfo.processInfo.environment["OPENCLICKY_KOKORO_IDLE_SECONDS"].flatMap(UInt64.init) { seconds = override }
+            #endif
+            try? await Task.sleep(nanoseconds: seconds * 1_000_000_000)
+            guard !Task.isCancelled else { return }
+            self?.unload(reason: "idle")
+        }
+    }
+
+    private func unload(reason: String) {
+        idleUnloadTask?.cancel()
+        idleUnloadTask = nil
+        engine.unload { wasLoaded in
+            if wasLoaded { AppLog.append("kokoro: unloaded (\(reason))") }
+        }
     }
 
     // MARK: Speakers
@@ -138,6 +184,7 @@ final class KokoroVoice: ObservableObject {
         }
         let request = KokoroEngine.Request(text: text, speakerID: speaker.id, languageHint: Self.languageHint(for: languageCode),
                                            libraryFolder: Self.libraryFolder, modelFolder: Self.modelFolder)
+        defer { scheduleIdleUnload() }
         return try await engine.audio(for: request)
     }
 
@@ -153,13 +200,10 @@ final class KokoroVoice: ObservableObject {
 
     /// At launch and when the welcome tour ends: once setup is done, Kokoro downloads in the
     /// background, and when it is ready it becomes the voice (if the voice was left on Automatic),
-    /// so answers stop spending the free ElevenLabs characters. An installed Kokoro that speaks
-    /// is loaded and warmed so the first answer doesn't wait for it.
+    /// so answers stop spending the free ElevenLabs characters. Nothing is loaded here: that waits
+    /// for the first question (`prepareForAnswer`).
     func startAutomaticSetup(tourIsFinished: Bool) {
-        if Self.isInstalled {
-            warmUpIfSpeaking()
-            return
-        }
+        guard !Self.isInstalled else { return }
         guard tourIsFinished, downloadTask == nil,
               !UserDefaults.standard.bool(forKey: Self.declinedKey),
               Self.speaker(forLanguage: ReplyLanguage.currentCode, picked: nil) != nil,
@@ -252,7 +296,6 @@ final class KokoroVoice: ObservableObject {
                         AppLog.append("kokoro: now the voice")
                     }
                 }
-                self?.warmUpIfSpeaking()
             } catch where error is CancellationError || (error as? URLError)?.code == .cancelled {
                 self?.state = .notInstalled
             } catch {
@@ -325,6 +368,7 @@ enum KokoroError: Error, LocalizedError, Equatable {
     case libraryNotLoaded(String)
     case modelNotLoaded
     case nothingGenerated
+    case helperFailed(String)
 
     var errorDescription: String? {
         switch self {
@@ -335,6 +379,7 @@ enum KokoroError: Error, LocalizedError, Equatable {
         case let .libraryNotLoaded(reason): return "Kokoro's library didn't load: \(reason)"
         case .modelNotLoaded: return "Kokoro's model didn't load."
         case .nothingGenerated: return "Kokoro said nothing."
+        case let .helperFailed(reason): return "Kokoro's helper failed: \(reason)."
         }
     }
 }
