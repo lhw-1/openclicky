@@ -93,7 +93,7 @@ enum DictationSmokeRun {
             if let key = ProcessInfo.processInfo.environment["OPENCLICKY_SARVAM_KEY"], !key.isEmpty { return SarvamTakePolisher(client: SarvamSpeechClient(key: key)) }
             return DictationEngineResolver.makePolisher()
         }()
-        let formatted = await TakeFormatter.format(raw, context: context, polisher: polisher, wantsModel: engine == .offline ? settings.polishOfflineTakes : settings.polishWithModel)
+        let formatted = await TakeFormatter.format(raw, context: context, polisher: polisher, wantsModel: DictationEngineResolver.wantsModelPolish(settings: settings, engine: engine))
         print("smoke: formatted (\(formatted.formattingDegraded ? "local rules" : "model")): \(formatted.text)")
         return raw.isEmpty ? 1 : 0
     }

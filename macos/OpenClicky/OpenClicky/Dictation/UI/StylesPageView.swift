@@ -147,14 +147,20 @@ struct StylesPageView: View {
 
     // MARK: polish
 
+    /// The switch is on exactly when takes are polished: an upgrader whose two old settings
+    /// disagree sees what the takes do, not one half of it.
+    static func cleanUpSwitchShowsOn(settings: DictationSettings) -> Bool {
+        DictationEngineResolver.wantsModelPolish(settings: settings)
+    }
+
     /// One switch for the model cleanup, in plain words. Underneath there are two settings (takes
-    /// heard by an online engine, and takes heard on this Mac); the switch sets both, and shows the
-    /// one that applies to the engine in use.
+    /// heard by an online engine, and takes heard on this Mac); the switch sets both, and shows
+    /// what the takes will actually do with the engine in use.
     private var polishCard: some View {
         let hasModel = DictationEngineResolver.makePolisher() != nil
         let needsModelNote = hasModel ? "" : " needs a sarvam key or a free openclicky account."
         let cleanupIsOn = Binding<Bool>(
-            get: { settings.engine == .offline ? settings.polishOfflineTakes : settings.polishWithModel },
+            get: { Self.cleanUpSwitchShowsOn(settings: settings) },
             set: { isOn in
                 settings.polishWithModel = isOn
                 settings.choosePolishOfflineTakes(isOn)

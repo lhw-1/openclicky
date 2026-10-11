@@ -68,10 +68,18 @@ enum DictationEngineResolver {
 
     /// Whether a take's words may go to a model: the switch, and — for the offline engine, whose
     /// promise is that nothing leaves the Mac — only when that was explicitly allowed.
+    /// Every reader of "clean up my words with ai" asks here (the styles switch, the record page,
+    /// the take, live typing, the smoke run), so the switch never shows one thing while takes do another.
     @MainActor
     static func wantsModelPolish(settings: DictationSettings) -> Bool {
+        wantsModelPolish(settings: settings, engine: settings.engine)
+    }
+
+    /// The same, for an engine other than the chosen one (the smoke run names its own).
+    @MainActor
+    static func wantsModelPolish(settings: DictationSettings, engine: DictationEngineChoice) -> Bool {
         guard settings.polishWithModel else { return false }
-        if settings.engine == .offline { return settings.polishOfflineTakes }
+        if engine == .offline { return settings.polishOfflineTakes }
         return true
     }
 }
