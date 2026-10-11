@@ -81,6 +81,8 @@ export type Env = {
   GUEST_TTS_CHARS?: string;
   /** Confirmed accounts one Mac may create (default 2). */
   MAX_ACCOUNTS_PER_DEVICE?: string;
+  /** Key for the hashes of sign-up addresses and emails kept for the guest caps (default: SUPABASE_SERVICE_KEY). */
+  IP_HASH_SALT?: string;
 };
 
 /**

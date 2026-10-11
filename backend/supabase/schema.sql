@@ -247,3 +247,61 @@ $$;
 drop trigger if exists oc_max_accounts on auth.users;
 drop function if exists public.oc_enforce_max_accounts();
 revoke all on function public.oc_reserve, public.oc_settle, public.oc_reserve_chars, public.oc_spend_summary, public.oc_accounts_open, public.oc_confirmed, public.oc_guest_usage from public, anon, authenticated;
+
+-- Sign-up guard (2026-10-11, deep test F-38/F-42/F-43). One person could mint hundreds of guests from
+-- made-up device hashes and fill max_guests, locking every newcomer out. Guests now carry a keyed hash
+-- of the address they signed up from (never the address itself), live guests are capped per address
+-- and per network, and a full guest pool or address gets a sign-up code instead of a refusal.
+alter table public.oc_accounts add column if not exists ip_hash text;   -- IPv4 host, or IPv6 /64
+alter table public.oc_accounts add column if not exists net_hash text;  -- IPv4 /24, or IPv6 /48
+-- The first sign-in by code: from then on every session on the account is known to hold the mailbox.
+-- That first one signs out every other session (a stranger who typed the email and got the link clicked).
+alter table public.oc_accounts add column if not exists code_signed_in_at timestamptz;
+create index if not exists oc_accounts_ip on public.oc_accounts (ip_hash);
+create index if not exists oc_accounts_net on public.oc_accounts (net_hash);
+alter table public.oc_settings add column if not exists max_guests_per_ip integer not null default 2;
+alter table public.oc_settings add column if not exists max_guests_per_net integer not null default 6;
+
+-- Is there room for a confirmed account, and for one more guest from this address and network?
+-- Guests already on this Mac are not counted against its address: replacing your own guest is free.
+create or replace function public.oc_signup_room(p_guest_days integer, p_ip_hash text, p_net_hash text, p_device text)
+returns json language sql stable security definer set search_path = public set timezone = 'UTC' as $$
+  with live as (
+    select a.ip_hash, a.net_hash, a.device_hash from oc_accounts a join auth.users u on u.id::text = a.user_id
+    where coalesce(u.is_anonymous, false) and a.replaced_at is null and a.created_at > now() - make_interval(days => p_guest_days)
+  ), others as (select * from live where p_device is null or device_hash is distinct from p_device),
+  s as (select * from oc_settings)
+  select json_build_object(
+    'accounts', (select count(*) from oc_accounts a join auth.users u on u.id::text = a.user_id where not coalesce(u.is_anonymous, false))
+      < (select max_accounts from s),
+    'guests', (select count(*) from live) < (select max_guests from s)
+      and (p_ip_hash is null or (select count(*) from others where ip_hash = p_ip_hash) < (select max_guests_per_ip from s))
+      and (p_net_hash is null or (select count(*) from others where net_hash = p_net_hash) < (select max_guests_per_net from s)));
+$$;
+
+-- Sign-in attempt counters that survive a deploy (the in-memory ones reset on every restart). Keys are
+-- hashes ("start:ip:<hmac>"), never raw addresses or emails. Fixed windows; rows older than a day go.
+create table if not exists public.oc_rate_hits (
+  key text not null,
+  window_start timestamptz not null,
+  hits integer not null default 0,
+  primary key (key, window_start)
+);
+create index if not exists oc_rate_hits_window on public.oc_rate_hits (window_start);
+alter table public.oc_rate_hits enable row level security;
+
+-- Counts one attempt; answers 0 when it is allowed, else the seconds until its window ends.
+create or replace function public.oc_rate_hit(p_key text, p_limit integer, p_window_seconds integer) returns integer
+language plpgsql security definer set search_path = public set timezone = 'UTC' as $$
+declare
+  v_start timestamptz := to_timestamp(floor(extract(epoch from now()) / p_window_seconds) * p_window_seconds);
+  v_hits integer;
+begin
+  delete from oc_rate_hits where window_start < now() - interval '1 day';
+  insert into oc_rate_hits (key, window_start, hits) values (p_key, v_start, 1)
+  on conflict (key, window_start) do update set hits = oc_rate_hits.hits + 1
+  returning hits into v_hits;
+  if v_hits <= p_limit then return 0; end if;
+  return greatest(1, ceil(extract(epoch from (v_start + make_interval(secs => p_window_seconds) - now()))))::integer;
+end $$;
+revoke all on function public.oc_signup_room, public.oc_rate_hit from public, anon, authenticated;

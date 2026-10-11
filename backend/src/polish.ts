@@ -9,6 +9,7 @@ import { UPSTREAM_TIMEOUT_MS } from "./anthropicGrant.js";
 
 const MAX_TEXT = 8000;
 const MAX_SYSTEM = 6000;
+const MAX_OUTPUT_TOKENS = 4096;
 const NO_USAGE = { inputTokens: 0, outputTokens: 0, cacheWriteTokens: 0, cacheReadTokens: 0 };
 
 /** Dictation polish and Hey Clicky edits: the app sends what to do and the words; the server picks the model. */
@@ -27,7 +28,9 @@ export async function polishTake(c: Context, ledger: SpendLedger | undefined): P
   const model = modelFor(req.purpose, env);
   const body = {
     model,
-    max_tokens: Math.min(2048, Math.ceil((text.length / 3.5) * 1.5) + 64),
+    // An upper bound, not a guess: Malayalam, Hindi or Chinese can take a token or more per character,
+    // and a take cut off at max_tokens would be pasted half-finished (deep test F-39).
+    max_tokens: Math.min(MAX_OUTPUT_TOKENS, text.length * 2 + 64),
     system: [{ type: "text", text: system, cache_control: { type: "ephemeral" } }],
     messages: [{ role: "user", content: text }],
   };
@@ -69,10 +72,12 @@ export async function polishTake(c: Context, ledger: SpendLedger | undefined): P
     return unavailable();
   }
   let content: Array<{ type: string; text?: string }>;
+  let stopReason: unknown;
   try {
-    const parsed = JSON.parse(replyText) as { content?: unknown };
+    const parsed = JSON.parse(replyText) as { content?: unknown; stop_reason?: unknown };
     if (!Array.isArray(parsed.content)) throw new Error("reply has no content");
     content = parsed.content;
+    stopReason = parsed.stop_reason;
   } catch (e) {
     await settle(0);
     console.error(`polish: unusable reply: ${(e as Error).message}`);
@@ -80,5 +85,11 @@ export async function polishTake(c: Context, ledger: SpendLedger | undefined): P
   }
   const usage = parseAnthropicUsage(replyText);
   await settle(usage ? (costMicroUsd(model, usage) ?? estimate) : estimate, usage ?? NO_USAGE); // no usage reported: charge the hold in full
+  // The tokens were spent either way, but half a take must never be pasted as if it were whole: on
+  // an error the app keeps its own text.
+  if (stopReason === "max_tokens") {
+    console.error(`polish: reply stopped at max_tokens (${body.max_tokens}) for a ${text.length}-character take`);
+    return c.json({ error: "polish_truncated" }, 502);
+  }
   return c.json({ text: content.filter((b) => b.type === "text").map((b) => b.text ?? "").join("").trim() });
 }

@@ -546,6 +546,24 @@ describe("app", () => {
       expect(await own.json()).toMatchObject({ plan: "byok", onPlan: true, byok: true });
     });
 
+    it("a backend selling Stripe plans (STRIPE_SECRET_KEY, no GRANT_ACCOUNTS) enforces and records them (F-43)", async () => {
+      const store = new MemoryBillingStore();
+      const stripeEnv: Env = { ...env, STRIPE_SECRET_KEY: "sk_test", FREE_MONTHLY_CREDITS: "0", OPENAI_BASE_URL: upstreamUrl + "/v1", BYOK_OPENAI_BASE_URL: upstreamUrl + "/v1" };
+      const selling = createApp({ log: null, billingStore: store });
+      const token = await jwt();
+      const refused = await selling.request("/v1/responses", json({ model: "default", input: "hi", stream: true }, token), stripeEnv);
+      expect(refused.status).toBe(402);
+      expect(await refused.json()).toMatchObject({ error: "credits_exhausted" });
+      const own = await selling.request("/v1/responses", { ...json({ model: "default", input: "hi", stream: true }, token), headers: byokHeaders(token) }, stripeEnv);
+      expect(own.status).toBe(200);
+      await own.text();
+      const metered = await selling.request("/v1/responses", json({ model: "default", input: "hi", stream: true }, token), { ...stripeEnv, FREE_MONTHLY_CREDITS: "200" });
+      expect(metered.status).toBe(200);
+      await metered.text();
+      await new Promise((r) => setTimeout(r, 10));
+      expect(store.events.length).toBeGreaterThan(0);
+    });
+
     it("a Supabase-configured backend without GRANT_ACCOUNTS does not meter /v1/responses", async () => {
       const app2 = createApp({ log: null });
       const r = await app2.request("/v1/responses", json({ model: "default", input: "hi", stream: true }, await jwt()), { ...env, OPENAI_BASE_URL: upstreamUrl + "/v1", SUPABASE_URL: "https://db.example", SUPABASE_SERVICE_KEY: "sk" });

@@ -129,6 +129,29 @@ describe("/v1/polish", () => {
     expect(await res.json()).toEqual({ error: "polish unavailable" });
   });
 
+  it("a reply cut off at max_tokens is 502 polish_truncated, never a partial 200, and the tokens are still charged", async () => {
+    const ledger = new MemorySpendLedger();
+    const cut = '{"content":[{"type":"text","text":"ഇന്ന് രാവിലെ ഞാൻ"}],"stop_reason":"max_tokens","usage":{"input_tokens":300,"output_tokens":1307}}';
+    const { a } = app(ledger, async () => new Response(cut));
+    const err = vi.spyOn(console, "error").mockImplementation(() => {});
+    const res = await post(a, { purpose: "polish", system: "s", text: "ഇന്ന് രാവിലെ ".repeat(250) });
+    expect(res.status).toBe(502);
+    expect(await res.json()).toEqual({ error: "polish_truncated" });
+    expect((await ledger.summary("u1", LIMITS)).spentTodayMicro).toBe(300 * 1 + 1307 * 5);
+    expect(JSON.stringify(err.mock.calls)).toContain("max_tokens");
+  });
+
+  it("sizes max_tokens for scripts that need a token per character or two, capped at 4096", async () => {
+    const sentMaxTokens = async (text: string) => {
+      const { a, fetchMock } = app(new MemorySpendLedger());
+      await post(a, { purpose: "polish", system: "s", text });
+      return JSON.parse((fetchMock.mock.calls[0] as unknown as [string, RequestInit])[1].body as string).max_tokens as number;
+    };
+    expect(await sentMaxTokens("ക".repeat(1000))).toBe(2064);
+    expect(await sentMaxTokens("ക".repeat(3000))).toBe(4096);
+    expect(await sentMaxTokens("see you at seven")).toBe(16 * 2 + 64);
+  });
+
   it("does not meter a BYOK request", async () => {
     const ledger = new MemorySpendLedger();
     const { a } = app(ledger);
