@@ -187,9 +187,9 @@ final class NotchHUDModel: ObservableObject {
     var fullHeight: CGFloat {
         switch activeTab {
         // The tab row, the body's top padding, the content, and room under the last control.
-        case .home: return tabBarHeight + DS.HUD.bodyTopPadding + (placement.isSideDrawer ? 336 : 212)
+        case .home: return tabBarHeight + DS.HUD.bodyTopPadding + (placement.isSideDrawer ? 324 : 200)
         case .agents: return tabBarHeight + DS.HUD.bodyTopPadding + 352
-        case .settings: return tabBarHeight + DS.HUD.bodyTopPadding + (placement.isSideDrawer ? 386 : 270)
+        case .settings: return tabBarHeight + DS.HUD.bodyTopPadding + (placement.isSideDrawer ? 374 : 258)
         }
     }
 
