@@ -241,7 +241,7 @@ private final class OpenAIAudioTranscriptionSession: BuddyStreamingTranscription
             (responseData, response) = try await urlSession.data(for: request)
         case .unavailable(let sentence):
             throw OpenAIAudioTranscriptionProviderError(message: sentence)
-        case .backend, .anthropicDirect:
+        case .backend, .anthropicDirect, .answerProvider:
             var request = URLRequest(url: try Self.transcriptionURL())
             request.httpMethod = "POST"
             request.setValue("application/json", forHTTPHeaderField: "Content-Type")

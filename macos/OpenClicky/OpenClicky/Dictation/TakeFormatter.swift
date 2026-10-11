@@ -294,7 +294,7 @@ struct BackendTakePolisher: TakePolisher {
             (data, response) = try await URLSession.shared.data(for: request)
         case .unavailable(let sentence):
             throw BackendPolishError.refused(status: 0, message: sentence)
-        case .backend, .anthropicDirect:
+        case .backend, .anthropicDirect, .answerProvider:
             guard let url = URL(string: "\(OpenClickyConfiguration.backendBaseURL)/v1/chat/completions") else {
                 throw BackendPolishError.invalidBackendURL
             }

@@ -68,6 +68,9 @@ class ClaudeAPI {
             request = DirectProviderRequests.anthropicMessages(key: anthropicKey)
         case .unavailable(let sentence):
             throw ProviderRouteUnavailable(capability: .claude, sentence: sentence)
+        case .answerProvider(let source):
+            // analyzeImageStreaming hands these to an AnswerProvider before building a request.
+            throw ProviderRouteUnavailable(capability: .claude, sentence: "\(source.displayName) answers through its own provider")
         case .backend, .openAIDirect:
             request = URLRequest(url: apiURL)
             request.httpMethod = "POST"
@@ -143,6 +146,39 @@ class ClaudeAPI {
         onTextChunk: @MainActor @Sendable (String) -> Void
     ) async throws -> (text: String, toolCalls: [ClaudeToolCall], duration: TimeInterval) {
         let startTime = Date()
+
+        // Another source answers (an OpenAI-compatible key, Gemini, a Claude Code or Codex plan):
+        // the same question goes to its AnswerProvider, and its text streams back the same way.
+        if case .answerProvider(let source) = ProviderRouter.current(for: .claude) {
+            let provider = try await AnswerProviderFactory.make(for: source, credentials: ProviderRouter.currentCredentials(),
+                                                          modelOverrides: OpenClickyConfiguration.settings.answerModels ?? [:])
+            let answerRequest = AnswerRequest(
+                images: images.map { AnswerRequest.Image(data: $0.data, label: $0.label, mediaType: detectImageMediaType(for: $0.data)) },
+                systemPrompt: systemPrompt,
+                history: conversationHistory.map { AnswerRequest.Turn(user: $0.userPlaceholder, assistant: $0.assistantResponse) },
+                userPrompt: userPrompt,
+                tools: tools.compactMap(Self.answerTool(fromAnthropicTool:)))
+            // The pieces come through a stream this call reads to the end, in order; each is handed
+            // on as the whole answer so far, like the Anthropic path below. Cancelling the question
+            // cancels the provider (a CLI process is ended).
+            let (pieces, piecesContinuation) = AsyncStream<String>.makeStream()
+            let answerTask = Task<AnswerResult, Error> {
+                defer { piecesContinuation.finish() }
+                return try await provider.answer(answerRequest) { piecesContinuation.yield($0) }
+            }
+            let result = try await withTaskCancellationHandler {
+                var answerSoFar = ""
+                for await piece in pieces {
+                    answerSoFar += piece
+                    await onTextChunk(answerSoFar)
+                }
+                return try await answerTask.value
+            } onCancel: {
+                answerTask.cancel()
+            }
+            AppLog.append("answer: \(source.displayName) answered (\(result.text.count) chars, \(result.toolCalls.count) tool calls)")
+            return (text: result.text, toolCalls: result.toolCalls, duration: Date().timeIntervalSince(startTime))
+        }
 
         var request = try makeAPIRequest()
 
@@ -341,7 +377,17 @@ class ClaudeAPI {
     }
 }
 
-struct ClaudeToolCall: Equatable {
+extension ClaudeAPI {
+    /// An Anthropic tool definition (name, description, input_schema) as an AnswerRequest tool.
+    nonisolated static func answerTool(fromAnthropicTool tool: [String: Any]) -> AnswerRequest.Tool? {
+        guard let name = tool["name"] as? String else { return nil }
+        let schema = tool["input_schema"] as? [String: Any] ?? ["type": "object", "properties": [String: Any]()]
+        guard let schemaJSON = try? JSONSerialization.data(withJSONObject: schema) else { return nil }
+        return AnswerRequest.Tool(name: name, description: tool["description"] as? String ?? "", inputSchemaJSON: schemaJSON)
+    }
+}
+
+nonisolated struct ClaudeToolCall: Equatable, Sendable {
     let id: String
     let name: String
     let arguments: [String: String]

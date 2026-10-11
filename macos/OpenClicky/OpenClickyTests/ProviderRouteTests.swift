@@ -39,8 +39,8 @@ struct ProviderRouteTests {
         for capability in ProviderCapability.allCases {
             #expect(ProviderRouter.route(for: capability, credentials: accountOnly) == .backend)
         }
-        // Signed in with only an OpenAI key: Claude runs on the account, not on a borrowed key.
-        #expect(ProviderRouter.route(for: .claude, credentials: openAIAndAccount) == .backend)
+        // Signed in with an OpenAI key too: questions run on the key (it can answer now), not the credits.
+        #expect(ProviderRouter.route(for: .claude, credentials: openAIAndAccount) == .answerProvider(.openAI))
         #expect(ProviderRouter.route(for: .assemblyAIStreaming, credentials: openAIAndAccount) == .backend)
     }
 
@@ -50,10 +50,51 @@ struct ProviderRouteTests {
             #expect(ProviderRouter.route(for: capability, credentials: anthropicOnly) == .unavailable(ProviderRouter.needsOpenAIKeySentence))
         }
         #expect(ProviderRouter.route(for: .claude, credentials: nothing) == .unavailable(ProviderRouter.needsAnthropicKeySentence))
-        // The backend's own-key path answers byok_missing_anthropic_key here; the app says it plainly.
-        #expect(ProviderRouter.route(for: .claude, credentials: openAIOnly) == .unavailable(ProviderRouter.claudeNeedsAnthropicKeyTooSentence))
+        // An OpenAI key answers questions itself now (AnswerProvider), no Anthropic key needed.
+        #expect(ProviderRouter.route(for: .claude, credentials: openAIOnly) == .answerProvider(.openAI))
         // AssemblyAI is minted on OpenClicky's key: an own key never covers it.
         #expect(ProviderRouter.route(for: .assemblyAIStreaming, credentials: bothKeys) == .unavailable(ProviderRouter.assemblyAINeedsAccountSentence))
+    }
+
+    /// Automatic order: own keys (Anthropic, then OpenRouter, OpenAI, Gemini, xAI, Mistral, Groq),
+    /// then the plans switched on, then OpenClicky's credits.
+    @Test func automaticAnswersWithTheFirstSourceThatCan() {
+        let account = "acct"
+        #expect(ProviderRouter.route(for: .claude, credentials: ProviderCredentials(openAIKey: nil, anthropicKey: nil, accountToken: account, geminiKey: "g")) == .answerProvider(.gemini))
+        #expect(ProviderRouter.route(for: .claude, credentials: ProviderCredentials(openAIKey: "o", anthropicKey: nil, accountToken: nil, openRouterKey: "r")) == .answerProvider(.openRouter))
+        #expect(ProviderRouter.route(for: .claude, credentials: ProviderCredentials(openAIKey: nil, anthropicKey: "a", accountToken: nil, openRouterKey: "r")) == .anthropicDirect)
+        #expect(ProviderRouter.route(for: .claude, credentials: ProviderCredentials(openAIKey: nil, anthropicKey: nil, accountToken: account, codexPlanOn: true)) == .answerProvider(.codexPlan))
+        #expect(ProviderRouter.route(for: .claude, credentials: ProviderCredentials(openAIKey: nil, anthropicKey: nil, accountToken: nil, claudeCodePlanOn: true, codexPlanOn: true)) == .answerProvider(.claudeCodePlan))
+        #expect(ProviderRouter.route(for: .claude, credentials: ProviderCredentials(openAIKey: nil, anthropicKey: nil, accountToken: account)) == .backend)
+    }
+
+    /// A source the person picked answers when it can; one that cannot falls back to automatic.
+    @Test func aPickedSourceWinsWhenItCanAnswer() {
+        let pickedGroq = ProviderCredentials(openAIKey: nil, anthropicKey: "a", accountToken: nil, groqKey: "q", preferredAnswerSource: .groq)
+        #expect(ProviderRouter.route(for: .claude, credentials: pickedGroq) == .answerProvider(.groq))
+        let pickedCreditsSignedIn = ProviderCredentials(openAIKey: nil, anthropicKey: "a", accountToken: "acct", preferredAnswerSource: .openClickyAccount)
+        #expect(ProviderRouter.route(for: .claude, credentials: pickedCreditsSignedIn) == .backend)
+        let pickedMissing = ProviderCredentials(openAIKey: nil, anthropicKey: "a", accountToken: nil, preferredAnswerSource: .mistral)
+        #expect(ProviderRouter.route(for: .claude, credentials: pickedMissing) == .anthropicDirect)
+    }
+
+    /// Only questions move: speech, dictation clean-up and the rest still need OpenAI or the account.
+    @Test func otherKeysOnlyAnswerQuestions() {
+        let geminiOnly = ProviderCredentials(openAIKey: nil, anthropicKey: nil, accountToken: nil, geminiKey: "g")
+        #expect(ProviderRouter.route(for: .speech, credentials: geminiOnly) == .unavailable(ProviderRouter.needsOpenAIKeySentence))
+        #expect(ProviderRouter.route(for: .openAIChat, credentials: geminiOnly) == .unavailable(ProviderRouter.needsOpenAIKeySentence))
+    }
+
+    /// Quick actions reach the other providers: an Anthropic tool becomes an AnswerRequest tool
+    /// with its schema intact; one without a name is dropped.
+    @Test func anthropicToolsBecomeAnswerTools() throws {
+        let tool: [String: Any] = ["name": "open_app", "description": "Open an app", "input_schema": ["type": "object", "properties": ["name": ["type": "string"]], "required": ["name"]]]
+        let converted = try #require(ClaudeAPI.answerTool(fromAnthropicTool: tool))
+        #expect(converted.name == "open_app")
+        #expect(converted.description == "Open an app")
+        let schema = try #require(try JSONSerialization.jsonObject(with: converted.inputSchemaJSON) as? [String: Any])
+        #expect((schema["required"] as? [String]) == ["name"])
+        #expect(ClaudeAPI.answerTool(fromAnthropicTool: ["description": "no name"]) == nil)
     }
 
     @Test func blankValuesCountAsMissing() {

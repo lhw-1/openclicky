@@ -67,7 +67,7 @@ final class ElevenLabsTTSClient {
             return try Self.audio(from: data, response: response)
         case .unavailable(let sentence):
             throw ProviderRouteUnavailable(capability: .speech, sentence: sentence)
-        case .backend, .anthropicDirect:
+        case .backend, .anthropicDirect, .answerProvider:
             break
         }
         var request = URLRequest(url: proxyURL)

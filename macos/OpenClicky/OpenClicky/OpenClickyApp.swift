@@ -186,6 +186,34 @@ final class CompanionAppDelegate: NSObject, NSApplicationDelegate {
             return
         }
 
+        #if DEBUG
+        if launchArguments.contains("--openclicky-answer-smoke") {
+            // Debug: one real question (a red square) through ClaudeAPI and whatever source
+            // shell.json routes to, printing the streamed text and the answer, then exit.
+            setvbuf(stdout, nil, _IONBF, 0)
+            Task { @MainActor in
+                let route = ProviderRouter.current(for: .claude)
+                print("answer-smoke: route \(route.logName)")
+                let api = ClaudeAPI(currentProxyURL: { "\(OpenClickyConfiguration.backendBaseURL)/chat" })
+                let redSquare = Self.smokeRedSquarePNG()
+                var chunks = 0
+                do {
+                    let (text, toolCalls, duration) = try await api.analyzeImageStreaming(
+                        images: [(data: redSquare, label: "a test image")],
+                        systemPrompt: "answer in lowercase, one word.",
+                        userPrompt: "what color is this square?",
+                        onTextChunk: { _ in chunks += 1 })
+                    print("answer-smoke: \"\(text)\" in \(String(format: "%.1f", duration)) s, \(chunks) chunk updates, \(toolCalls.count) tool calls")
+                    exit(text.lowercased().contains("red") ? 0 : 2)
+                } catch {
+                    print("answer-smoke: error \(error.localizedDescription)")
+                    exit(1)
+                }
+            }
+            return
+        }
+        #endif
+
         print("🎯 OpenClicky: Starting...")
         print("🎯 OpenClicky: Version \(Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "unknown")")
 
@@ -254,6 +282,18 @@ final class CompanionAppDelegate: NSObject, NSApplicationDelegate {
 
 
 extension CompanionAppDelegate {
+    #if DEBUG
+    /// A 64×64 red PNG for --openclicky-answer-smoke.
+    static func smokeRedSquarePNG() -> Data {
+        let image = NSImage(size: NSSize(width: 64, height: 64), flipped: false) { rect in
+            NSColor.red.setFill(); rect.fill(); return true
+        }
+        guard let tiff = image.tiffRepresentation, let bitmap = NSBitmapImageRep(data: tiff),
+              let png = bitmap.representation(using: .png, properties: [:]) else { return Data() }
+        return png
+    }
+    #endif
+
     /// Reads any audio file and returns PCM16 mono 24 kHz bytes (the Realtime input format).
     static func loadPCM16Mono24k(path: String) throws -> Data {
         let file = try AVAudioFile(forReading: URL(fileURLWithPath: path))
