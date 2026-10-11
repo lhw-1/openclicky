@@ -256,10 +256,25 @@ struct PasteLandingTests {
         #expect(PasteLanding.landing(of: "hello there", before: field(value: ""), after: field(value: "hello there")) == .verified)
     }
 
-    @Test func aFieldThatCannotBeReadBackIsNoTarget() {
-        #expect(PasteLanding.landing(of: "hello there", before: field(value: ""), after: field(value: nil)) == .noTarget)
-        #expect(PasteLanding.landing(of: "hello there", before: field(value: ""), after: field(role: nil, editable: false, value: nil)) == .noTarget)
-        #expect(PasteLanding.landing(of: "hello there", before: field(value: ""), after: field(role: "AXGroup", editable: false, value: nil)) == .noTarget)
+    @Test func nothingEditableWithFocusIsNoTarget() {
+        let noElement = field(role: nil, editable: false, value: nil)
+        let notEditable = field(role: "AXGroup", editable: false, value: nil)
+        #expect(PasteLanding.landing(of: "hello there", before: field(value: ""), after: noElement) == .noTarget)
+        #expect(PasteLanding.landing(of: "hello there", before: field(value: ""), after: notEditable) == .noTarget)
+        // The controller copies the words for noTarget itself; nothing extra is kept here.
+        #expect(!PasteLanding.keepsPastedWordsOnPasteboard(before: field(value: ""), after: noElement))
+        #expect(!PasteLanding.keepsPastedWordsOnPasteboard(before: field(value: ""), after: notEditable))
+    }
+
+    /// Gmail, Slack, Electron: editable, but the value can't be read. The paste almost always
+    /// landed, so it is not reported as "press ⌘V" (that would paste twice) — but the old clipboard
+    /// is not put back, so the words can still be pasted if it didn't.
+    @Test func anEditableFieldThatCannotBeReadBackIsPostedAndKeepsTheWords() {
+        let webArea = field(role: "AXWebArea", editable: true, value: nil)
+        #expect(PasteLanding.landing(of: "hello there", before: field(role: "AXWebArea", value: nil), after: webArea) == .posted)
+        #expect(PasteLanding.keepsPastedWordsOnPasteboard(before: field(role: "AXWebArea", value: nil), after: webArea))
+        // A field that reads back is judged by its value; the clipboard comes back as usual.
+        #expect(!PasteLanding.keepsPastedWordsOnPasteboard(before: field(value: ""), after: field(value: "hello there")))
     }
 
     @Test func aReadableFieldWithoutTheTextIsPosted() {

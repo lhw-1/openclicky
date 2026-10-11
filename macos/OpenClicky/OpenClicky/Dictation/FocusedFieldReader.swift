@@ -178,12 +178,13 @@ enum FocusedFieldReader {
 enum PasteLanding {
     /// The field's text grew by the pasted text (or contains it): it landed.
     case verified
-    /// The keystroke was posted and a field read back, but the text was not seen in it (or another
-    /// app has focus now).
+    /// The keystroke was posted into an editable element but the text was not seen in it: it could
+    /// not be read back (a web area, an Electron view — the paste almost always landed there), the
+    /// text was not found, or another app has focus now.
     case posted
-    /// After the paste no readable text field has focus (no role, not editable, no value to read —
-    /// a web area, an Electron view, a sheet that swallowed ⌘V): whether the words landed cannot
-    /// be told, so they are left on the pasteboard and the person's clipboard is not put back.
+    /// After the paste nothing editable has focus (no focused element, no role, not editable — a
+    /// sheet that swallowed ⌘V): the paste clearly had nowhere to go, so the words are left on the
+    /// pasteboard.
     case noTarget
     /// No Accessibility permission: the text is on the pasteboard only.
     case leftOnPasteboard
@@ -191,13 +192,25 @@ enum PasteLanding {
     /// Reads the field back, briefly after the paste, and compares it with what was there before.
     static func verify(text: String, before: FocusedFieldSnapshot, settleSeconds: TimeInterval = 0.35) async -> PasteLanding {
         try? await Task.sleep(nanoseconds: UInt64(settleSeconds * 1_000_000_000))
-        return landing(of: text, before: before, after: FocusedFieldReader.snapshot())
+        let after = FocusedFieldReader.snapshot()
+        if keepsPastedWordsOnPasteboard(before: before, after: after) {
+            await MainActor.run { FrontAppTextInserter.copyToPasteboard(text) }
+        }
+        return landing(of: text, before: before, after: after)
+    }
+
+    /// An editable element whose value cannot be read back: the paste probably landed, so the orb
+    /// says nothing about ⌘V (pressing it would give the words twice) — but the person's old
+    /// clipboard is not put back, so the words stay recoverable with ⌘V if it did not land.
+    static func keepsPastedWordsOnPasteboard(before: FocusedFieldSnapshot, after: FocusedFieldSnapshot) -> Bool {
+        after.appBundleID == before.appBundleID && after.role != nil && after.isEditable && after.value == nil
     }
 
     /// The comparison `verify` makes, on the field as it was before the paste and as it is now.
     static func landing(of text: String, before: FocusedFieldSnapshot, after: FocusedFieldSnapshot) -> PasteLanding {
         guard after.appBundleID == before.appBundleID else { return .posted }
-        guard after.role != nil, after.isEditable, let value = after.value else { return .noTarget }
+        guard after.role != nil, after.isEditable else { return .noTarget }
+        guard let value = after.value else { return .posted }
         let needle = text.trimmingCharacters(in: .whitespacesAndNewlines)
         let probe = String(needle.prefix(200))
         if !probe.isEmpty, value.contains(probe) { return .verified }
