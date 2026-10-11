@@ -20,7 +20,8 @@
     "release:mac:publish": "bash macos/OpenClicky/scripts/release.sh --publish",
     "clean:mac-builds": "bash macos/OpenClicky/scripts/clean-stray-builds.sh",
     "upstream:check": "node scripts/upstream-watch.mjs --write",
-    "deploy:backend": "bash scripts/deploy-backend.sh"
+    "deploy:backend": "bash scripts/deploy-backend.sh",
+    "lint:source": "bash macos/OpenClicky/scripts/check-source-rules.sh"
   },
   "engines": {
     "node": ">=22"

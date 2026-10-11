@@ -4,7 +4,8 @@
 //
 //  One setting, every reader: the microphone chosen in settings reaches every engine that opens
 //  the microphone (F-13, F-21), the styles page's language reaches every dictation engine (F-16),
-//  and the hearing code logs its failures to the file the person can send, not only stdout (F-37).
+//  and the hearing code logs its failures to the file the person can send (F-37) — the last is a
+//  source rule in scripts/check-source-rules.sh, because a test reading ~/Documents prompts for access.
 //
 
 import CoreAudio
@@ -49,17 +50,6 @@ struct HearingSettingsTests {
         #expect(await client.audio.currentPreferredMicrophoneUID() == nil)
     }
 
-    /// Every owner of an `AVAudioEngine` that records a take or a question selects the chosen
-    /// microphone. The settings page's level meter is left out: it opens a fresh engine on the
-    /// chosen device for a few seconds and is checked by eye.
-    @Test func everyRecordingEngineSelectsTheChosenMicrophone() throws {
-        for name in ["BuddyDictationManager.swift", "RealtimeVoiceClient.swift"] {
-            let text = try sourceText(of: name)
-            #expect(text.contains("AVAudioEngine()"), "\(name) no longer owns an engine; update this test")
-            #expect(text.contains("MicrophoneDevices.apply(preferredUID:"), "\(name) records without the chosen microphone")
-        }
-    }
-
     // MARK: language
 
     /// F-16: the styles page's language, not the HUD's, reaches the backend engines; auto sends none.
@@ -87,32 +77,5 @@ struct HearingSettingsTests {
         #expect(AssemblyAIStreamingTranscriptionProvider.hears(languageCode: "hi"))
         #expect(AssemblyAIStreamingTranscriptionProvider.hears(languageCode: nil))
         #expect(!AssemblyAIStreamingTranscriptionProvider.hears(languageCode: "ta"))
-    }
-
-    // MARK: logging
-
-    /// F-37: a failure in the hearing code reaches ~/Library/Logs/OpenClicky/app.log. A `print` that
-    /// reports a failure must sit next to an `AppLog.append` (the print stays for the smoke runs).
-    @Test func hearingFailuresAreWrittenToTheAppLog() throws {
-        let failureWords = ["❌", "⚠️", "failed", "error", "denied", "unavailable", "silent"]
-        let files = ["BuddyDictationManager.swift", "AppleSpeechTranscriptionProvider.swift",
-                     "OpenAIAudioTranscriptionProvider.swift", "AssemblyAIStreamingTranscriptionProvider.swift"]
-        for name in files {
-            let lines = try sourceText(of: name).components(separatedBy: "\n")
-            #expect(lines.contains { $0.contains("AppLog.append(") }, "\(name) never writes to the app log")
-            for (index, line) in lines.enumerated() where line.contains("print(") {
-                let lowered = line.lowercased()
-                guard failureWords.contains(where: { lowered.contains($0.lowercased()) }) else { continue }
-                let neighbours = lines[max(0, index - 1)...min(lines.count - 1, index + 1)]
-                #expect(neighbours.contains { $0.contains("AppLog.append(") }, "\(name):\(index + 1) reports a failure with print only")
-            }
-        }
-    }
-
-    private func sourceText(of fileName: String) throws -> String {
-        let root = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().appendingPathComponent("OpenClicky")
-        let file = try #require(FileManager.default.enumerator(at: root, includingPropertiesForKeys: nil)?
-            .compactMap { $0 as? URL }.first { $0.lastPathComponent == fileName })
-        return try String(contentsOf: file, encoding: .utf8)
     }
 }

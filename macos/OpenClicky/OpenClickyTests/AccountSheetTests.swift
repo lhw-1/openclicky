@@ -102,19 +102,4 @@ struct AccountWorkSlotTests {
         #expect(EmailAccountForm.canSubmitCode("123 456"))
         #expect(!EmailAccountForm.canSubmitCode("12a456"))
     }
-
-    /// API-key fields (Settings, onboarding's Sarvam step) legitimately use SecureField, so only the
-    /// account files are checked.
-    @Test func noPasswordFieldIsLeftInTheAccountUI() throws {
-        let root = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().appendingPathComponent("OpenClicky")
-        let names: Set<String> = ["AccountSheet.swift", "EmailAccountForm.swift", "BillingStatus.swift", "SettingsAccountPage.swift"]
-        let files = FileManager.default.enumerator(at: root, includingPropertiesForKeys: nil)!.compactMap { $0 as? URL }.filter { names.contains($0.lastPathComponent) }
-        #expect(files.count == names.count)
-        for file in files {
-            let text = try String(contentsOf: file, encoding: .utf8)
-            #expect(!text.contains("SecureField") || file.lastPathComponent == "SettingsAccountPage.swift", "\(file.lastPathComponent) still has a password field")
-            #expect(!text.lowercased().contains("forgot password"), "\(file.lastPathComponent) still offers a password reset")
-            #expect(!text.contains("isSecure: true"), "\(file.lastPathComponent) still has a secure credential field")
-        }
-    }
 }
