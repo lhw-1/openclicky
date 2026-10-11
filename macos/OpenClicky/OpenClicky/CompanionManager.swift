@@ -1557,7 +1557,11 @@ final class CompanionManager: ObservableObject {
 
                 // OpenClicky two-tier routing: the gate decides whether this is a quick question
                 // (teacher lane below: Claude + pointing) or real work (agent lane: Codex thread).
-                if isAgentModeEnabled && OpenClickyConfiguration.isConfigured && AccountCapabilities.current().usesAgent {
+                // The agent lane needs the openclicky tool (not in the downloaded app); without it the
+                // quick actions below are offered to whoever answers instead.
+                let agentLaneRuns = isAgentModeEnabled && OpenClickyConfiguration.isConfigured
+                    && AccountCapabilities.current().usesAgent && OpenClickyAgentClient.isToolInstalled
+                if agentLaneRuns {
                     agentActivityText = "deciding…"
                     let lane = await openClickyAgentClient.classifyLane(for: transcript)
                     guard !Task.isCancelled else { return }
@@ -1586,8 +1590,9 @@ final class CompanionManager: ObservableObject {
                     (userPlaceholder: entry.userTranscript, assistantResponse: entry.assistantResponse)
                 }
 
-                // An account cannot run the agent, so it offers the quick actions to Claude instead.
-                let tools = AccountCapabilities.current().kind == .account ? RealtimeVoiceClient.anthropicToolDefinitions() : []
+                // Without the agent lane (an account, or no openclicky tool on this Mac) the quick
+                // actions are offered to whoever answers instead.
+                let tools = agentLaneRuns ? [] : RealtimeVoiceClient.anthropicToolDefinitions()
                 let toolsLine = tools.isEmpty ? "" : "\n\n" + Self.accountToolsInstruction
                 // The answer is spoken while it is still being written: each finished sentence goes to
                 // the voice, and the pointer moves when the voice starts (the prompt puts the tag first).
@@ -1970,6 +1975,7 @@ final class CompanionManager: ObservableObject {
         }
         let utterance = AVSpeechUtterance(string: text)
         utterance.rate = AVSpeechUtteranceDefaultSpeechRate
+        utterance.voice = MacVoice.currentVoice()
         systemSpeechSynthesizer.stopSpeaking(at: .immediate)
         systemSpeechSynthesizer.speak(utterance)
         voiceState = .responding

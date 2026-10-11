@@ -199,6 +199,24 @@ final class CompanionAppDelegate: NSObject, NSApplicationDelegate {
             }
             return
         }
+        if launchArguments.contains("--openclicky-mac-voice-smoke") {
+            // Debug: render one sentence in this Mac's voice to audio (not played) and report it.
+            setvbuf(stdout, nil, _IONBF, 0)
+            Task { @MainActor in
+                let started = Date()
+                do {
+                    let data = try await MacVoice.shared.audio(for: "hi, i'm clicky. this is how i sound on this mac.")
+                    let player = try AVAudioPlayer(data: data)
+                    print("mac-voice-smoke: \(MacVoice.currentVoice()?.name ?? "default") rendered \(data.count / 1024) KB, \(String(format: "%.1f", player.duration)) s of audio in \(String(format: "%.2f", Date().timeIntervalSince(started))) s")
+                    print("mac-voice-smoke: installed \(MacVoice.choices().map(\.label).prefix(8).joined(separator: ", "))")
+                    exit(player.duration > 1 ? 0 : 2)
+                } catch {
+                    print("mac-voice-smoke: error \(error.localizedDescription)")
+                    exit(1)
+                }
+            }
+            return
+        }
         if launchArguments.contains("--openclicky-answer-smoke") {
             // Debug: one real question (a red square) through ClaudeAPI and whatever source
             // shell.json routes to, printing the streamed text and the answer, then exit.

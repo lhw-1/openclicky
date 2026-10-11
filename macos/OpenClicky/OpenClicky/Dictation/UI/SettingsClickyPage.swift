@@ -9,6 +9,7 @@
 
 import AppKit
 import Combine
+import AVFoundation
 import SwiftUI
 
 extension SettingsCatalog {
@@ -43,6 +44,12 @@ extension SettingsCatalog {
                 title: "Answers come from", detail: "Automatic uses your own keys first, then plans you switched on, then the free credits.",
                 keywords: ["provider", "model", "openai", "anthropic", "claude", "openrouter", "gemini", "groq", "mistral", "grok", "codex", "subscription", "plan", "answers"],
                 view: AnyView(AnswerSourceRow())),
+            SettingsItem(
+                id: "clicky.speechVoice", page: .clicky, section: "Voice",
+                title: "Voice", detail: "Who speaks the answers: the cloud voice, or this Mac’s own voice, free and offline.",
+                keywords: ["voice", "speech", "tts", "text to speech", "elevenlabs", "eleven labs", "offline", "on device",
+                           "mac voice", "premium voice", "siri", "credits", "allowance", "left"],
+                view: AnyView(SpeechVoiceRows())),
             SettingsItem(
                 id: "clicky.language", page: .clicky, section: "Voice",
                 title: "Language", detail: "Clicky speaks and listens in this.",
@@ -223,6 +230,104 @@ private struct AnswerSourceRow: View {
         case .answerProvider(let source): return source.displayName
         case .openAIDirect: return AnswerSource.openAI.displayName
         case .unavailable: return "nothing set up yet"
+        }
+    }
+}
+
+/// Who speaks the answers (`speechVoice` in shell.json): the cloud voice, said by name with what is
+/// left of the free allowance, or this Mac's own voice, with its own row to pick, preview and get
+/// better voices. A group, so the form draws the Mac voice as its own row.
+private struct SpeechVoiceRows: View {
+    @ObservedObject private var shellSettingsRevision = ShellSettingsRevision.shared
+    @StateObject private var billing = BillingStatusModel()
+
+    var body: some View {
+        let _ = shellSettingsRevision.revision
+        let usesMac = MacVoice.isChosen()
+        Group {
+            SettingsRow(title: "Voice", detail: usesMac ? "Now: this Mac’s voice. Free, offline, nothing counted." : "Now: \(cloudVoiceSentence)") {
+                Picker("", selection: Binding(
+                    get: { usesMac ? "mac" : "cloud" },
+                    set: { choice in
+                        OpenClickyConfiguration.update { $0.speechVoice = choice == "mac" ? "mac" : nil }
+                        ShellSettingsRevision.shared.noteChanged()
+                    }
+                )) {
+                    Text("Cloud voice").tag("cloud")
+                    Text("This Mac").tag("mac")
+                }
+                .labelsHidden().fixedSize()
+            }
+            .onAppear { billing.refresh() }
+            if usesMac { MacVoiceRow() }
+        }
+    }
+
+    /// Who the cloud voice is now and what it costs.
+    private var cloudVoiceSentence: String {
+        switch ProviderRouter.route(for: .speech, credentials: ProviderRouter.currentCredentials()) {
+        case .openAIDirect:
+            return "OpenAI, on your own key."
+        case .unavailable:
+            return "nobody yet. The cloud voice needs a free account or an OpenAI key; this Mac’s voice works now."
+        case .backend, .anthropicDirect, .answerProvider:
+            guard let summary = billing.summary, summary.isMetered, !summary.byok else { return "ElevenLabs, through OpenClicky." }
+            if summary.isSwitchedOff { return "ElevenLabs, on the free credits, which are used up for now. This Mac’s voice works meanwhile." }
+            let left = max(0, 100 - Int((summary.fractionUsed * 100).rounded()))
+            return "ElevenLabs, on the free credits. \(left)% of this month’s allowance is left."
+        }
+    }
+}
+
+/// The Mac voice: which one, a preview, and where to download the better ones.
+private struct MacVoiceRow: View {
+    @State private var choices = MacVoice.choices()
+    @State private var pickedID = MacVoice.currentVoice()?.identifier ?? ""
+
+    var body: some View {
+        Group {
+            SettingsRow(title: "Mac voice", detail: "Picking one says a line in it.") {
+                HStack(spacing: 8) {
+                    Picker("", selection: Binding(
+                        get: { pickedID },
+                        set: { identifier in
+                            pickedID = identifier
+                            OpenClickyConfiguration.update { $0.macVoiceIdentifier = identifier }
+                            MacVoicePreview.shared.play()
+                        }
+                    )) {
+                        ForEach(choices) { Text($0.label).tag($0.id) }
+                    }
+                    .labelsHidden()
+                    .frame(maxWidth: 220)
+                    Button("Preview") { MacVoicePreview.shared.play() }.fixedSize()
+                }
+            }
+            SettingsRow(title: "Better voices", detail: "Premium and Enhanced voices are small models macOS downloads once, then they run offline: Spoken Content, System voice, Manage Voices.") {
+                Button("Get Voices…") {
+                    openExternalLink("x-apple.systempreferences:com.apple.preference.universalaccess?SpokenContent")
+                }
+                .fixedSize()
+            }
+        }
+        // A voice downloaded in System Settings shows up when the window comes back.
+        .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
+            choices = MacVoice.choices()
+        }
+    }
+}
+
+/// Says one line in the current Mac voice, for the Preview button.
+@MainActor
+private final class MacVoicePreview {
+    static let shared = MacVoicePreview()
+    private var player: AVAudioPlayer?
+
+    func play() {
+        Task {
+            guard let data = try? await MacVoice.shared.audio(for: "hi, i'm clicky. this is how i sound on this mac.") else { return }
+            player = try? AVAudioPlayer(data: data)
+            player?.play()
         }
     }
 }

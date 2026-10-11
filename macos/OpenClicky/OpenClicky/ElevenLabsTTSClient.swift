@@ -58,6 +58,8 @@ final class ElevenLabsTTSClient {
     /// The audio for `text` from the backend's /tts, without playing it. Used by `SpeechQueue` to
     /// fetch the next piece of an answer while the current one plays.
     func fetchAudio(for text: String) async throws -> Data {
+        // Picked in Settings → Clicky: this Mac speaks, free and offline.
+        if MacVoice.isChosen() { return try await MacVoice.shared.audio(for: text) }
         switch ProviderRouter.current(for: .speech) {
         case .openAIDirect:
             // The person's own OpenAI key: OpenAI speech straight from OpenAI, as the backend's
