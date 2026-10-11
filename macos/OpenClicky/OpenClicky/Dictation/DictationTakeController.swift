@@ -27,9 +27,10 @@ enum DictationEngineResolver {
         case .sarvam:
             return SarvamTranscriptionProvider(language: { settings.language })
         case .openclicky:
-            return OpenAIAudioTranscriptionProvider()
+            // The styles page's language, read when a take starts; auto sends none so the model detects it.
+            return OpenAIAudioTranscriptionProvider(language: { settings.language.bareCode })
         case .assemblyai:
-            return AssemblyAIStreamingTranscriptionProvider()
+            return AssemblyAIStreamingTranscriptionProvider(language: { settings.language.bareCode })
         }
     }
 
@@ -431,6 +432,17 @@ final class DictationTakeController: ObservableObject {
             guard self.takeID == thisTakeID else { return }
             self.pendingStartTask = nil
             if self.state == .starting { self.state = .listening }
+            // The start came back without opening a session (microphone denied, a refused engine):
+            // nothing will ever end this take, and presses are ignored while it lasts. The manager's
+            // own reason usually arrives first through the error stream; this catches the rest.
+            if !self.dictationManager.isDictationInProgress, !self.takeReceivedFinalTranscript {
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) { [weak self] in
+                    guard let self, self.takeID == thisTakeID, self.isTakeInProgress, !self.takeReceivedFinalTranscript,
+                          !self.dictationManager.isDictationInProgress else { return }
+                    self.failTake("couldn't open the microphone", takeID: thisTakeID)
+                }
+                return
+            }
             if self.settings.readNearbyText {
                 let readNearbyTerms = self.host.readNearbyTerms
                 let terms = await Task.detached(priority: .utility) { readNearbyTerms() }.value
