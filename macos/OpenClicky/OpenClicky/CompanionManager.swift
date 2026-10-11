@@ -1792,53 +1792,69 @@ final class CompanionManager: ObservableObject {
     /// onboarding demo puts it last). Returns the spoken text (tag removed) and the optional
     /// coordinate + label + screen number.
     static func parsePointingCoordinates(from responseText: String) -> PointingParseResult {
-        // A leading tag is moved to the end and read there. Only when text follows it: a tag on its
-        // own is already "at the end", and moving it again would recurse forever.
+        // No recursion: a leading tag is cut off, then the trailing tag is looked for once in what is
+        // left. Moving the leading tag to the end and parsing again recursed forever (and crashed the
+        // app) when two tags stood with nothing else between them.
+        var leadingTag: String?
+        var textAfterLeadingTag = responseText
         if let leadingTagRange = responseText.range(of: #"^\s*\[POINT:[^\]]*\]"#, options: .regularExpression) {
-            let leadingTag = responseText[leadingTagRange].trimmingCharacters(in: .whitespacesAndNewlines)
-            let textAfterTag = responseText[leadingTagRange.upperBound...].trimmingCharacters(in: .whitespacesAndNewlines)
-            if !textAfterTag.isEmpty {
-                return parsePointingCoordinates(from: textAfterTag + " " + leadingTag)
-            }
-        }
-        // Match [POINT:none] or [POINT:123,456:label] or [POINT:123,456:label:screen2]
-        let pattern = #"\[POINT:(?:none|(\d+)\s*,\s*(\d+)(?::([^\]:\s][^\]:]*?))?(?::screen(\d+))?)\]\s*$"#
-
-        guard let regex = try? NSRegularExpression(pattern: pattern, options: []),
-              let match = regex.firstMatch(in: responseText, range: NSRange(responseText.startIndex..., in: responseText)) else {
-            // No tag found at all
-            return PointingParseResult(spokenText: responseText, coordinate: nil, elementLabel: nil, screenNumber: nil)
+            leadingTag = responseText[leadingTagRange].trimmingCharacters(in: .whitespacesAndNewlines)
+            textAfterLeadingTag = String(responseText[leadingTagRange.upperBound...])
         }
 
-        // Remove the tag from the spoken text
-        let tagRange = Range(match.range, in: responseText)!
-        let spokenText = String(responseText[..<tagRange.lowerBound]).trimmingCharacters(in: .whitespacesAndNewlines)
-
-        // Check if it's [POINT:none]
-        guard match.numberOfRanges >= 3,
-              let xRange = Range(match.range(at: 1), in: responseText),
-              let yRange = Range(match.range(at: 2), in: responseText),
-              let x = Double(responseText[xRange]),
-              let y = Double(responseText[yRange]) else {
-            return PointingParseResult(spokenText: spokenText, coordinate: nil, elementLabel: "none", screenNumber: nil)
+        var trailingTag: String?
+        var spokenText = textAfterLeadingTag
+        if let trailingMatch = pointTagRegex(anchoredAtEnd: true).firstMatch(
+            in: textAfterLeadingTag, range: NSRange(textAfterLeadingTag.startIndex..., in: textAfterLeadingTag)),
+           let trailingTagRange = Range(trailingMatch.range, in: textAfterLeadingTag) {
+            trailingTag = textAfterLeadingTag[trailingTagRange].trimmingCharacters(in: .whitespacesAndNewlines)
+            spokenText = String(textAfterLeadingTag[..<trailingTagRange.lowerBound])
         }
+        spokenText = spokenText.trimmingCharacters(in: .whitespacesAndNewlines)
 
-        var elementLabel: String? = nil
-        if match.numberOfRanges >= 4, let labelRange = Range(match.range(at: 3), in: responseText) {
-            elementLabel = String(responseText[labelRange]).trimmingCharacters(in: .whitespaces)
+        // The first tag that reads as one decides where to point (the prompt puts it first).
+        let firstReadableTag = [leadingTag, trailingTag].compactMap { $0 }.lazy.compactMap(readPointTag).first
+        guard let firstReadableTag else {
+            // No tag found at all (a malformed leading tag is still never spoken)
+            return PointingParseResult(spokenText: leadingTag == nil ? responseText : spokenText, coordinate: nil, elementLabel: nil, screenNumber: nil)
         }
-
-        var screenNumber: Int? = nil
-        if match.numberOfRanges >= 5, let screenRange = Range(match.range(at: 4), in: responseText) {
-            screenNumber = Int(responseText[screenRange])
-        }
-
         return PointingParseResult(
             spokenText: spokenText,
-            coordinate: CGPoint(x: x, y: y),
-            elementLabel: elementLabel,
-            screenNumber: screenNumber
+            coordinate: firstReadableTag.coordinate,
+            elementLabel: firstReadableTag.elementLabel,
+            screenNumber: firstReadableTag.screenNumber
         )
+    }
+
+    /// Matches [POINT:none] or [POINT:123,456:label] or [POINT:123,456:label:screen2]: at the end
+    /// of the text (with trailing whitespace), or as the whole string.
+    private static func pointTagRegex(anchoredAtEnd: Bool) -> NSRegularExpression {
+        let tagPattern = #"\[POINT:(?:none|(\d+)\s*,\s*(\d+)(?::([^\]:\s][^\]:]*?))?(?::screen(\d+))?)\]"#
+        let pattern = anchoredAtEnd ? tagPattern + #"\s*$"# : "^" + tagPattern + "$"
+        return try! NSRegularExpression(pattern: pattern, options: [])
+    }
+
+    /// One tag on its own, read: nil when it is not a well-formed tag; a nil coordinate for [POINT:none].
+    private static func readPointTag(_ pointTag: String) -> (coordinate: CGPoint?, elementLabel: String?, screenNumber: Int?)? {
+        guard let match = pointTagRegex(anchoredAtEnd: false).firstMatch(in: pointTag, range: NSRange(pointTag.startIndex..., in: pointTag)) else {
+            return nil
+        }
+        // Check if it's [POINT:none]
+        guard let xRange = Range(match.range(at: 1), in: pointTag),
+              let yRange = Range(match.range(at: 2), in: pointTag),
+              let x = Double(pointTag[xRange]),
+              let y = Double(pointTag[yRange]) else {
+            return (coordinate: nil, elementLabel: "none", screenNumber: nil)
+        }
+        var elementLabel: String? = nil
+        if let labelRange = Range(match.range(at: 3), in: pointTag) {
+            elementLabel = String(pointTag[labelRange]).trimmingCharacters(in: .whitespaces)
+        }
+        var screenNumber: Int? = nil
+        if let screenRange = Range(match.range(at: 4), in: pointTag) {
+            screenNumber = Int(pointTag[screenRange])
+        }
+        return (coordinate: CGPoint(x: x, y: y), elementLabel: elementLabel, screenNumber: screenNumber)
     }
 
     // MARK: - Onboarding

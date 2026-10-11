@@ -34,6 +34,18 @@ struct SpokenChunkerTests {
         #expect(chunker.pointTag == "[POINT:5,6:save]")
     }
 
+    @Test func aSecondTagAfterTheLeadingOneIsNeverSpoken() {
+        var chunker = SpokenChunker()
+        #expect(chunker.feed(accumulated: "[POINT:none] [POINT:10,20:x]") == [])
+        #expect(chunker.finish() == [])
+        #expect(chunker.pointTag == "[POINT:none]")
+
+        var twoPoints = SpokenChunker()
+        _ = twoPoints.feed(accumulated: "[POINT:10,20:x]\n[POINT:30,40:y]")
+        #expect(twoPoints.finish() == [])
+        #expect(twoPoints.pointTag == "[POINT:10,20:x]")
+    }
+
     @Test func decimalsAndAnswersWithoutTagsStayWhole() {
         var chunker = SpokenChunker()
         #expect(chunker.feed(accumulated: "it costs 3.5 dollars") == [])
@@ -63,5 +75,42 @@ struct PointTagPositionTests {
         #expect(tagAlone.elementLabel == "code")
         #expect(tagAlone.spokenText == "")
         #expect(CompanionManager.parsePointingCoordinates(from: "  [POINT:none]  ").coordinate == nil)
+    }
+
+    // Two tags with nothing else between them once recursed forever and crashed the app at the end
+    // of an answer. The first tag that reads as a tag wins; neither is ever spoken.
+    @Test func twoTagsWithNothingElseDoNotRecurse() {
+        let pointThenNone = CompanionManager.parsePointingCoordinates(from: "[POINT:120,40:code] [POINT:none]")
+        #expect(pointThenNone.coordinate == CGPoint(x: 120, y: 40))
+        #expect(pointThenNone.elementLabel == "code")
+        #expect(pointThenNone.spokenText == "")
+
+        let noneThenPoint = CompanionManager.parsePointingCoordinates(from: "[POINT:none] [POINT:10,20:x]")
+        #expect(noneThenPoint.coordinate == nil)
+        #expect(noneThenPoint.elementLabel == "none")
+        #expect(noneThenPoint.spokenText == "")
+
+        let twoPoints = CompanionManager.parsePointingCoordinates(from: "[POINT:10,20:x]\n[POINT:30,40:y]")
+        #expect(twoPoints.coordinate == CGPoint(x: 10, y: 20))
+        #expect(twoPoints.spokenText == "")
+
+        let twoNones = CompanionManager.parsePointingCoordinates(from: "[POINT:none] [POINT:none]")
+        #expect(twoNones.coordinate == nil)
+        #expect(twoNones.spokenText == "")
+    }
+
+    @Test func aLeadingAndATrailingTagAroundTextKeepTheTextAndTheFirstTag() {
+        let both = CompanionManager.parsePointingCoordinates(from: "[POINT:10,20:save] click save. [POINT:30,40:other]")
+        #expect(both.coordinate == CGPoint(x: 10, y: 20))
+        #expect(both.spokenText == "click save.")
+    }
+
+    @Test func aTagInTheMiddleOrAnUnclosedTagIsLeftAsText() {
+        let middle = CompanionManager.parsePointingCoordinates(from: "click [POINT:10,20:x] there.")
+        #expect(middle.coordinate == nil)
+        #expect(middle.spokenText == "click [POINT:10,20:x] there.")
+        let unclosed = CompanionManager.parsePointingCoordinates(from: "[POINT:10,20:x")
+        #expect(unclosed.coordinate == nil)
+        #expect(unclosed.spokenText == "[POINT:10,20:x")
     }
 }

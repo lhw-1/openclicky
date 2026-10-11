@@ -52,8 +52,12 @@ struct SpokenChunker {
         var remainingText = String(accumulatedText.dropFirst(consumedCharacterCount))
         consumedCharacterCount = accumulatedText.count
 
-        if pointTag == nil, let trailingTagRange = remainingText.range(of: Self.trailingTagPattern, options: .regularExpression) {
-            pointTag = String(remainingText[trailingTagRange]).trimmingCharacters(in: .whitespacesAndNewlines)
+        // A trailing tag is never spoken, even after a leading one ("[POINT:none] [POINT:10,20:x]");
+        // the first tag seen is the one that points.
+        if let trailingTagRange = remainingText.range(of: Self.trailingTagPattern, options: .regularExpression) {
+            if pointTag == nil {
+                pointTag = String(remainingText[trailingTagRange]).trimmingCharacters(in: .whitespacesAndNewlines)
+            }
             remainingText.removeSubrange(trailingTagRange)
         }
         let lastChunk = remainingText.trimmingCharacters(in: .whitespacesAndNewlines)
