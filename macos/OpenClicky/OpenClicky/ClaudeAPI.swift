@@ -341,7 +341,7 @@ class ClaudeAPI {
     }
 }
 
-struct ClaudeToolCall: Equatable {
+nonisolated struct ClaudeToolCall: Equatable, Sendable {
     let id: String
     let name: String
     let arguments: [String: String]

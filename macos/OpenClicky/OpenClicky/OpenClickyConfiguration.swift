@@ -49,6 +49,22 @@ struct OpenClickyShellSettings: Codable {
     /// Your Sarvam key (dashboard.sarvam.ai): Saaras transcribes takes and a Sarvam model polishes
     /// them, straight from this Mac. Never sent to the OpenClicky backend.
     var sarvamKey: String? = nil
+    /// More keys that can answer questions (AnswerProvider.swift), each straight to its vendor:
+    /// OpenRouter (one key for Claude, GPT, Gemini, Llama…), Google Gemini, Groq, Mistral, xAI.
+    var openRouterApiKey: String? = nil
+    var geminiApiKey: String? = nil
+    var groqApiKey: String? = nil
+    var mistralApiKey: String? = nil
+    var xaiApiKey: String? = nil
+    /// Answer questions through a plan the person already pays for: the Claude Code CLI signed in
+    /// to their Claude plan, or Codex signed in with ChatGPT. Off until switched on in Settings.
+    var useClaudeCodePlan: Bool? = nil
+    var useCodexPlan: Bool? = nil
+    /// Who answers questions: nil or "auto" picks in ProviderRouter's order; otherwise one of
+    /// AnswerSource's raw values.
+    var answerSource: String? = nil
+    /// Model overrides per provider ("openrouter": "anthropic/claude-sonnet-4.6"); absent → default.
+    var answerModels: [String: String]? = nil
     /// Written by sign-in (OpenClickyAuthSession): the refresh token that keeps `token` fresh, when it
     /// expires (unix seconds), and whose account it is. Absent when the token was pasted by hand.
     var refreshToken: String? = nil
@@ -81,6 +97,15 @@ extension OpenClickyShellSettings {
         openaiApiKey = try container.decodeIfPresent(String.self, forKey: .openaiApiKey)
         anthropicApiKey = try container.decodeIfPresent(String.self, forKey: .anthropicApiKey)
         sarvamKey = try container.decodeIfPresent(String.self, forKey: .sarvamKey)
+        openRouterApiKey = try container.decodeIfPresent(String.self, forKey: .openRouterApiKey)
+        geminiApiKey = try container.decodeIfPresent(String.self, forKey: .geminiApiKey)
+        groqApiKey = try container.decodeIfPresent(String.self, forKey: .groqApiKey)
+        mistralApiKey = try container.decodeIfPresent(String.self, forKey: .mistralApiKey)
+        xaiApiKey = try container.decodeIfPresent(String.self, forKey: .xaiApiKey)
+        useClaudeCodePlan = try container.decodeIfPresent(Bool.self, forKey: .useClaudeCodePlan)
+        useCodexPlan = try container.decodeIfPresent(Bool.self, forKey: .useCodexPlan)
+        answerSource = try container.decodeIfPresent(String.self, forKey: .answerSource)
+        answerModels = try container.decodeIfPresent([String: String].self, forKey: .answerModels)
         refreshToken = try container.decodeIfPresent(String.self, forKey: .refreshToken)
         tokenExpiresAt = try container.decodeIfPresent(Double.self, forKey: .tokenExpiresAt)
         accountEmail = try container.decodeIfPresent(String.self, forKey: .accountEmail)
