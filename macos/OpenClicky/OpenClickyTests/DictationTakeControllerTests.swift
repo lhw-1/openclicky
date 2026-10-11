@@ -301,6 +301,31 @@ struct DictationTakeControllerTests {
         #expect(h.orb.phase == .failed("didn't catch that"))
     }
 
+    /// Speakers in the headphone jack: its input hears nothing, and the offline recogniser wrote
+    /// the silence down as "no", which was pasted. A take whose microphone never heard a voice
+    /// pastes nothing; the same words from a microphone that did are pasted.
+    @Test @MainActor func wordsFromASilentMicrophoneAreNotPasted() async throws {
+        let h = try Harness()
+        h.controller.handle(.dictationPressed)
+        await h.waitUntil { h.controller.state == .listening }
+        for _ in 0..<12 { h.capture.level.send(0.004) }
+        try await Task.sleep(nanoseconds: 150_000_000)
+        h.controller.handle(.dictationReleased(wasTap: false))
+        h.capture.deliverFinal("no")
+        await h.waitUntil { h.controller.state == .idle }
+        #expect(h.pasted.texts.isEmpty)
+        #expect(h.orb.phase == .failed("didn't catch that. check the microphone"))
+
+        h.controller.handle(.dictationPressed)
+        await h.waitUntil { h.controller.state == .listening }
+        for level in [0.02, 0.3, 0.5, 0.4, 0.2, 0.1, 0.3, 0.2, 0.1, 0.05, 0.02, 0.01] { h.capture.level.send(level) }
+        try await Task.sleep(nanoseconds: 150_000_000)
+        h.controller.handle(.dictationReleased(wasTap: false))
+        h.capture.deliverFinal("no")
+        await h.waitUntil { !h.pasted.texts.isEmpty }
+        #expect(!h.pasted.texts.isEmpty)
+    }
+
     @Test @MainActor func aSessionThatEndsWithoutWordsFailsTheTake() async throws {
         let h = try Harness()
         h.controller.handle(.dictationPressed)

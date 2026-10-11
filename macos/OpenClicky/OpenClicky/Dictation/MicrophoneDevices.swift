@@ -32,6 +32,23 @@ nonisolated enum MicrophoneDevices {
         .sorted { ($0.isDefault ? 0 : 1, $0.name) < ($1.isDefault ? 0 : 1, $1.name) }
     }
 
+    /// The name of the microphone a take would record from right now, for "Automatic (…)".
+    static func effectiveInputName(preferredUID: String?) -> String? {
+        let connected = allDeviceIDs().compactMap { deviceID in
+            stringProperty(of: deviceID, kAudioDevicePropertyDeviceUID).map { ConnectedInput(deviceID: deviceID, uid: $0) }
+        }
+        let choice = deviceToSelect(preferredUID: preferredUID, connected: connected, defaultDeviceID: defaultInputDeviceID())
+        guard let deviceID = choice.deviceID else { return nil }
+        return stringProperty(of: deviceID, kAudioObjectPropertyName)
+    }
+
+    /// True when the built-in microphone is connected and is not what a take would use now.
+    static func builtInMicrophoneIsAnAlternative(preferredUID: String?) -> Bool {
+        let devices = available()
+        guard let builtIn = devices.first(where: { $0.uid == builtInMicrophoneUID }) else { return false }
+        return effectiveInputName(preferredUID: preferredUID) != builtIn.name
+    }
+
     static func defaultInputName() -> String? {
         guard let deviceID = defaultInputDeviceID() else { return nil }
         return stringProperty(of: deviceID, kAudioObjectPropertyName)
@@ -90,11 +107,25 @@ nonisolated enum MicrophoneDevices {
         let uid: String
     }
 
-    /// Which device a take records from: the chosen one when it is connected, else the default.
+    /// The headphone jack's input. macOS lists it, and often makes it the default input, as soon as
+    /// anything is plugged into the jack, speakers and plain headphones included, which have no
+    /// microphone: it records silence, and the offline recogniser turned that silence into "no".
+    static let headphoneJackInputUID = "BuiltInHeadphoneInputDevice"
+    static let builtInMicrophoneUID = "BuiltInMicrophoneDevice"
+
+    /// Which device a take records from: the chosen one when it is connected, else the default,
+    /// except that a default which is the headphone jack gives way to the built-in microphone
+    /// (choose the jack explicitly for a headset with a microphone).
     /// `chosenUIDIsMissing` is true when a device was chosen but is not among `connected`.
     static func deviceToSelect(preferredUID: String?, connected: [ConnectedInput],
                                defaultDeviceID: AudioDeviceID?) -> (deviceID: AudioDeviceID?, chosenUIDIsMissing: Bool) {
-        guard let preferredUID, !preferredUID.isEmpty else { return (defaultDeviceID, false) }
+        guard let preferredUID, !preferredUID.isEmpty else {
+            let defaultUID = connected.first(where: { $0.deviceID == defaultDeviceID })?.uid
+            if defaultUID == headphoneJackInputUID, let builtIn = connected.first(where: { $0.uid == builtInMicrophoneUID }) {
+                return (builtIn.deviceID, false)
+            }
+            return (defaultDeviceID, false)
+        }
         if let match = connected.first(where: { $0.uid == preferredUID }) { return (match.deviceID, false) }
         return (defaultDeviceID, true)
     }

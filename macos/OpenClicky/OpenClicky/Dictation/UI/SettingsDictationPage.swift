@@ -28,7 +28,7 @@ extension SettingsCatalog {
                 view: AnyView(MovedToStylesNote(companionManager: companionManager))),
             SettingsItem(
                 id: "dictation.input", page: .dictation, section: "Microphone",
-                title: "Input", detail: "Follows the Mac’s default unless you pick one.",
+                title: "Input", detail: "Automatic follows the Mac’s default, but skips the headphone jack when nothing there can hear.",
                 keywords: ["microphone", "mic", "device", "input", "headset", "airpods"],
                 view: AnyView(MicrophoneInputRow(settings: settings))),
             SettingsItem(
@@ -188,9 +188,9 @@ private struct MicrophoneInputRow: View {
     @State private var devices = MicrophoneDevices.available()
 
     var body: some View {
-        SettingsRow(title: "Input", detail: "Follows the Mac’s default unless you pick one. Now: \(currentName).") {
+        SettingsRow(title: "Input", detail: "Automatic follows the Mac’s default, skipping a headphone jack with no microphone. Now: \(currentName).") {
             Picker("", selection: Binding(get: { settings.preferredMicrophoneUID ?? "" }, set: { settings.preferredMicrophoneUID = $0.isEmpty ? nil : $0 })) {
-                Text("Mac default (\(MicrophoneDevices.defaultInputName() ?? "none"))").tag("")
+                Text("Automatic (\(MicrophoneDevices.effectiveInputName(preferredUID: nil) ?? "none"))").tag("")
                 ForEach(devices) { device in Text(device.name).tag(device.uid) }
             }
             .labelsHidden().frame(maxWidth: 260)
@@ -200,7 +200,7 @@ private struct MicrophoneInputRow: View {
 
     private var currentName: String {
         if let uid = settings.preferredMicrophoneUID, let device = devices.first(where: { $0.uid == uid }) { return device.name }
-        return MicrophoneDevices.defaultInputName() ?? "no microphone found"
+        return MicrophoneDevices.effectiveInputName(preferredUID: nil) ?? "no microphone found"
     }
 }
 

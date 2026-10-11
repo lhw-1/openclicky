@@ -132,6 +132,13 @@ final class FirstRunTourController: ObservableObject {
             .removeDuplicates()
             .sink { [weak self] takeState in self?.takeStateChanged(takeState) }
             .store(in: &cancellables)
+        // A take that failed ("didn't catch that") never becomes a lastTake; the orb says it.
+        companionManager.orbModel.$phase
+            .sink { [weak self] phase in
+                guard let self, self.step == .dictate, case .failed = phase else { return }
+                DispatchQueue.main.async { self.couldNotHear() }
+            }
+            .store(in: &cancellables)
         companionManager.orbModel.$audioLevel
             .sink { [weak self] level in
                 guard let self, self.isWatchingForSilence else { return }
@@ -151,14 +158,35 @@ final class FirstRunTourController: ObservableObject {
     private func takeFinished(_ take: TakeRecord) {
         guard step == .dictate else { return }
         let words = take.displayText.trimmingCharacters(in: .whitespacesAndNewlines)
-        if take.status == .complete && !words.isEmpty {
+        let wordCount = words.split(whereSeparator: { $0.isWhitespace }).count
+        // A real first take: a sentence (one word like "no" is what silence turns into) from a
+        // microphone that heard a voice.
+        if take.status == .complete && wordCount >= 2 && loudestLevelThisTake >= Self.voiceLevel {
             succeed(with: "✓ heard you: “\(words.prefix(60))\(words.count > 60 ? "…" : "")”")
-        } else {
-            status = "didn’t catch any words. try again, or pick another microphone."
+        } else if take.status == .complete && wordCount < 2 && loudestLevelThisTake >= Self.voiceLevel {
+            status = "i only got “\(words)”. say a whole sentence, like the one above."
             statusIsGood = false
-            offersMicrophoneChange = true
+            offersMicrophoneChange = false
             publish()
+        } else {
+            couldNotHear()
         }
+    }
+
+    /// A take ended with nothing usable: most often the wrong microphone.
+    private func couldNotHear() {
+        guard let companionManager else { return }
+        let name = MicrophoneMenu.deviceName(settings: companionManager.dictationSettings)
+        status = "i couldn’t hear you through \(name). choose the microphone you’re using."
+        statusIsGood = false
+        offersMicrophoneChange = true
+        publish()
+    }
+
+    /// The built-in microphone is there and is not the one listening: offer it in one click.
+    private var suggestsBuiltInMicrophone: Bool {
+        offersMicrophoneChange && MicrophoneDevices.builtInMicrophoneIsAnAlternative(
+            preferredUID: companionManager?.dictationSettings.preferredMicrophoneUID)
     }
 
     private var isWatchingForSilence = false
@@ -268,6 +296,15 @@ final class FirstRunTourController: ObservableObject {
             if needsFnFreed {
                 FnKeyGuard.freeFn()
                 publish()
+            } else if suggestsBuiltInMicrophone {
+                companionManager.dictationSettings.preferredMicrophoneUID = MicrophoneDevices.builtInMicrophoneUID
+                if companionManager.dictationTakeController.isTakeInProgress {
+                    companionManager.dictationTakeController.cancelTake(reason: "cancelled")
+                }
+                status = "now listening through \(MicrophoneMenu.deviceName(settings: companionManager.dictationSettings)). try again."
+                statusIsGood = false
+                offersMicrophoneChange = false
+                publish()
             }
         case .talk, .act:
             if !OpenClickyConfiguration.isConfigured { companionManager.showSettings(.account) }
@@ -333,7 +370,7 @@ final class FirstRunTourController: ObservableObject {
                 keys: [key], status: status ?? fnNote, statusIsGood: statusIsGood,
                 microphoneName: companionManager.map { MicrophoneMenu.deviceName(settings: $0.dictationSettings) },
                 microphoneNeedsAttention: offersMicrophoneChange,
-                primaryTitle: needsFnFreed ? "free fn" : nil, secondaryTitle: "skip")
+                primaryTitle: needsFnFreed ? "free fn" : (suggestsBuiltInMicrophone ? "use built-in mic" : nil), secondaryTitle: "skip")
         case .talk:
             return FirstRunTourCard(
                 step: .talk, title: canAsk ? "now ask me something" : "asking me needs a key or an account",
