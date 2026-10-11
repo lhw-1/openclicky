@@ -111,9 +111,7 @@ grant (`GRANT_ACCOUNTS=true`).
 - **Older apps (0.6–0.8) and own keys through the backend.** Those versions send the key to the
   backend as `x-openclicky-openai-key` / `x-openclicky-anthropic-key`. The backend accepts that with
   no token at all on the model routes (`/v1/*`, `/chat`, `/tts`, `/agent/*`, `/skills/*`): it runs the
-  call on those keys only, never on its own, meters nothing, and holds each address to 60 model calls
-  and 180 speech pieces a minute (`OWN_KEY_REQUESTS_PER_MINUTE`, `OWN_KEY_TTS_PER_MINUTE`; 429 with
-  `Retry-After`). A request that sends an `Authorization` header is judged on it alone, so a bad token
+  call on those keys only, never on its own, meters nothing and limits nothing — it is the person's key. A request that sends an `Authorization` header is judged on it alone, so a bad token
   is still a 401, and the account routes (`/billing/*`, `/auth/*`, `/transcribe-token`) still need an
   account. Without an Anthropic key the Claude lanes answer `402 byok_missing_anthropic_key`.
 - **A free account on the grant.** Setup asks only for an email. The backend (`POST /auth/start`)

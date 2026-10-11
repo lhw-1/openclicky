@@ -3,7 +3,6 @@ import http from "node:http";
 import { createApp } from "../src/app.js";
 import type { Env } from "../src/env.js";
 import { MemorySpendLedger } from "../src/ledger.js";
-import { resetOwnKeyLimits } from "../src/ownKey.js";
 
 // Issue #4: an own OpenAI key works with no account.
 
@@ -31,7 +30,6 @@ beforeAll(async () => {
 afterAll(() => upstream.close());
 beforeEach(() => {
   seen.length = 0;
-  resetOwnKeyLimits();
 });
 
 const env = (): Env => ({
@@ -112,20 +110,11 @@ describe("own key, no account", () => {
     expect(seen).toHaveLength(0);
   });
 
-  it("is limited per address, with Retry-After", async () => {
-    const over = { OWN_KEY_REQUESTS_PER_MINUTE: "2" };
-    for (let i = 0; i < 2; i++) {
-      const r = await ask(ownKey(), over);
+  it("never rate-limits an own key: it is the person's bill", async () => {
+    for (let i = 0; i < 100; i++) {
+      const r = await ask(ownKey());
       expect(r.status).toBe(200);
       await r.text();
     }
-    const limited = await ask(ownKey(), over);
-    expect(limited.status).toBe(429);
-    expect(Number(limited.headers.get("retry-after"))).toBeGreaterThan(0);
-    expect(await limited.json()).toEqual({ error: "slow_down" });
-    // Another address has its own count.
-    const other = await ask(ownKey({ "x-forwarded-for": "198.51.100.9" }), over);
-    expect(other.status).toBe(200);
-    await other.text();
   });
 });
