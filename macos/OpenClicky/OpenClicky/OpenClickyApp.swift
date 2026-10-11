@@ -199,6 +199,45 @@ final class CompanionAppDelegate: NSObject, NSApplicationDelegate {
             }
             return
         }
+        if let voiceIndex = launchArguments.firstIndex(of: "--openclicky-voice-smoke"), voiceIndex + 1 < launchArguments.count {
+            // Debug: render two sentences in one voice (SpeechVoiceChoice raw value; "kokoro"
+            // downloads Kokoro first if needed) and report how long each took. Nothing is played.
+            setvbuf(stdout, nil, _IONBF, 0)
+            Task { @MainActor in
+                guard let voice = SpeechVoiceChoice(rawValue: launchArguments[voiceIndex + 1]) else { print("voice-smoke: unknown voice"); exit(1) }
+                if voice == .kokoro && !KokoroVoice.isInstalled {
+                    let kokoro = KokoroVoice.shared
+                    kokoro.download()
+                    var lastPercent = -1
+                    while true {
+                        switch kokoro.state {
+                        case .installed: break
+                        case .failed(let message): print("voice-smoke: kokoro download failed: \(message)"); exit(1)
+                        case .downloading(let fraction):
+                            let percent = Int(fraction * 100)
+                            if percent / 10 != lastPercent / 10 { print("voice-smoke: kokoro downloading \(percent)%"); lastPercent = percent }
+                        default: break
+                        }
+                        if kokoro.state == .installed { break }
+                        try? await Task.sleep(nanoseconds: 500_000_000)
+                    }
+                    print("voice-smoke: kokoro installed")
+                }
+                for sentence in ["see that blue button up top? click it to start.", "then choose save as from the file menu, and pick your desktop."] {
+                    let started = Date()
+                    do {
+                        let data = try await CloudVoiceSpeaker.audio(for: sentence, voice: voice)
+                        let player = try AVAudioPlayer(data: data)
+                        print("voice-smoke: \(voice.rawValue) rendered \(String(format: "%.1f", player.duration)) s of audio in \(String(format: "%.2f", Date().timeIntervalSince(started))) s")
+                    } catch {
+                        print("voice-smoke: \(voice.rawValue) error \(error.localizedDescription)")
+                        exit(1)
+                    }
+                }
+                exit(0)
+            }
+            return
+        }
         if launchArguments.contains("--openclicky-mac-voice-smoke") {
             // Debug: render one sentence in this Mac's voice to audio (not played) and report it.
             setvbuf(stdout, nil, _IONBF, 0)

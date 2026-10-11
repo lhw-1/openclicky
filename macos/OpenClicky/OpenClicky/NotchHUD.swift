@@ -86,22 +86,11 @@ enum NotchHUDExpansion: Equatable {
     case full
 }
 
-enum NotchHUDTab: String, CaseIterable, Identifiable {
-    case home, agents
-    var id: String { rawValue }
-}
-
 @MainActor
 final class NotchHUDModel: ObservableObject {
     @Published private(set) var expansion: NotchHUDExpansion = .collapsed
-    @Published var activeTab: NotchHUDTab = .home
     @Published var geometry: NotchGeometry
     @Published var placement: HUDPlacement = .notch
-    /// Regular, compact, or automatic by screen height (Settings → General → "Island size").
-    @Published var size: HUDSize = .automatic
-
-    /// The short panel: one row for the pointer, the shortcuts packed tight, a shorter agents list.
-    var isCompactLayout: Bool { size.usesCompactLayout(screenHeight: geometry.screenFrame.height) }
 
     // Sizes from the refinement sheet: every card and the open panel are 512 pt wide, the Home
     // panel 512 × 232 pt and the Agents panel 512 × 392 pt, including the menu-bar band the island
@@ -207,14 +196,10 @@ final class NotchHUDModel: ObservableObject {
         return cardTopInset + contentHeight
     }
     var composerHeight: CGFloat { geometry.notchHeight + composerContentHeight }
+    /// The band, then one row: 88 pt under a notch (Claude Design's "max 88pt"); a side drawer
+    /// stacks the dock button over the shortcut grid.
     var fullHeight: CGFloat {
-        switch activeTab {
-        // The tab row, the body's top padding, the content, and room under the last control.
-        case .home:
-            if isCompactLayout { return tabBarHeight + DS.HUD.bodyTopPadding + (placement.isSideDrawer ? 180 : 96) }
-            return tabBarHeight + DS.HUD.bodyTopPadding + (placement.isSideDrawer ? 240 : 124)
-        case .agents: return tabBarHeight + DS.HUD.bodyTopPadding + (isCompactLayout ? 248 : 352)
-        }
+        tabBarHeight + (placement.isSideDrawer ? 92 : 45)
     }
 
     var width: CGFloat {
@@ -399,11 +384,6 @@ final class NotchHUDModel: ObservableObject {
         close()
     }
 
-    func select(_ tab: NotchHUDTab) {
-        activeTab = tab
-        onLayoutChanged?()
-    }
-
     /// Shows (or clears) the connect card. It opens on its own and closes when answered, so it
     /// takes the island over from the busy strip; a pinned-open full panel still wins.
     func setConnectPrompt(_ prompt: AppConnectPrompt?) {
@@ -485,21 +465,10 @@ final class NotchHUDModel: ObservableObject {
 
     private func setExpansion(_ expansion: NotchHUDExpansion) {
         guard self.expansion != expansion else { return }
-        if self.expansion == .full { lastClosedFullPanelAt = now() }
-        // Back after a while, the panel opens on Home: the tab left open is not what the
-        // pointer came up for. A quick skim out and back keeps it.
-        if expansion == .full, let lastClosedFullPanelAt, now().timeIntervalSince(lastClosedFullPanelAt) > Self.tabMemorySeconds {
-            activeTab = .home
-        }
         self.expansion = expansion
         onLayoutChanged?()
     }
 
-    /// When the full panel last closed, and how long its tab is remembered after that.
-    private var lastClosedFullPanelAt: Date?
-    static let tabMemorySeconds: TimeInterval = 2
-    /// The clock, replaced in tests.
-    var now: () -> Date = Date.init
 }
 
 // MARK: - Window
@@ -569,7 +538,6 @@ final class NotchHUDManager {
     private var busyCancellables = Set<AnyCancellable>()
     /// Where the islands live (Settings → general → "where openclicky lives").
     private(set) var placement = HUDPlacement.stored
-    private(set) var size = HUDSize.stored
 
     /// The screen the primary HUD lives on: the one with a hardware notch, else the menu-bar screen.
     /// (`NSScreen.main` follows keyboard focus and can be an external display.)
@@ -772,17 +740,6 @@ final class NotchHUDManager {
         }
     }
 
-    /// Makes every island regular, compact, or automatic by its screen's height.
-    func setSize(_ size: HUDSize) {
-        guard self.size != size else { return }
-        self.size = size
-        for instance in instances {
-            instance.model.size = size
-            instance.window.setFrame(instance.model.windowFrame, display: true)
-            fitHostingViewToWindow(instance)
-        }
-    }
-
     /// Opens the full panel on the island under the pointer and keeps it open.
     func openPanel() {
         instanceUnderPointer?.model.openPinned()
@@ -834,7 +791,6 @@ final class NotchHUDManager {
             }
             let model = NotchHUDModel(geometry: geometry)
             model.placement = placement
-            model.size = size
             model.hostsDockedCursor = Self.primaryScreen.map(Self.screenID(of:)) == screenID
             model.setBusy(isBusy)
             model.setSpeaking(isSpeaking)
@@ -995,7 +951,6 @@ final class NotchHUDManager {
 extension NotchHUDManager {
     var debugPrimaryWindow: NSWindow? { primaryInstance?.window }
 
-    func debugSelect(_ tab: NotchHUDTab) { primaryInstance?.model.select(tab) }
 
     func debugCloseAll() { instances.forEach { $0.model.close() } }
 
@@ -1152,7 +1107,6 @@ struct NotchHUDView: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: islandAlignment)
         .contentShape(Rectangle())
         .animation(model.isSettlingGracefully ? .spring(response: 1.3, dampingFraction: 0.92) : .spring(response: 0.42, dampingFraction: 0.84), value: expansion)
-        .animation(.spring(response: 0.42, dampingFraction: 0.84), value: model.activeTab)
         .animation(.easeInOut(duration: 0.25), value: companionManager.isCursorDocked)
         .animation(.easeInOut(duration: 0.2), value: companionManager.voiceState)
     }

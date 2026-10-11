@@ -49,15 +49,6 @@ struct SarvamSpeechClientTests {
         #expect(SarvamSpeechClient.speechLanguageCode(forReplyLanguage: "fr") == nil)
     }
 
-    @MainActor @Test func aSarvamKeySpeaksAnswersInALanguageBulbulKnows() {
-        var settings = OpenClickyShellSettings()
-        #expect(ElevenLabsTTSClient.sarvamVoice(settings: settings, replyLanguageCode: "en") == nil)
-        settings.sarvamKey = "  sk_test\n"
-        #expect(ElevenLabsTTSClient.sarvamVoice(settings: settings, replyLanguageCode: "en")?.languageCode == "en-IN")
-        #expect(ElevenLabsTTSClient.sarvamVoice(settings: settings, replyLanguageCode: "en")?.client.key == "sk_test")
-        #expect(ElevenLabsTTSClient.sarvamVoice(settings: settings, replyLanguageCode: "de") == nil)
-    }
-
     @Test func autoDetectIsSentAsUnknown() {
         #expect(SarvamSpeechClient.languageCode(for: .auto) == "unknown")
         #expect(SarvamSpeechClient.languageCode(for: DictationLanguage.named("hi-IN")) == "hi-IN")

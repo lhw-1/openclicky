@@ -21,6 +21,8 @@ final class ElevenLabsTTSClient {
     /// The audio player for the current TTS playback. Kept alive so the
     /// audio finishes playing even if the caller doesn't hold a reference.
     private var audioPlayer: AVAudioPlayer?
+    /// The voice last logged, so app.log says when it changes rather than for every sentence.
+    private var lastLoggedVoice: SpeechVoiceChoice?
 
     /// `proxyURL` is built from the user-configurable backend URL (shell.json or an environment
     /// override), not a compile-time literal, so a malformed value falls back to the hosted
@@ -55,27 +57,19 @@ final class ElevenLabsTTSClient {
         print("🔊 ElevenLabs TTS: playing \(data.count / 1024)KB audio")
     }
 
-    /// The audio for `text`, without playing it: this Mac's voice if picked, else an OpenAI key,
-    /// else a Sarvam key, else the backend's /tts. Used by `SpeechQueue` to
+    /// The audio for `text`, without playing it, in the voice `SpeechVoiceChoice.current()` names;
+    /// the free voice comes from the backend's /tts. Used by `SpeechQueue` to
     /// fetch the next piece of an answer while the current one plays.
     func fetchAudio(for text: String) async throws -> Data {
-        // Picked in Settings → Clicky: this Mac speaks, free and offline.
-        if MacVoice.isChosen() { return try await MacVoice.shared.audio(for: text) }
-        switch ProviderRouter.current(for: .speech) {
-        case .openAIDirect:
-            // The person's own OpenAI key: OpenAI speech straight from OpenAI, as the backend's
-            // own-key path would have asked for it.
-            guard let openAIKey = ProviderRouter.currentCredentials().openAIKey else { break }
-            let (data, response) = try await session.data(for: try DirectProviderRequests.openAISpeech(key: openAIKey, text: text))
-            return try Self.audio(from: data, response: response)
-        case .unavailable(let sentence):
-            // A Sarvam key speaks even with no account.
-            if let sarvam = Self.sarvamVoice() { return try await sarvam.client.speech(text: text, languageCode: sarvam.languageCode) }
-            throw ProviderRouteUnavailable(capability: .speech, sentence: sentence)
-        case .backend, .anthropicDirect, .answerProvider:
-            // The person's own Sarvam key goes before the account's cloud voice (own keys first),
-            // and keeps answers in a real voice once the free voice allowance is used up.
-            if let sarvam = Self.sarvamVoice() { return try await sarvam.client.speech(text: text, languageCode: sarvam.languageCode) }
+        // Settings → Clicky → Voice: a key's voice straight from its vendor, Kokoro or this Mac;
+        // only the free voice goes through the backend.
+        let voice = SpeechVoiceChoice.current()
+        if voice != lastLoggedVoice {
+            AppLog.append("voice: \(voice.rawValue)")
+            lastLoggedVoice = voice
+        }
+        if voice != .account {
+            return try await CloudVoiceSpeaker.audio(for: text, voice: voice, session: session)
         }
         var request = URLRequest(url: proxyURL)
         request.httpMethod = "POST"
@@ -96,14 +90,6 @@ final class ElevenLabsTTSClient {
 
         let (data, response) = try await BackendSignIn.send(request) { [session] in try await session.data(for: $0) }
         return try Self.audio(from: data, response: response)
-    }
-
-    /// Sarvam's Bulbul on the person's Sarvam key, when there is one and it speaks the reply language.
-    static func sarvamVoice(settings: OpenClickyShellSettings = OpenClickyConfiguration.settings,
-                            replyLanguageCode: String = ReplyLanguage.currentCode) -> (client: SarvamSpeechClient, languageCode: String)? {
-        let key = settings.sarvamKey?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-        guard !key.isEmpty, let languageCode = SarvamSpeechClient.speechLanguageCode(forReplyLanguage: replyLanguageCode) else { return nil }
-        return (SarvamSpeechClient(key: key), languageCode)
     }
 
     /// The audio in a speech answer, or the error that says why there is none.

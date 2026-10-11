@@ -154,15 +154,6 @@ final class CompanionManager: ObservableObject {
         if placement == .hidden { setMenuBarIconVisible(true) }
     }
 
-    /// How tall the open island is: regular, compact, or automatic by screen height.
-    @Published private(set) var hudSize: HUDSize = .stored
-
-    func setHUDSize(_ size: HUDSize) {
-        hudSize = size
-        UserDefaults.standard.set(size.rawValue, forKey: HUDSize.defaultsKey)
-        notchHUDManager.setSize(size)
-    }
-
     #if DEBUG
     /// The UI tour shows the busy strip without talking.
     func debugSetVoiceState(_ state: CompanionVoiceState) { voiceState = state }

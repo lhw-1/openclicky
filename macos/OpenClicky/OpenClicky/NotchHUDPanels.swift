@@ -2,9 +2,9 @@
 //  NotchHUDPanels.swift
 //  OpenClicky
 //
-//  The full notch app: tab bar + home / agents (the gear opens the Settings window), the agent thread store that feeds the
-//  agents tab, and the floating result card (top-right) with "Follow up with agent". Drawn with
-//  the refinement sheet's HUD tokens (`DS.HUD`).
+//  The open island, one short panel (the pointer, the shortcuts, Settings and quit; no tabs), and
+//  the floating result card (top-right) with "Follow up with agent". Drawn with the refinement
+//  sheet's HUD tokens (`DS.HUD`).
 //
 
 import AppKit
@@ -13,123 +13,104 @@ import SwiftUI
 
 // MARK: - Full panel
 
+/// The open island, one short panel (Claude Design, "one compact panel"): the band beside the
+/// camera holds what the pointer is doing and the three round buttons (voice, Settings, quit); the
+/// body is one row — dock or release the pointer, (i), and the four shortcuts as a 2 × 2 grid. A
+/// side drawer has no camera to sit beside, so it stacks the same pieces. Hand-drawn throughout:
+/// the island never becomes key, and system controls grey out in a panel that isn't.
 struct NotchFullPanelView: View {
     @ObservedObject var model: NotchHUDModel
     @ObservedObject var companionManager: CompanionManager
-    @StateObject private var threadStore = AgentThreadStore()
 
     var body: some View {
-        VStack(spacing: 0) {
-            // The tab bar lives in the menu-bar band, on either side of the physical notch.
-            NotchTabBar(model: model, companionManager: companionManager, threadStore: threadStore)
+        VStack(alignment: .leading, spacing: 0) {
+            NotchBandRow(model: model, companionManager: companionManager)
                 .padding(.top, 6)
                 .frame(height: model.tabBarHeight)
-
-            Group {
-                switch model.activeTab {
-                case .home:
-                    NotchHomeView(companionManager: companionManager, model: model)
-                case .agents:
-                    NotchAgentsView(companionManager: companionManager, threadStore: threadStore)
-                }
-            }
-            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
-            .padding(.top, DS.HUD.bodyTopPadding)
-        }
-        .onAppear { threadStore.refresh() }
-        .onChange(of: model.activeTab) { tab in
-            if tab == .agents { threadStore.refresh() }
-        }
-        .onChange(of: model.expansion) { expansion in
-            if expansion == .full { threadStore.refresh() }
+            NotchPanelBody(model: model, companionManager: companionManager)
+                .padding(.top, model.placement.isSideDrawer ? 6 : 2)
+                .padding(.horizontal, DS.HUD.bodySidePadding)
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         }
     }
 }
 
-// MARK: - Tab bar
+// MARK: - Band
 
-struct NotchTabBar: View {
+/// The band: the pointer's status on the left of the camera, the voice pill, Settings and quit on
+/// the right. On a notch screen each side only has what the notch leaves free.
+struct NotchBandRow: View {
     @ObservedObject var model: NotchHUDModel
     @ObservedObject var companionManager: CompanionManager
-    @ObservedObject var threadStore: AgentThreadStore
 
-    /// On a notch screen each side of the band only has what the notch leaves free; the right-hand
-    /// cluster shortens the voice pill to fit instead of running under the notch.
-    private var sideClusterWidth: CGFloat {
-        guard model.geometry.hasHardwareNotch else { return .infinity }
+    private var sideWidth: CGFloat {
+        guard model.geometry.hasHardwareNotch, !model.placement.isSideDrawer else { return .infinity }
         return max(0, (model.fullWidth - model.geometry.notchWidth) / 2 - 12)
     }
 
     var body: some View {
-        HStack(spacing: 4) {
-            tabPill(title: "home", tab: .home, badgeCount: 0)
-            tabPill(title: "agents", tab: .agents, badgeCount: threadStore.attentionCount)
-
+        HStack(spacing: 8) {
+            NotchPointerStatus(model: model, companionManager: companionManager)
+                .frame(maxWidth: sideWidth, alignment: .leading)
             Spacer(minLength: 8)
-
             HStack(spacing: 6) {
-                Spacer(minLength: 0)
-                ViewThatFits(in: .horizontal) {
-                    VoiceDestinationPill(companionManager: companionManager, settings: companionManager.dictationSettings, length: .full)
-                    VoiceDestinationPill(companionManager: companionManager, settings: companionManager.dictationSettings, length: .short)
-                    VoiceDestinationPill(companionManager: companionManager, settings: companionManager.dictationSettings, length: .glyphOnly)
-                }
-                if model.activeTab == .agents {
-                    bandIconButton(systemImage: "arrow.clockwise", help: "refresh agents", isSelected: false) { threadStore.refresh(force: true) }
-                }
-                // Settings live in the window only: an island page of switches was a second, smaller
-                // settings that stayed open behind the pointer.
-                bandIconButton(systemImage: "gearshape.fill", help: "settings", isSelected: false) {
+                VoiceDestinationPill(companionManager: companionManager, settings: companionManager.dictationSettings, length: .glyphOnly)
+                // Settings live in the window only: an island page of switches was a second,
+                // smaller settings that stayed open behind the pointer.
+                bandIconButton(systemImage: "gearshape.fill", help: "settings") {
                     model.dismiss()
                     companionManager.showSettings()
                 }
-                bandIconButton(systemImage: "power", help: "quit openclicky", isSelected: false) {
+                bandIconButton(systemImage: "power", help: "quit openclicky") {
                     companionManager.quitWithFarewell()
                 }
             }
-            .frame(maxWidth: sideClusterWidth, alignment: .trailing)
+            .frame(maxWidth: sideWidth, alignment: .trailing)
         }
-        .padding(.horizontal, 12)
+        .padding(.horizontal, 16)
     }
 
-    private func tabPill(title: String, tab: NotchHUDTab, badgeCount: Int) -> some View {
-        let isSelected = model.activeTab == tab
-        return Button(action: { model.select(tab) }) {
-            HStack(spacing: 6) {
-                Text(title)
-                    .font(.system(size: 13, weight: isSelected ? .semibold : .medium))
-                    .foregroundColor(isSelected ? DS.HUD.text : DS.HUD.text2)
-                if badgeCount > 0 {
-                    Text("\(badgeCount)")
-                        .font(.system(size: 10, weight: .bold))
-                        .foregroundColor(.black)
-                        .padding(.horizontal, 5)
-                        .frame(height: 14)
-                        .background(Capsule().fill(DS.HUD.pointer))
-                }
-            }
-            .padding(.horizontal, 10)
-            .frame(height: DS.HUD.tabHeight)
-            .background(Capsule().fill(isSelected ? DS.HUD.surfaceRaised : Color.clear))
-            .contentShape(Capsule())
-        }
-        .buttonStyle(.plain)
-        .pointerCursor()
-        .accessibilityLabel(badgeCount > 0 ? "\(title), \(badgeCount) need attention" : title)
-    }
-
-    private func bandIconButton(systemImage: String, help: String, isSelected: Bool, action: @escaping () -> Void) -> some View {
+    private func bandIconButton(systemImage: String, help: String, action: @escaping () -> Void) -> some View {
         Button(action: action) {
             Image(systemName: systemImage)
                 .font(.system(size: 11, weight: .semibold))
-                .foregroundColor(isSelected ? .black : DS.HUD.text2)
+                .foregroundColor(DS.HUD.text2)
                 .frame(width: DS.HUD.pillHeight, height: DS.HUD.pillHeight)
-                .background(Circle().fill(isSelected ? DS.HUD.text : DS.HUD.bandControl))
+                .background(Circle().fill(DS.HUD.bandControl))
         }
         .buttonStyle(.plain)
         .pointerCursor()
         .help(help)
         .accessibilityLabel(help)
+    }
+}
+
+/// One line saying what the pointer is doing right now, short enough for the side of the notch.
+struct NotchPointerStatus: View {
+    @ObservedObject var model: NotchHUDModel
+    @ObservedObject var companionManager: CompanionManager
+
+    var body: some View {
+        HStack(spacing: 8) {
+            NotchPointerMark(isDimmed: companionManager.isCursorDocked)
+            Text(statusText)
+                .font(.system(size: 12))
+                .foregroundColor(DS.HUD.text2)
+                .lineLimit(1)
+                .minimumScaleFactor(0.8)
+        }
+        .accessibilityElement(children: .combine)
+    }
+
+    /// From the dock state, the "show the pointer" switch and the "the pointer shows" setting.
+    private var statusText: String {
+        if companionManager.isCursorDocked { return model.placement.isSideDrawer ? "pointer is docked in the drawer" : "pointer is docked" }
+        if !companionManager.isClickyCursorEnabled { return "pointer shows while you talk" }
+        switch companionManager.pointerPresence {
+        case .always: return "pointer follows your mouse"
+        case .whileMoving: return "pointer follows while moving"
+        case .onShake: return companionManager.isPointerAwake ? "pointer follows your mouse" : "shake the mouse for the pointer"
+        }
     }
 }
 
@@ -237,32 +218,71 @@ enum NotchVoiceDestination {
     }
 }
 
-// MARK: - Home
+// MARK: - Body
 
-/// Home answers two questions: what the pointer is doing (and the button that docks or releases
-/// it), and how to call Clicky (the four shortcuts). The compact layout (`isCompactLayout`, small
-/// or zoomed displays) draws both tighter: no hint line, no heading, shorter rows.
-struct NotchHomeView: View {
-    @ObservedObject var companionManager: CompanionManager
+/// The body's one row: dock or release the pointer, (i) "what can you do?", and the shortcuts (or,
+/// when the dictation engine can't run, what is missing).
+struct NotchPanelBody: View {
     @ObservedObject var model: NotchHUDModel
+    @ObservedObject var companionManager: CompanionManager
+
+    /// The body row's height: the buttons, and the grid's two 14 pt rows.
+    static let rowHeight: CGFloat = 30
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            if model.placement.isSideDrawer {
-                // The drawer is one narrow column: the pointer, then the shortcuts, then skills.
-                NotchPointerCard(companionManager: companionManager, model: model)
+        if model.placement.isSideDrawer {
+            VStack(alignment: .leading, spacing: 10) {
+                HStack(spacing: 8) { dockButton; infoButton }
                 shortcutsOrWarning
-                    .padding(.horizontal, 4)
-            } else {
-                HStack(alignment: .top, spacing: 16) {
-                    NotchPointerCard(companionManager: companionManager, model: model)
-                        .frame(width: 232)
-                    shortcutsOrWarning
-                }
+            }
+        } else {
+            HStack(alignment: .center, spacing: 10) {
+                dockButton.frame(width: 128)
+                infoButton
+                shortcutsOrWarning.padding(.leading, 2)
             }
         }
-        .padding(.horizontal, DS.HUD.bodySidePadding)
-        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+    }
+
+    private var dockButton: some View {
+        let isDocked = companionManager.isCursorDocked
+        let isIdle = companionManager.voiceState == .idle
+        return Button(action: { companionManager.setCursorDocked(!isDocked) }) {
+            Text(isDocked ? "release pointer" : (model.placement.isSideDrawer ? "dock in the drawer" : "dock in the notch"))
+                .font(.system(size: 13, weight: .semibold))
+                .foregroundColor(.black)
+                .lineLimit(1)
+                .minimumScaleFactor(0.85)
+                .frame(maxWidth: .infinity)
+                .frame(height: Self.rowHeight)
+                .background(RoundedRectangle(cornerRadius: DS.HUD.tileRadius, style: .continuous).fill(isDocked ? DS.HUD.pointer : DS.HUD.text))
+                .contentShape(RoundedRectangle(cornerRadius: DS.HUD.tileRadius, style: .continuous))
+        }
+        .buttonStyle(.plain)
+        .pointerCursor(isEnabled: isIdle)
+        .disabled(!isIdle)
+        .opacity(isIdle ? 1 : 0.5)
+        .help(isDocked ? "talk still works while docked" : "park the pointer until Clicky needs it")
+    }
+
+    /// (i): the buddy types out what OpenClicky does, next to itself (or in this island while it
+    /// is docked). The panel closes so the buddy is in view.
+    private var infoButton: some View {
+        Button(action: {
+            model.close()
+            companionManager.explainWhatOpenClickyDoes()
+        }) {
+            Text("i")
+                .font(.system(size: 17, design: .serif).italic())
+                .foregroundColor(DS.HUD.text)
+                .frame(width: Self.rowHeight, height: Self.rowHeight)
+                .background(RoundedRectangle(cornerRadius: DS.HUD.tileRadius, style: .continuous).fill(DS.HUD.surfaceRaisedSoft))
+                .contentShape(RoundedRectangle(cornerRadius: DS.HUD.tileRadius, style: .continuous))
+        }
+        .buttonStyle(.plain)
+        .pointerCursor()
+        .help("what can you do?")
+        .accessibilityLabel("what can you do?")
     }
 
     @ViewBuilder
@@ -270,134 +290,48 @@ struct NotchHomeView: View {
         if let engineWarning = NotchEngineWarning(engine: companionManager.dictationSettings.engine) {
             NotchEngineWarningView(warning: engineWarning, companionManager: companionManager)
         } else {
-            NotchShortcutList(companionManager: companionManager, settings: companionManager.dictationSettings, isCompact: model.isCompactLayout)
+            NotchShortcutGrid(companionManager: companionManager, settings: companionManager.dictationSettings)
         }
     }
 }
 
-/// The pointer card: one line saying what the pointer is doing right now, the primary button that
-/// docks or releases it, (i) "what can you do?", and a hint.
-struct NotchPointerCard: View {
-    @ObservedObject var companionManager: CompanionManager
-    @ObservedObject var model: NotchHUDModel
-
-    var body: some View {
-        let isDocked = companionManager.isCursorDocked
-        VStack(alignment: .leading, spacing: model.isCompactLayout ? 8 : 10) {
-            HStack(spacing: 8) {
-                NotchPointerMark(isDimmed: isDocked)
-                Text(pointerStateText)
-                    .font(.system(size: 12))
-                    .foregroundColor(DS.HUD.text2)
-                    .lineLimit(1)
-                    .minimumScaleFactor(0.85)
-            }
-
-            HStack(spacing: 8) {
-                Button(action: { companionManager.setCursorDocked(!isDocked) }) {
-                    Text(isDocked ? "release the pointer" : (model.placement.isSideDrawer ? "dock in the drawer" : "dock in the notch"))
-                        .font(.system(size: 14, weight: .semibold))
-                        .foregroundColor(.black)
-                        .frame(maxWidth: .infinity)
-                        .frame(height: DS.HUD.primaryButtonHeight)
-                        .background(RoundedRectangle(cornerRadius: DS.HUD.tileRadius, style: .continuous).fill(isDocked ? DS.HUD.pointer : DS.HUD.text))
-                        .contentShape(RoundedRectangle(cornerRadius: DS.HUD.tileRadius, style: .continuous))
-                }
-                .buttonStyle(.plain)
-                .pointerCursor(isEnabled: companionManager.voiceState == .idle)
-                .disabled(companionManager.voiceState != .idle)
-                .opacity(companionManager.voiceState == .idle ? 1 : 0.5)
-
-                // (i): the buddy types out what OpenClicky does, next to itself (or in this island
-                // while it is docked). The panel closes so the buddy is in view.
-                Button(action: {
-                    model.close()
-                    companionManager.explainWhatOpenClickyDoes()
-                }) {
-                    Text("i")
-                        .font(.system(size: 17, design: .serif).italic())
-                        .foregroundColor(DS.HUD.text)
-                        .frame(width: DS.HUD.primaryButtonHeight, height: DS.HUD.primaryButtonHeight)
-                        .background(RoundedRectangle(cornerRadius: DS.HUD.tileRadius, style: .continuous).fill(DS.HUD.surfaceRaisedSoft))
-                        .contentShape(RoundedRectangle(cornerRadius: DS.HUD.tileRadius, style: .continuous))
-                }
-                .buttonStyle(.plain)
-                .pointerCursor()
-                .help("what can you do?")
-                .accessibilityLabel("what can you do?")
-            }
-
-            if let hintText, !model.isCompactLayout {
-                Text(hintText)
-                    .font(.system(size: 11))
-                    .foregroundColor(DS.HUD.text3)
-                    .lineLimit(1)
-            }
-        }
-        .padding(model.isCompactLayout ? 10 : 12)
-        // Without a hint line the status and button sit in the middle rather than leave a gap below.
-        .frame(height: model.isCompactLayout ? 80 : 104, alignment: hintText == nil || model.isCompactLayout ? .center : .top)
-        .background(RoundedRectangle(cornerRadius: DS.HUD.cardRadius, style: .continuous).fill(DS.HUD.surface))
-    }
-
-    /// What the pointer is doing now, from the dock state, the "show the pointer" switch and the
-    /// "the pointer shows" setting.
-    private var pointerStateText: String {
-        if companionManager.isCursorDocked { return model.placement.isSideDrawer ? "pointer is docked in the drawer" : "pointer is docked under the notch" }
-        if !companionManager.isClickyCursorEnabled { return "pointer shows only while you talk" }
-        switch companionManager.pointerPresence {
-        case .always: return "pointer is following your mouse"
-        case .whileMoving: return "pointer follows while the mouse moves"
-        case .onShake: return companionManager.isPointerAwake ? "pointer is following your mouse" : "pointer rests until you shake the mouse"
-        }
-    }
-
-    private var hintText: String? {
-        if companionManager.isCursorDocked { return "talk still works while docked" }
-        if companionManager.isClickyCursorEnabled && companionManager.pointerPresence == .onShake {
-            return "or shake the mouse"
-        }
-        return nil
-    }
-}
-
-/// CALL CLICKY: the four shortcuts `CompanionShortcutRecognizer` knows.
-struct NotchShortcutList: View {
+/// CALL CLICKY as a 2 × 2 grid with no heading: the four shortcuts `CompanionShortcutRecognizer` knows.
+struct NotchShortcutGrid: View {
     @ObservedObject var companionManager: CompanionManager
     @ObservedObject var settings: DictationSettings
-    /// The compact island: no heading, and 18 pt rows instead of 22.
-    var isCompact = false
 
     var body: some View {
         let dictationKey = settings.dictationKey.keycapLabel
-        VStack(alignment: .leading, spacing: isCompact ? 1 : 2) {
-            if !isCompact {
-                NotchSectionHeader(title: "CALL CLICKY")
-                    .frame(height: 16, alignment: .top)
+        Grid(alignment: .leading, horizontalSpacing: 12, verticalSpacing: 2) {
+            GridRow {
+                shortcut(title: "talk", keys: ["⌃", "⌥"], gesture: "hold", isLive: false)
+                shortcut(title: "type", keys: ["⌃"], gesture: "tap ×2", isLive: false)
             }
-            shortcutRow(title: "talk", keys: ["⌃", "⌥"], gesture: "hold", isLive: false)
-            shortcutRow(title: "type", keys: ["⌃"], gesture: "tap ×2", isLive: false)
-            shortcutRow(title: "dictate", keys: [dictationKey], gesture: "hold", isLive: false)
-            shortcutRow(title: "hands-free", keys: [dictationKey, "⌃"], gesture: "tap ×2", isLive: companionManager.isAlwaysListening)
+            GridRow {
+                shortcut(title: "dictate", keys: [dictationKey], gesture: "hold", isLive: false)
+                shortcut(title: "hands-free", keys: [dictationKey, "⌃"], gesture: "tap ×2", isLive: companionManager.isAlwaysListening)
+            }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
     }
 
-    private func shortcutRow(title: String, keys: [String], gesture: String, isLive: Bool) -> some View {
-        HStack(spacing: 6) {
-            Text(title).font(.system(size: 13)).foregroundColor(DS.HUD.text)
+    private func shortcut(title: String, keys: [String], gesture: String, isLive: Bool) -> some View {
+        HStack(spacing: 4) {
+            Text(title).font(.system(size: 12)).foregroundColor(DS.HUD.text).lineLimit(1).fixedSize()
             if isLive {
                 Circle().fill(DS.HUD.live).frame(width: 6, height: 6).help("hands-free is on")
             }
             Spacer(minLength: 4)
-            HStack(spacing: 4) {
-                ForEach(keys, id: \.self) { key in NotchKeycap(text: key) }
+            HStack(spacing: 3) {
+                ForEach(keys, id: \.self) { key in NotchKeycap(text: key, isSmall: true) }
                 Text(gesture)
-                    .font(.system(size: 11, design: .monospaced))
+                    .font(.system(size: 10, design: .monospaced))
                     .foregroundColor(DS.HUD.text3)
+                    .lineLimit(1)
+                    .fixedSize()
             }
         }
-        .frame(height: isCompact ? 18 : 22)
+        .frame(height: 14)
         .accessibilityElement(children: .combine)
     }
 }
@@ -405,32 +339,20 @@ struct NotchShortcutList: View {
 /// A key as the HUD draws it: SF Mono 11 on a raised 5 pt keycap.
 struct NotchKeycap: View {
     let text: String
+    /// The panel's shortcut grid: smaller, so a row fits 14 pt.
+    var isSmall = false
 
     var body: some View {
         Text(text)
-            .font(.system(size: 11, design: .monospaced))
+            .font(.system(size: isSmall ? 9.5 : 11, design: .monospaced))
             .foregroundColor(DS.HUD.text)
-            .padding(.horizontal, 6)
-            .padding(.vertical, 2)
+            .fixedSize()
+            .padding(.horizontal, isSmall ? 4 : 6)
+            .padding(.vertical, isSmall ? 1 : 2)
             .background(RoundedRectangle(cornerRadius: 5, style: .continuous).fill(DS.HUD.surfaceRaised))
     }
 }
 
-/// The small uppercase heading over a HUD group ("CALL CLICKY", "SKILLS & INTEGRATIONS").
-struct NotchSectionHeader: View {
-    let title: String
-
-    var body: some View {
-        Text(title)
-            .font(.system(size: 11, weight: .semibold))
-            .tracking(0.44)
-            .foregroundColor(DS.HUD.text3)
-            .lineLimit(1)
-    }
-}
-
-/// Shown in place of the shortcut list while the chosen dictation engine cannot run, because
-/// every shortcut that dictates would fail until it is fixed.
 struct NotchEngineWarning: Equatable {
     let heading: String
     let message: String
@@ -457,14 +379,14 @@ struct NotchEngineWarningView: View {
     let warning: NotchEngineWarning
     @ObservedObject var companionManager: CompanionManager
 
+    /// Fits the body's one row: the message in two lines at most, the way to fix it beside it.
     var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            NotchSectionHeader(title: warning.heading)
+        HStack(spacing: 10) {
             Text(warning.message)
-                .font(.system(size: 12))
+                .font(.system(size: 11))
                 .foregroundColor(DS.HUD.text2)
-                .lineSpacing(2)
-                .fixedSize(horizontal: false, vertical: true)
+                .lineLimit(2)
+                .help(warning.message)
             Button(action: { NotchVoiceDestination.openSetup(for: warning.engine, companionManager: companionManager) }) {
                 Text(warning.buttonTitle)
                     .font(.system(size: 12, weight: .medium))
@@ -472,297 +394,13 @@ struct NotchEngineWarningView: View {
                     .padding(.horizontal, 10)
                     .frame(height: 26)
                     .background(RoundedRectangle(cornerRadius: 8, style: .continuous).fill(DS.HUD.surfaceRaised))
+                    .fixedSize()
             }
             .buttonStyle(.plain)
             .pointerCursor()
         }
-        .padding(.top, 2)
         .frame(maxWidth: .infinity, alignment: .leading)
-    }
-}
-
-// MARK: - Agents
-
-/// Loads recent Codex threads through the CLI for the Agents tab.
-@MainActor
-final class AgentThreadStore: ObservableObject {
-    @Published private(set) var threads: [OpenClickyThreadSummary] = []
-    @Published private(set) var isLoading = false
-    @Published private(set) var errorMessage: String?
-    private let agentClient = OpenClickyAgentClient()
-    private var lastRefresh: Date?
-
-    func refresh(force: Bool = false) {
-        if !force, let lastRefresh, Date().timeIntervalSince(lastRefresh) < 10, !threads.isEmpty { return }
-        guard !isLoading, OpenClickyConfiguration.isConfigured else { return }
-        isLoading = true
-        errorMessage = nil
-        Task {
-            do {
-                threads = try await agentClient.listThreads(limit: 30)
-                lastRefresh = Date()
-            } catch {
-                errorMessage = error.localizedDescription
-            }
-            isLoading = false
-        }
-    }
-
-    /// Threads that are running or need the user, for the badge on the agents tab.
-    var attentionCount: Int {
-        threads.filter { AgentThreadStatus(codexStatus: $0.status) != .done }.count
-    }
-
-    /// Threads grouped by day, newest first.
-    var sections: [(title: String, threads: [OpenClickyThreadSummary])] {
-        let calendar = Calendar.current
-        var groups: [(String, [OpenClickyThreadSummary])] = []
-        for thread in threads.sorted(by: { $0.updatedAt > $1.updatedAt }) {
-            let title: String
-            if calendar.isDateInToday(thread.updatedDate) { title = "TODAY" }
-            else if calendar.isDateInYesterday(thread.updatedDate) { title = "YESTERDAY" }
-            else { title = thread.updatedDate.formatted(.dateTime.month(.abbreviated).day()).uppercased() }
-            if let index = groups.firstIndex(where: { $0.0 == title }) { groups[index].1.append(thread) }
-            else { groups.append((title, [thread])) }
-        }
-        return groups.map { (title: $0.0, threads: $0.1) }
-    }
-}
-
-/// A thread's state as the list marks it. Codex reports a thread as `active` while a turn runs,
-/// `systemError` when it broke, and `idle` / `notLoaded` once it is finished; a status naming
-/// approval or waiting means the agent asked the user something.
-enum AgentThreadStatus: Equatable {
-    case running
-    case needsYou
-    case stopped
-    case done
-
-    init(codexStatus: String) {
-        let status = codexStatus.lowercased()
-        if status.contains("approval") || status.contains("waiting") { self = .needsYou }
-        else if status == "active" || status == "running" || status == "inprogress" { self = .running }
-        else if status.contains("error") || status == "failed" { self = .stopped }
-        else { self = .done }
-    }
-
-    var mark: String {
-        switch self {
-        case .running: return "●"
-        case .needsYou, .stopped: return "◆"
-        case .done: return "✓"
-        }
-    }
-
-    var color: Color {
-        switch self {
-        case .running: return DS.HUD.pointer
-        case .needsYou, .stopped: return DS.HUD.waiting
-        case .done: return DS.HUD.live
-        }
-    }
-
-    var word: String {
-        switch self {
-        case .running: return "running"
-        case .needsYou: return "needs you"
-        case .stopped: return "stopped"
-        case .done: return "done"
-        }
-    }
-}
-
-/// The Agents tab: a dense list (status mark, title, status line, time, open ↗) grouped by day, and
-/// a composer under it that continues the selected thread or starts a new one. 512 × 392 pt.
-struct NotchAgentsView: View {
-    @ObservedObject var companionManager: CompanionManager
-    @ObservedObject var threadStore: AgentThreadStore
-    /// The row the composer continues; nil starts a new thread.
-    @State private var selectedThreadId: String?
-    @State private var composerText = ""
-
-    private var workspaceDisplayPath: String {
-        OpenClickyConfiguration.workspacePath.replacingOccurrences(of: NSHomeDirectory(), with: "~")
-    }
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            if !OpenClickyConfiguration.isConfigured {
-                emptyState("add a key to see your agents.", detail: "put your own openai key in ~/.openclicky/shell.json (no account needed), or sign in from settings.")
-                Spacer(minLength: 0)
-            } else if threadStore.threads.isEmpty && threadStore.isLoading {
-                emptyState("loading agents…", detail: nil)
-                Spacer(minLength: 0)
-            } else if let errorMessage = threadStore.errorMessage, threadStore.threads.isEmpty {
-                emptyState(errorMessage == OpenClickyAgentError.toolMissingMessage ? "agents aren't set up on this mac" : "couldn't load agents", detail: errorMessage)
-                Spacer(minLength: 0)
-            } else if threadStore.threads.isEmpty {
-                emptyState("no agents yet", detail: "hold ⌃⌥ and ask clicky to do something, or type it below.")
-                Spacer(minLength: 0)
-            } else {
-                ScrollView(showsIndicators: false) {
-                    VStack(alignment: .leading, spacing: 8) {
-                        ForEach(Array(threadStore.sections.enumerated()), id: \.element.title) { sectionIndex, section in
-                            HStack {
-                                NotchSectionHeader(title: section.title)
-                                Spacer()
-                                if sectionIndex == 0 {
-                                    Text("workspace \(workspaceDisplayPath)")
-                                        .font(.system(size: 11))
-                                        .foregroundColor(DS.HUD.text3)
-                                        .lineLimit(1)
-                                        .truncationMode(.middle)
-                                }
-                            }
-                            VStack(spacing: 0) {
-                                ForEach(Array(section.threads.enumerated()), id: \.element.id) { rowIndex, thread in
-                                    AgentRowView(
-                                        thread: thread,
-                                        isSelected: selectedThreadId == thread.id,
-                                        showsTopDivider: rowIndex > 0,
-                                        workspacePath: OpenClickyConfiguration.workspacePath,
-                                        onSelect: { selectedThreadId = selectedThreadId == thread.id ? nil : thread.id },
-                                        onOpen: { companionManager.openAgentResultCard(threadId: thread.id) }
-                                    )
-                                }
-                            }
-                            .background(RoundedRectangle(cornerRadius: DS.HUD.cardRadius, style: .continuous).fill(DS.HUD.surface))
-                            .clipShape(RoundedRectangle(cornerRadius: DS.HUD.cardRadius, style: .continuous))
-                        }
-                    }
-                }
-            }
-
-            composer
-            if let hint = AccountCapabilities.current().agentUnavailableHint {
-                Text(hint).font(.system(size: 12)).foregroundColor(DS.HUD.text3)
-            }
-        }
-        .padding(.horizontal, DS.HUD.bodySidePadding)
-        .padding(.bottom, 16)
-        .onAppear { threadStore.refresh() }
-    }
-
-    private var selectedThreadTitle: String? {
-        guard let selectedThreadId, let thread = threadStore.threads.first(where: { $0.id == selectedThreadId }) else { return nil }
-        return AgentRowView.title(for: thread)
-    }
-
-    private var isComposerEnabled: Bool {
-        OpenClickyConfiguration.isConfigured && AccountCapabilities.current().usesAgent && companionManager.voiceState == .idle
-    }
-
-    private var composer: some View {
-        HStack(spacing: 8) {
-            NotchComposerTextField(
-                text: $composerText,
-                placeholder: selectedThreadTitle.map { "continue “\($0)”…" } ?? "continue the selected thread, or start a new one…",
-                onSubmit: submitComposer,
-                onEscape: { composerText = ""; selectedThreadId = nil }
-            )
-            .disabled(!isComposerEnabled)
-            Text("↵")
-                .font(.system(size: 11, design: .monospaced))
-                .foregroundColor(DS.HUD.text3)
-        }
-        .padding(.horizontal, 12)
-        .frame(height: 36)
-        .background(RoundedRectangle(cornerRadius: DS.HUD.tileRadius, style: .continuous).fill(DS.HUD.surface))
-        .opacity(isComposerEnabled ? 1 : 0.5)
-        .help(selectedThreadId == nil ? "↵ starts a new agent thread. select a row to continue it instead." : "↵ continues the selected thread. click the row again to start a new one.")
-    }
-
-    private func submitComposer() {
-        let text = composerText.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !text.isEmpty, isComposerEnabled else { return }
-        composerText = ""
-        companionManager.submitTextToAgent(text, threadId: selectedThreadId, startsNewThread: selectedThreadId == nil)
-        // The new turn shows up as a running thread once the CLI has started it.
-        DispatchQueue.main.asyncAfter(deadline: .now() + 3) { threadStore.refresh(force: true) }
-    }
-
-    private func emptyState(_ title: String, detail: String?) -> some View {
-        VStack(alignment: .leading, spacing: 6) {
-            Text(title).font(.system(size: 13, weight: .semibold)).foregroundColor(DS.HUD.text)
-            if let detail { Text(detail).font(.system(size: 12)).foregroundColor(DS.HUD.text3) }
-        }
-        .padding(.top, 4)
-    }
-}
-
-/// One agent thread in the list: 52 pt, status mark, title, status line, time, open ↗. A click on
-/// the row selects it for the composer; "open ↗" opens the result card.
-struct AgentRowView: View {
-    let thread: OpenClickyThreadSummary
-    let isSelected: Bool
-    let showsTopDivider: Bool
-    let workspacePath: String
-    let onSelect: () -> Void
-    let onOpen: () -> Void
-
-    static func title(for thread: OpenClickyThreadSummary) -> String {
-        let firstLine = thread.preview.split(separator: "\n").first.map(String.init) ?? thread.preview
-        let trimmed = firstLine.trimmingCharacters(in: .whitespacesAndNewlines)
-        return trimmed.isEmpty ? "untitled agent" : trimmed.prefix(1).uppercased() + trimmed.dropFirst()
-    }
-
-    private var status: AgentThreadStatus { AgentThreadStatus(codexStatus: thread.status) }
-
-    /// "done", or "done · ~/elsewhere" when the thread ran outside the configured workspace.
-    private var statusLine: String {
-        guard !thread.cwd.isEmpty, thread.cwd != workspacePath else { return status.word }
-        return "\(status.word) · \(thread.cwd.replacingOccurrences(of: NSHomeDirectory(), with: "~"))"
-    }
-
-    var body: some View {
-        HStack(spacing: 12) {
-            Text(status.mark)
-                .font(.system(size: 12))
-                .foregroundColor(status.color)
-                .frame(width: 20)
-            VStack(alignment: .leading, spacing: 2) {
-                Text(Self.title(for: thread))
-                    .font(.system(size: 13, weight: .semibold))
-                    .foregroundColor(DS.HUD.text)
-                    .lineLimit(1)
-                    .truncationMode(.tail)
-                Text(statusLine)
-                    .font(.system(size: 12))
-                    .foregroundColor(DS.HUD.text3)
-                    .lineLimit(1)
-                    .truncationMode(.middle)
-            }
-            .frame(maxWidth: .infinity, alignment: .leading)
-            Text(thread.updatedDate.formatted(date: .omitted, time: .shortened).lowercased())
-                .font(.system(size: 12).monospacedDigit())
-                .foregroundColor(DS.HUD.text3)
-            Button(action: onOpen) {
-                Text("open ↗")
-                    .font(.system(size: 12, weight: .medium))
-                    .foregroundColor(DS.HUD.text)
-                    .padding(.horizontal, 10)
-                    .frame(height: 26)
-                    .background(RoundedRectangle(cornerRadius: 8, style: .continuous).fill(DS.HUD.surfaceRaised))
-            }
-            .buttonStyle(.plain)
-            .pointerCursor()
-            .help("open this agent's result")
-        }
-        .padding(.horizontal, 12)
-        .frame(height: 52)
-        .background(isSelected ? Color(hex: "#202020") : Color.clear)
-        .overlay(alignment: .leading) {
-            if isSelected { Rectangle().fill(DS.HUD.pointer).frame(width: 2) }
-        }
-        .overlay(alignment: .top) {
-            if showsTopDivider { Rectangle().fill(DS.HUD.line).frame(height: 1) }
-        }
-        .contentShape(Rectangle())
-        .onTapGesture(perform: onSelect)
-        .pointerCursor()
-        .accessibilityElement(children: .combine)
-        .accessibilityLabel("\(Self.title(for: thread)), \(status.word)")
-        .accessibilityHint(isSelected ? "selected: the composer continues this thread" : "select to continue this thread")
+        .accessibilityLabel(warning.heading)
     }
 }
 

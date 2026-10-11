@@ -65,9 +65,17 @@ struct OpenClickyShellSettings: Codable {
     var answerSource: String? = nil
     /// Model overrides per provider ("openrouter": "anthropic/claude-sonnet-4.6"); absent → default.
     var answerModels: [String: String]? = nil
-    /// Who speaks answers: nil or "cloud" is the cloud voice (ElevenLabs on the free credits, OpenAI
-    /// on your own key); "mac" is this Mac's own voice (MacVoice.swift), free and offline.
+    /// Who speaks answers (SpeechVoiceChoice): nil, "auto" or the older "cloud" picks in order (your
+    /// keys, then the free voice); otherwise "account", "openai", "elevenlabs", "google", "polly",
+    /// "sarvam", "kokoro" (downloaded on this Mac) or "mac" (this Mac's own voice).
     var speechVoice: String? = nil
+    /// Voice-only keys, each straight to its vendor: ElevenLabs, Google Cloud Text-to-Speech (a
+    /// Cloud API key with that API on), and Amazon Polly as "accessKeyId:secretKey[:region]".
+    var elevenLabsApiKey: String? = nil
+    var googleCloudApiKey: String? = nil
+    var amazonPollyCredentials: String? = nil
+    /// The Kokoro speaker picked in Settings (its id in the model); nil → the language's default.
+    var kokoroSpeaker: Int? = nil
     /// The Mac voice picked in Settings (an AVSpeechSynthesisVoice identifier); nil → the best one
     /// installed for the reply language.
     var macVoiceIdentifier: String? = nil
@@ -114,6 +122,10 @@ extension OpenClickyShellSettings {
         answerModels = try container.decodeIfPresent([String: String].self, forKey: .answerModels)
         speechVoice = try container.decodeIfPresent(String.self, forKey: .speechVoice)
         macVoiceIdentifier = try container.decodeIfPresent(String.self, forKey: .macVoiceIdentifier)
+        elevenLabsApiKey = try container.decodeIfPresent(String.self, forKey: .elevenLabsApiKey)
+        googleCloudApiKey = try container.decodeIfPresent(String.self, forKey: .googleCloudApiKey)
+        amazonPollyCredentials = try container.decodeIfPresent(String.self, forKey: .amazonPollyCredentials)
+        kokoroSpeaker = try container.decodeIfPresent(Int.self, forKey: .kokoroSpeaker)
         refreshToken = try container.decodeIfPresent(String.self, forKey: .refreshToken)
         tokenExpiresAt = try container.decodeIfPresent(Double.self, forKey: .tokenExpiresAt)
         accountEmail = try container.decodeIfPresent(String.self, forKey: .accountEmail)

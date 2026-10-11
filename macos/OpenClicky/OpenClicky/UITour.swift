@@ -158,18 +158,7 @@ final class UITour {
             hud.debugCloseAll()
             await shoot("\(prefix)-01-collapsed", window: hud.debugPrimaryWindow)
             hud.debugOpenPrimaryPanel()
-            // Regular, then the compact panel a small or zoomed display gets.
-            let originalSize = companionManager.hudSize
-            for (sizeNumber, size) in [(2, HUDSize.regular), (4, .compact)] {
-                companionManager.setHUDSize(size)
-                hud.debugOpenPrimaryPanel()
-                for (offset, tab) in [NotchHUDTab.home, .agents].enumerated() {
-                    hud.debugSelect(tab)
-                    await shoot("\(prefix)-0\(sizeNumber + offset)-\(tab.rawValue)-\(size.rawValue)", window: hud.debugPrimaryWindow)
-                }
-            }
-            companionManager.setHUDSize(originalSize)
-            hud.debugSelect(.home)
+            await shoot("\(prefix)-02-panel", window: hud.debugPrimaryWindow)
             hud.debugCloseAll()
             if placement != .notch { continue }
 

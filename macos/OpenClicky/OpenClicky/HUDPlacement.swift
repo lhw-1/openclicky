@@ -42,28 +42,3 @@ enum HUDPlacement: String, CaseIterable, Identifiable {
     /// True for the two drawer placements, whose island hangs from a screen edge instead of the top.
     var isSideDrawer: Bool { self == .left || self == .right }
 }
-
-/// How tall the open island is. The regular panel is sized for a 14-inch MacBook; on a smaller or
-/// zoomed display ("Larger Text" in Displays) it covers a big share of the screen, so Automatic
-/// switches to the short panel below 940 pt of screen height (a 13-inch 1440 × 900 display and down).
-enum HUDSize: String, CaseIterable, Identifiable {
-    case automatic, regular, compact
-
-    var id: String { rawValue }
-
-    static let defaultsKey = "openclicky.hudSize"
-    static let automaticCompactBelowScreenHeight: CGFloat = 940
-
-    static var stored: HUDSize {
-        UserDefaults.standard.string(forKey: defaultsKey).flatMap(HUDSize.init(rawValue:)) ?? .automatic
-    }
-
-    /// Whether the island uses its short layout on a screen this tall (points).
-    func usesCompactLayout(screenHeight: CGFloat) -> Bool {
-        switch self {
-        case .automatic: return screenHeight > 0 && screenHeight < Self.automaticCompactBelowScreenHeight
-        case .regular: return false
-        case .compact: return true
-        }
-    }
-}

@@ -261,7 +261,7 @@ private struct BackendEngineUsageRow: View {
 
 /// A provider a key can be saved for: where it lives in shell.json and how its row reads.
 private enum KeyProvider: String, CaseIterable, Identifiable {
-    case openAI, anthropic, openRouter, gemini, groq, mistral, xai, sarvam
+    case openAI, anthropic, openRouter, gemini, groq, mistral, xai, sarvam, elevenLabs, googleCloud, amazonPolly
 
     var id: String { rawValue }
 
@@ -275,6 +275,9 @@ private enum KeyProvider: String, CaseIterable, Identifiable {
         case .mistral: return "Mistral"
         case .xai: return "xAI (Grok)"
         case .sarvam: return "Sarvam"
+        case .elevenLabs: return "ElevenLabs"
+        case .googleCloud: return "Google Cloud voice"
+        case .amazonPolly: return "Amazon Polly"
         }
     }
 
@@ -283,11 +286,14 @@ private enum KeyProvider: String, CaseIterable, Identifiable {
         case .openAI: return "Answers, fast voice and hands-free."
         case .anthropic: return "Claude answers your questions about the screen."
         case .openRouter: return "One key for Claude, GPT, Gemini, Llama and more."
-        case .gemini: return "From Google AI Studio."
+        case .gemini: return "Answers and a voice. From Google AI Studio."
         case .groq: return "Very fast answers on open models."
         case .mistral: return "Mistral’s own models."
         case .xai: return "Grok, from xAI."
         case .sarvam: return "Speaks answers in a natural voice (Bulbul), and the Sarvam dictation engine for Indian languages."
+        case .elevenLabs: return "Speaks answers in ElevenLabs’ voice, on your own ElevenLabs account."
+        case .googleCloud: return "Speaks answers. A Google Cloud API key with the Text-to-Speech API switched on; an AI Studio key won’t do."
+        case .amazonPolly: return "Speaks answers in Amazon’s neural voices. Paste access key ID:secret key, then :region if it isn’t us-east-1."
         }
     }
 
@@ -301,6 +307,9 @@ private enum KeyProvider: String, CaseIterable, Identifiable {
         case .mistral: return "Mistral key"
         case .xai: return "xai-…"
         case .sarvam: return "Sarvam key"
+        case .elevenLabs: return "sk_…"
+        case .googleCloud: return "AIza…"
+        case .amazonPolly: return "AKIA…:secret"
         }
     }
 
@@ -314,10 +323,13 @@ private enum KeyProvider: String, CaseIterable, Identifiable {
         case .mistral: return \.mistralApiKey
         case .xai: return \.xaiApiKey
         case .sarvam: return \.sarvamKey
+        case .elevenLabs: return \.elevenLabsApiKey
+        case .googleCloud: return \.googleCloudApiKey
+        case .amazonPolly: return \.amazonPollyCredentials
         }
     }
 
-    /// The source this key answers questions as; Sarvam only does dictation.
+    /// The source this key answers questions as; the voice-only keys answer nothing.
     var answerSource: AnswerSource? {
         switch self {
         case .openAI: return .openAI
@@ -327,7 +339,18 @@ private enum KeyProvider: String, CaseIterable, Identifiable {
         case .groq: return .groq
         case .mistral: return .mistral
         case .xai: return .xai
-        case .sarvam: return nil
+        case .sarvam, .elevenLabs, .googleCloud, .amazonPolly: return nil
+        }
+    }
+
+    /// The voice this key speaks answers in, for its Test button.
+    var speechVoice: SpeechVoiceChoice? {
+        switch self {
+        case .sarvam: return .sarvam
+        case .elevenLabs: return .elevenLabs
+        case .googleCloud: return .google
+        case .amazonPolly: return .polly
+        default: return nil
         }
     }
 
@@ -379,7 +402,7 @@ private struct ProviderKeysList: View {
             HStack(spacing: 8) {
                 Button(checking.contains(provider) ? "Testing…" : "Test") { test(provider) }
                     .disabled(checking.contains(provider))
-                    .help("Ask it what colour a red square is")
+                    .help(provider.speechVoice == nil ? "Ask it what colour a red square is" : "Have it say a word")
                 Button("Remove") { pendingRemoval = provider }
             }
         }
@@ -435,7 +458,7 @@ private struct ProviderKeysList: View {
     }
 
     private func test(_ provider: KeyProvider) {
-        guard let key = provider.savedKey else { return }
+        guard provider.savedKey != nil else { return }
         checking.insert(provider)
         rowStatus[provider] = "Checking…"
         Task {
@@ -443,14 +466,16 @@ private struct ProviderKeysList: View {
             if let source = provider.answerSource {
                 sentence = await AnswerSourceCheck.run(source, credentials: ProviderRouter.currentCredentials(),
                                                        modelOverrides: OpenClickyConfiguration.settings.answerModels ?? [:]).sentence
-            } else {
+            } else if let voice = provider.speechVoice {
+                // A voice key is checked by having it say one word.
                 do {
-                    // Speech is what the key is mostly for now, so the check makes Bulbul say a word.
-                    _ = try await SarvamSpeechClient(key: key).speech(text: "ok", languageCode: "en-IN")
-                    sentence = "✓ Works. It speaks your answers."
+                    _ = try await CloudVoiceSpeaker.audio(for: "ok", voice: voice)
+                    sentence = "✓ Works. It can speak your answers."
                 } catch {
                     sentence = error.localizedDescription
                 }
+            } else {
+                sentence = "Saved."
             }
             rowStatus[provider] = sentence
             checking.remove(provider)
