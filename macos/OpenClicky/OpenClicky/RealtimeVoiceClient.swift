@@ -1376,12 +1376,20 @@ nonisolated final class RealtimeAudioEngine: @unchecked Sendable {
                 }
                 do {
                     var description: String
+                    // Echo cancellation (the voice-processing unit) always records from the Mac's
+                    // default input; a device set on it is accepted and ignored. A microphone the
+                    // person chose that is not the default is honoured by recording without it.
+                    if MicrophoneDevices.choiceDiffersFromDefault(preferredUID: self.preferredMicrophoneUID) {
+                        description = try self.configure(voiceProcessing: false)
+                        description += " (echo cancellation off: it only hears the mac default input)"
+                    } else {
                     do {
                         description = try self.configure(voiceProcessing: true)
                     } catch {
                         self.tearDown()
                         description = try self.configure(voiceProcessing: false)
                         description += " (voice processing unavailable: \(error.localizedDescription))"
+                    }
                     }
                     self.isRunning = true
                     continuation.resume(returning: description)
@@ -1468,9 +1476,21 @@ nonisolated final class RealtimeAudioEngine: @unchecked Sendable {
     // MARK: Internals (audio queue only)
 
     private func configure(voiceProcessing: Bool) throws -> String {
+        var notes: [String] = []
+        configuredMicrophoneUID = preferredMicrophoneUID
+        if voiceProcessing {
+            // The voice-processing unit records from the Mac's default input whatever device is
+            // set on it, so none is set (start() only gets here when that is the person's choice).
+            notes.append("microphone mac default")
+        } else {
+            // Settings → microphone, set before outputNode is first touched: from then on the input
+            // unit refuses a device change (-10851) and, with voice processing on, the engine failed
+            // to start at all (-10875) — realtime voice was down on the 2026-10-11 build.
+            let selectedMicrophone = MicrophoneDevices.apply(preferredUID: preferredMicrophoneUID, to: engine)
+            notes.append(selectedMicrophone ? "microphone \(preferredMicrophoneUID ?? "mac default")" : "microphone not selected, system input")
+        }
         let inputNode = engine.inputNode
         let outputNode = engine.outputNode
-        var notes: [String] = []
         if voiceProcessing {
             try inputNode.setVoiceProcessingEnabled(true)
             // Apple's voice-processing unit ducks every other app's audio while it runs (the user's
@@ -1482,11 +1502,6 @@ nonisolated final class RealtimeAudioEngine: @unchecked Sendable {
             )
             notes.append("other-audio ducking min")
         }
-        // Settings → microphone, set on the unit that actually captures (with voice processing on,
-        // the voice-processing unit) and before its format is read below, which depends on it.
-        let selectedMicrophone = MicrophoneDevices.apply(preferredUID: preferredMicrophoneUID, to: engine)
-        configuredMicrophoneUID = preferredMicrophoneUID
-        notes.append(selectedMicrophone ? "microphone \(preferredMicrophoneUID ?? "mac default")" : "microphone not selected, system input")
         engine.attach(playerNode)
         // With voice processing on, the output unit only initializes when the mixer → output link
         // is made explicitly at the hardware format before the player is connected. `connect`

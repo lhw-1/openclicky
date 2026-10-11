@@ -67,6 +67,24 @@ nonisolated enum MicrophoneDevices {
         return true
     }
 
+    /// True when the person chose a microphone that is connected and is not the Mac's default
+    /// input. Echo cancellation can only record from the default, so the realtime lane asks this
+    /// before turning it on.
+    static func choiceDiffersFromDefault(preferredUID: String?) -> Bool {
+        let connected = allDeviceIDs().compactMap { deviceID in
+            stringProperty(of: deviceID, kAudioDevicePropertyDeviceUID).map { ConnectedInput(deviceID: deviceID, uid: $0) }
+        }
+        let defaultDeviceID = defaultInputDeviceID()
+        let choice = deviceToSelect(preferredUID: preferredUID, connected: connected, defaultDeviceID: defaultDeviceID)
+        return choiceDiffersFromDefault(choice: choice, defaultDeviceID: defaultDeviceID)
+    }
+
+    static func choiceDiffersFromDefault(choice: (deviceID: AudioDeviceID?, chosenUIDIsMissing: Bool),
+                                         defaultDeviceID: AudioDeviceID?) -> Bool {
+        guard let chosenDeviceID = choice.deviceID, !choice.chosenUIDIsMissing else { return false }
+        return chosenDeviceID != defaultDeviceID
+    }
+
     struct ConnectedInput: Equatable {
         let deviceID: AudioDeviceID
         let uid: String

@@ -42,6 +42,16 @@ struct HearingSettingsTests {
     }
 
     /// F-13: the realtime lane's engine is handed the same microphone as dictation.
+    /// Echo cancellation only hears the Mac's default input, so the realtime lane keeps it on
+    /// unless the person chose a different, connected microphone.
+    @Test func echoCancellationStaysOnUnlessAnotherMicrophoneIsChosen() {
+        let defaultIsUSB = usb.deviceID
+        #expect(!MicrophoneDevices.choiceDiffersFromDefault(choice: MicrophoneDevices.deviceToSelect(preferredUID: nil, connected: [builtIn, usb], defaultDeviceID: defaultIsUSB), defaultDeviceID: defaultIsUSB))
+        #expect(!MicrophoneDevices.choiceDiffersFromDefault(choice: MicrophoneDevices.deviceToSelect(preferredUID: usb.uid, connected: [builtIn, usb], defaultDeviceID: defaultIsUSB), defaultDeviceID: defaultIsUSB))
+        #expect(MicrophoneDevices.choiceDiffersFromDefault(choice: MicrophoneDevices.deviceToSelect(preferredUID: builtIn.uid, connected: [builtIn, usb], defaultDeviceID: defaultIsUSB), defaultDeviceID: defaultIsUSB))
+        #expect(!MicrophoneDevices.choiceDiffersFromDefault(choice: MicrophoneDevices.deviceToSelect(preferredUID: "unplugged", connected: [builtIn, usb], defaultDeviceID: defaultIsUSB), defaultDeviceID: defaultIsUSB))
+    }
+
     @Test @MainActor func theRealtimeClientPassesTheChosenMicrophoneToItsEngine() async {
         let client = RealtimeVoiceClient()
         client.preferredMicrophoneUID = usb.uid
