@@ -45,12 +45,35 @@ describe("requireAccount", () => {
     expect(typeof body.resets_at).toBe("string");
   });
 
-  it("rate-limits to 20 requests a minute per user", async () => {
+  it("rate-limits model calls to 20 a minute per user, and says when to retry", async () => {
     const app = appWith(new MemorySpendLedger(), { sub: "busy", via: "supabase" });
     const statuses: number[] = [];
-    for (let i = 0; i < 21; i++) statuses.push((await app.request("/billing/me")).status);
-    expect(statuses.slice(0, 20).every((s) => s === 200)).toBe(true);
-    expect(statuses[20]).toBe(429);
+    for (let i = 0; i < 20; i++) statuses.push((await app.request("/chat", { method: "POST" })).status);
+    expect(statuses.every((s) => s === 200)).toBe(true);
+    const limited = await app.request("/chat", { method: "POST" });
+    expect(limited.status).toBe(429);
+    expect(await limited.json()).toEqual({ error: "slow_down" });
+    const retryAfter = Number(limited.headers.get("retry-after"));
+    expect(retryAfter).toBeGreaterThanOrEqual(1);
+    expect(retryAfter).toBeLessThanOrEqual(60);
+  });
+
+  it("/tts pieces and /billing/me never count toward the 20-a-minute cap", async () => {
+    const app = appWith(new MemorySpendLedger(), { sub: "talker", via: "supabase" });
+    app.post("/tts", (c) => c.json({ spoken: true }));
+    // A 1,024-token answer is 15–30 pieces; the question that follows must still go through.
+    for (let i = 0; i < 30; i++) expect((await app.request("/tts", { method: "POST" })).status).toBe(200);
+    for (let i = 0; i < 25; i++) expect((await app.request("/billing/me")).status).toBe(200);
+    expect((await app.request("/chat", { method: "POST" })).status).toBe(200);
+  });
+
+  it("/tts has its own, looser cap so a flood of pieces is still stopped", async () => {
+    const app = appWith(new MemorySpendLedger(), { sub: "flood", via: "supabase" });
+    app.post("/tts", (c) => c.json({ spoken: true }));
+    const statuses: number[] = [];
+    for (let i = 0; i < 91; i++) statuses.push((await app.request("/tts", { method: "POST" })).status);
+    expect(statuses.slice(0, 90).every((s) => s === 200)).toBe(true);
+    expect(statuses[90]).toBe(429);
   });
 
   it("refuses a zero, negative or non-finite estimate before reserving", async () => {

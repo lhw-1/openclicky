@@ -10,19 +10,30 @@ export type AccountContext = { userId: string; byok: boolean; limits: Limits };
 /** The only routes a grant request may use: Claude and ElevenLabs, nothing on OpenAI. */
 export const GRANT_ROUTES = new Set(["/v1/polish", "/chat", "/v1/messages", "/tts", "/billing/me"]);
 
-const REQUESTS_PER_MINUTE = 20;
-const recentRequests = new Map<string, number[]>();
+/**
+ * Per-user request caps, per minute. Model calls share one bucket. /tts has its own: one spoken answer
+ * is 15–30 pieces, and counting those with the questions made a long answer switch to the Mac voice
+ * mid-sentence (deep test F-41). Its spend is already capped per character by the ledger, so this
+ * bucket only stops floods. /billing/me only reads the account and is not counted at all.
+ */
+const MINUTE = 60_000;
+const BUCKETS: Record<string, { limit: number; recent: Map<string, number[]> }> = {
+  model: { limit: 20, recent: new Map() },
+  tts: { limit: 90, recent: new Map() },
+};
+const UNCOUNTED_ROUTES = new Set(["/billing/me"]);
 
-function rateLimited(userId: string, now = Date.now()): boolean {
-  const windowStart = now - 60_000;
-  const times = (recentRequests.get(userId) ?? []).filter((t) => t > windowStart);
-  if (times.length >= REQUESTS_PER_MINUTE) {
-    recentRequests.set(userId, times);
-    return true;
+/** Seconds until the caller may try again, or 0 when the request is allowed (and counted). */
+function secondsUntilAllowed(bucketName: string, userId: string, now = Date.now()): number {
+  const bucket = BUCKETS[bucketName];
+  const times = (bucket.recent.get(userId) ?? []).filter((t) => t > now - MINUTE);
+  if (times.length >= bucket.limit) {
+    bucket.recent.set(userId, times);
+    return Math.max(1, Math.ceil((times[0] + MINUTE - now) / 1000));
   }
   times.push(now);
-  recentRequests.set(userId, times);
-  return false;
+  bucket.recent.set(userId, times);
+  return 0;
 }
 
 export function requireAccount(ledgerFor: (c: Context) => SpendLedger | undefined): MiddlewareHandler {
@@ -33,7 +44,9 @@ export function requireAccount(ledgerFor: (c: Context) => SpendLedger | undefine
     c.set("account" as never, { userId, byok, limits } as never);
     if (byok || !ledgerFor(c)) return next(); // own key, or a self-hosted backend with no ledger: unmetered
     if (!GRANT_ROUTES.has(c.req.path)) return c.json({ error: "not_on_plan" }, 402);
-    if (rateLimited(userId)) return c.json({ error: "slow_down" }, 429);
+    if (UNCOUNTED_ROUTES.has(c.req.path)) return next();
+    const retryAfter = secondsUntilAllowed(c.req.path === "/tts" ? "tts" : "model", userId);
+    if (retryAfter) return c.json({ error: "slow_down" }, 429, { "Retry-After": String(retryAfter) });
     return next();
   };
 }
