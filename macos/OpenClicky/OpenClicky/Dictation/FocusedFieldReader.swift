@@ -35,6 +35,8 @@ struct FocusedTextTarget {
     let element: AXUIElement
     let role: String?
     let isSecure: Bool
+    /// The bundle id of the process that owns the element (nil when it cannot be told).
+    var bundleID: String? = nil
 
     /// Text roles live typing types into. Not AXWebArea (a focused page, where letters are
     /// single-key shortcuts — Gmail's e, #, !) and not the editable-ancestor guess the paste path
@@ -105,7 +107,8 @@ enum FocusedFieldReader {
         var processID: pid_t = 0
         guard AXUIElementGetPid(focused, &processID) == .success else { return nil }
         return FocusedTextTarget(processID: processID, element: focused, role: string(focused, kAXRoleAttribute),
-                                 isSecure: string(focused, kAXSubroleAttribute) == "AXSecureTextField")
+                                 isSecure: string(focused, kAXSubroleAttribute) == "AXSecureTextField",
+                                 bundleID: NSRunningApplication(processIdentifier: processID)?.bundleIdentifier)
     }
 
     /// Captions near the focused element: the titles and values of its window's visible controls,
@@ -175,9 +178,13 @@ enum FocusedFieldReader {
 enum PasteLanding {
     /// The field's text grew by the pasted text (or contains it): it landed.
     case verified
-    /// The keystroke was posted but the field could not be read back.
+    /// The keystroke was posted into an editable element but the text was not seen in it: it could
+    /// not be read back (a web area, an Electron view — the paste almost always landed there), the
+    /// text was not found, or another app has focus now.
     case posted
-    /// No editable field had focus: nothing was posted; the text is left for the orb and the pasteboard.
+    /// After the paste nothing editable has focus (no focused element, no role, not editable — a
+    /// sheet that swallowed ⌘V): the paste clearly had nowhere to go, so the words are left on the
+    /// pasteboard.
     case noTarget
     /// No Accessibility permission: the text is on the pasteboard only.
     case leftOnPasteboard
@@ -186,7 +193,23 @@ enum PasteLanding {
     static func verify(text: String, before: FocusedFieldSnapshot, settleSeconds: TimeInterval = 0.35) async -> PasteLanding {
         try? await Task.sleep(nanoseconds: UInt64(settleSeconds * 1_000_000_000))
         let after = FocusedFieldReader.snapshot()
+        if keepsPastedWordsOnPasteboard(before: before, after: after) {
+            await MainActor.run { FrontAppTextInserter.copyToPasteboard(text) }
+        }
+        return landing(of: text, before: before, after: after)
+    }
+
+    /// An editable element whose value cannot be read back: the paste probably landed, so the orb
+    /// says nothing about ⌘V (pressing it would give the words twice) — but the person's old
+    /// clipboard is not put back, so the words stay recoverable with ⌘V if it did not land.
+    static func keepsPastedWordsOnPasteboard(before: FocusedFieldSnapshot, after: FocusedFieldSnapshot) -> Bool {
+        after.appBundleID == before.appBundleID && after.role != nil && after.isEditable && after.value == nil
+    }
+
+    /// The comparison `verify` makes, on the field as it was before the paste and as it is now.
+    static func landing(of text: String, before: FocusedFieldSnapshot, after: FocusedFieldSnapshot) -> PasteLanding {
         guard after.appBundleID == before.appBundleID else { return .posted }
+        guard after.role != nil, after.isEditable else { return .noTarget }
         guard let value = after.value else { return .posted }
         let needle = text.trimmingCharacters(in: .whitespacesAndNewlines)
         let probe = String(needle.prefix(200))

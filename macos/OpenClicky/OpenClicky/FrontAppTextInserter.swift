@@ -44,15 +44,23 @@ enum FrontAppTextInserter {
         pasteKeyUp.post(tap: .cghidEventTap)
 
         // Give the front app time to read the pasteboard before the user's clipboard comes back.
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) {
+        let restore = DispatchWorkItem {
             guard pasteboard.string(forType: .string) == text else { return }
             pasteboard.clearContents()
             if !previousPasteboardItems.isEmpty {
                 pasteboard.writeObjects(previousPasteboardItems)
             }
         }
+        pendingClipboardRestore?.cancel()
+        pendingClipboardRestore = restore
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.6, execute: restore)
         return .typed
     }
+
+    /// The person's clipboard, due back shortly after a paste. `copyToPasteboard` cancels it: a
+    /// paste that could not be seen landing leaves the words there for a manual ⌘V, and putting
+    /// the old clipboard back (it only checks that the words are still there) would take them.
+    @MainActor private static var pendingClipboardRestore: DispatchWorkItem?
 
     // MARK: live typing
 
@@ -131,6 +139,8 @@ enum FrontAppTextInserter {
     /// type is waiting for the person's own ⌘V.
     @MainActor
     static func copyToPasteboard(_ text: String) {
+        pendingClipboardRestore?.cancel()
+        pendingClipboardRestore = nil
         let pasteboard = NSPasteboard.general
         lastInsertedAt = Date()
         pasteboard.clearContents()

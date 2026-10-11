@@ -72,7 +72,12 @@ final class ClipboardHistoryMonitor {
         let record = TakeRecord(mode: .clipboard, rawText: "", formattedText: String(text.prefix(Self.maxCharacters)),
                                 appBundleID: NSWorkspace.shared.frontmostApplication?.bundleIdentifier,
                                 appName: NSWorkspace.shared.frontmostApplication?.localizedName, engine: "clipboard")
-        try? takeStore.insert(record)
+        do {
+            try takeStore.insert(record)
+        } catch {
+            AppLog.append("clipboard copy not saved to history: \(error.localizedDescription)")
+            return
+        }
         onRecorded()
     }
 }
