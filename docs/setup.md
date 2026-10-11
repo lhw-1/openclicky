@@ -75,23 +75,47 @@ curl localhost:8787/health        # → {"ok":true}
 | `POST /billing/portal` | token | `{ url }`: Stripe's customer portal (invoices, upgrade, cancel) |
 | `POST /billing/webhook` | Stripe signature | subscription lifecycle → `oc_subscriptions` |
 
-"token" = a Supabase JWT or an exchanged session token. Every request is logged as one JSON line
+"token" = a Supabase JWT or an exchanged session token; the model routes also take no token at all
+when the request brings its own OpenAI key (see below). Every request is logged as one JSON line
 (method, path, status, ms, user id — never bodies or tokens). Deploy: `cd backend && npx wrangler deploy`,
 then `wrangler secret put` each secret.
 
 ### Paying for model calls: your own keys, or a free account
 
-Every model call goes through the backend, and there are two ways to pay for it. The hosted backend
-(`https://api.openclicky.flowsxr.com`, the app's default) runs on a research grant (`GRANT_ACCOUNTS=true`)
-and gives free accounts; bring-your-own-key works for anyone.
+OpenClicky is open source and free for anyone to use. **Your own keys are the primary route, and need
+no account**: with a key, the app and the CLI call OpenAI and Anthropic directly and OpenClicky's
+servers are not involved. The hosted backend (`https://api.openclicky.flowsxr.com`, the app's default)
+and its free accounts are for people without keys who want to try the features; it runs on a research
+grant (`GRANT_ACCOUNTS=true`).
 
-- **Bring your own key.** Put `"openaiApiKey": "sk-…"` (and optionally `"anthropicApiKey"` for the
-  Claude lanes) in `~/.openclicky/shell.json`, or set `OPENCLICKY_OPENAI_KEY` / `OPENCLICKY_ANTHROPIC_KEY`
-  for the CLI. Requests then carry `x-openclicky-openai-key` / `x-openclicky-anthropic-key`; the backend
-  runs them on those keys against OpenAI / Anthropic directly (no OpenRouter aliasing), never stores
-  them, and meters nothing. Codex forwards them too (`env_http_headers` in `config/codex-config.toml`).
-  Without an Anthropic key the Claude lanes answer `402 byok_missing_anthropic_key` (the CLI gate falls
-  back to its heuristic; the app's teacher lane only matters with Realtime off).
+- **Your own keys (no account).** Put `"openaiApiKey": "sk-…"` in `~/.openclicky/shell.json`, and
+  `"anthropicApiKey": "sk-ant-…"` too for the Claude lanes, or set `OPENCLICKY_OPENAI_KEY` /
+  `OPENCLICKY_ANTHROPIC_KEY` for the CLI. Leave `token` empty. Each call then goes straight to the
+  vendor with the request the backend would have sent for it, and a key never leaves the Mac except to
+  its own vendor:
+
+  | Capability | Own key used | Without that key |
+  |---|---|---|
+  | ⌃⌥ ask lane, screen grounding (Claude) | Anthropic | the account's `/chat`; no account: "needs your anthropic key" |
+  | spoken answers | OpenAI speech (`gpt-4o-mini-tts`) | the account's `/tts` (ElevenLabs) |
+  | transcription (upload) | OpenAI (`gpt-4o-mini-transcribe`) | the account's `/agent/transcribe` |
+  | Realtime voice | OpenAI client secret, then OpenAI's socket | the account's `/agent/realtime/session` |
+  | dictation clean-up | OpenAI chat; with only an Anthropic key, Claude Haiku | the account's `/v1/polish` |
+  | teach a skill | OpenAI chat | the account's `/skills/create` |
+  | agent (Codex) and the CLI | OpenAI (`config/codex-config.toml` points Codex at `api.openai.com`) | the backend on `OPENCLICKY_TOKEN` |
+  | AssemblyAI dictation | — (minted on OpenClicky's AssemblyAI key) | account only |
+
+  **The Claude lanes need an Anthropic key too**: an OpenAI key alone covers everything else, and the
+  ask lane says so instead of failing quietly (the CLI gate falls back to its heuristic). Every route
+  the app picks is written to `~/Library/Logs/OpenClicky/app.log` (`route: …`, never a key).
+- **Older apps (0.6–0.8) and own keys through the backend.** Those versions send the key to the
+  backend as `x-openclicky-openai-key` / `x-openclicky-anthropic-key`. The backend accepts that with
+  no token at all on the model routes (`/v1/*`, `/chat`, `/tts`, `/agent/*`, `/skills/*`): it runs the
+  call on those keys only, never on its own, meters nothing, and holds each address to 60 model calls
+  and 180 speech pieces a minute (`OWN_KEY_REQUESTS_PER_MINUTE`, `OWN_KEY_TTS_PER_MINUTE`; 429 with
+  `Retry-After`). A request that sends an `Authorization` header is judged on it alone, so a bad token
+  is still a 401, and the account routes (`/billing/*`, `/auth/*`, `/transcribe-token`) still need an
+  account. Without an Anthropic key the Claude lanes answer `402 byok_missing_anthropic_key`.
 - **A free account on the grant.** Setup asks only for an email. The backend (`POST /auth/start`)
   makes a Supabase anonymous user with that email attached and mails a confirmation link; the account
   works at once, capped at $1 per Mac until the link is clicked, then $2 a day and $10 a month. An
@@ -221,8 +245,9 @@ utterance: questions get the original teacher lane (Claude vision, spoken reply,
 flies to and points at UI elements); "make / fix / create / run…" goes to a Codex thread through
 `openclicky run --events` with the screenshot attached, and the final message is spoken. The
 thread is resumed across turns so follow-ups keep context. The panel shows live agent milestones
-and a "Reveal files" shortcut. Transcription, Claude, and TTS all go through the backend
-(`/agent/transcribe`, `/chat`, `/tts`); no keys live in the app. Analytics are off unless you add a
+and a "Reveal files" shortcut. With your own keys in shell.json (`openaiApiKey`, `anthropicApiKey`;
+no `token` needed) transcription, Claude and speech go straight to OpenAI and Anthropic; without
+them they go through the backend on your account (`/agent/transcribe`, `/chat`, `/tts`). Analytics are off unless you add a
 PostHog key to Info.plist; launch-at-login is opt-in.
 
 **Pointing from Realtime voice.** The Realtime session carries a `point_at(x, y, label)` function
@@ -306,6 +331,8 @@ cd macos/OpenClickyShell && swift build -c release && .build/release/OpenClickyS
    `typ: openclicky-session`, default lifetime 1h; it cannot be re-exchanged.
 3. The agent presents that token on every backend call; Codex attaches it automatically because the
    provider config sets `env_key = "OPENCLICKY_SESSION_TOKEN"`. Raw Supabase JWTs are accepted too.
+   None of this is needed with your own keys: those calls go to the vendors directly (Codex then gets
+   `env_key = "OPENCLICKY_OPENAI_KEY"` and `api.openai.com`).
 
 Local development without a Supabase project: put any `SUPABASE_JWT_SECRET` in `backend/.dev.vars`
 and mint a user JWT with `npm run mint-jwt -w backend` — the same token shape Supabase issues under
