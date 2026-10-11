@@ -1,13 +1,13 @@
 # OpenClicky
 
-**Dictation for your Mac that never has to leave it.** Hold one key anywhere, say what you mean, let
-go: the words are cleaned up in the style of the app in front and land where your cursor is. Offline
-by default with Apple's on-device recogniser; add your Sarvam key and it hears eleven Indian languages.
-And it is still the open-source voice companion it was: hold ⌃⌥ to ask about your screen, be pointed
-at the answer, and hand real work to a Codex agent. MIT licensed.
+**Ask your Mac. It shows you where.** Hold ⌃ control + ⌥ option anywhere and ask out loud ("where do I
+check battery health?"): a pointer flies out of the notch and lands on the answer on your screen. Hold
+fn and talk, and your words are typed where your cursor is, cleaned up in the style of the app in front:
+offline by default with Apple's on-device recogniser, eleven Indian languages with your Sarvam key. And
+when it is more than a question, hand the task to a Codex agent. MIT licensed.
 
 [**Download OpenClicky for macOS**](https://github.com/prasanthsasikumar/openclicky/releases/latest)
-(Apple Silicon and Intel, macOS 14.2+, notarized) · [How it works](docs/architecture.md) · [Contributing](CONTRIBUTING.md)
+(Apple Silicon and Intel, macOS 14.2+, notarized) · [Website](https://openclicky.flowsxr.com) · [Discord](https://discord.gg/zGGERnM5eq) · [How it works](docs/architecture.md) · [Contributing](CONTRIBUTING.md)
 
 <p align="center"><img src="docs/media/demo.gif" width="720" alt="Asking out loud where battery health is: the pointer flies to Battery in System Settings. Then holding fn and talking: the sentence is typed into TextEdit."></p>
 
@@ -15,13 +15,25 @@ at the answer, and hand real work to a Codex agent. MIT licensed.
 
 1. Open the dmg and click **Move to Applications** when OpenClicky offers (or drag it there). Grant
    Microphone and Accessibility when the walkthrough asks: the first hears you, the second pastes.
-   Type your email when it offers a free account (no password, no key) and polished dictation and
-   spoken answers work straight away; or skip it and keep everything on your Mac.
-2. Hold **fn** in any text box, say a sentence, let go. It is typed where your cursor is; the orb at
+   Type your email when it offers a free account (no password, no key) and spoken answers and polished
+   dictation work straight away; or skip it and keep everything on your Mac.
+2. Hold **⌃ control + ⌥ option** anywhere and ask about what is on your screen ("where do I check
+   battery health?"). The pointer flies out of the notch to the answer and tells you what to do.
+3. Hold **fn** in any text box, say a sentence, let go. It is typed where your cursor is; the orb at
    the bottom of the screen shows every step. Tap fn to start a take and tap again to finish; two quick
-   taps or esc discard it.
-3. Open OpenClicky (menu bar → open openclicky) for your history, the dictionary ("you say *aditya
-   shatriya* → it writes **Aaditya Kshatriya**"), spoken shortcuts ("my sign-off"), and a style per app.
+   taps or esc discard it. Open OpenClicky (menu bar → open openclicky) for your history, the dictionary
+   ("you say *aditya shatriya* → it writes **Aaditya Kshatriya**"), spoken shortcuts ("my sign-off"),
+   and a style per app.
+
+### Ask and get pointed at it
+
+Hold **⌃ control + ⌥ option** and ask about anything on screen, tap **⌃ twice** to type instead, tap
+**fn + ⌃ twice** for hands-free. The "do work" lane (files, commands, apps) additionally needs the
+`openclicky` CLI and [Codex](https://github.com/openai/codex): see [Run the agent](docs/setup.md#run-the-agent).
+
+[![Watch the OpenClicky demo](https://img.youtube.com/vi/bWsjCIrmoKA/maxresdefault.jpg)](https://youtu.be/bWsjCIrmoKA)
+
+### Dictation that stays on your Mac
 
 Nothing leaves your Mac until you choose an engine that needs the network (Settings → engine):
 **Sarvam** with your own key (Saaras hears Hindi, Tamil, Telugu, Malayalam, Kannada, Bengali, Marathi,
@@ -56,13 +68,6 @@ words", "moved to text box". The first run is a five-chapter walkthrough:
 | **History** | every take with what you said and what was written, grouped by day, searchable, editable, on this Mac in SQLite. Incognito keeps takes out of it. |
 | **Language & script** | auto-detect or pin a language; native script or roman letters for Indian languages. |
 | **Installed like an app** | self-installs from the dmg, updates itself (Sparkle), opens at login if you want, frees the fn key from Emoji & Symbols with one click. |
-
-The companion features are unchanged: hold **⌃ control + ⌥ option** and ask about anything on screen,
-tap **⌃ twice** to type instead, tap **fn + ⌃ twice** for hands-free. The "do work" lane (files,
-commands, apps) additionally needs the `openclicky` CLI and [Codex](https://github.com/openai/codex):
-see [Run the agent](docs/setup.md#run-the-agent).
-
-[![Watch the OpenClicky demo](https://img.youtube.com/vi/bWsjCIrmoKA/maxresdefault.jpg)](https://youtu.be/bWsjCIrmoKA)
 
 The Mac app is derived from Farza's MIT-licensed [Clicky](https://github.com/farzaa/clicky); HeyClicky
 is a separate product and this project is not affiliated with it. The dictation product shape follows
