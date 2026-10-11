@@ -142,9 +142,14 @@ final class DictationTakeController: ObservableObject {
     private var takeIsToggle = false
     private var takeReceivedFinalTranscript = false
     private var fieldAtPress = FocusedFieldSnapshot.unknown
+    /// The focused element itself at press (Accessibility's identity): the paste goes only there,
+    /// not into another field of the same app that has focus by release.
+    private var focusedTargetAtPress: FocusedTextTarget?
     private var nearbyTermsAtPress: [String] = []
     /// Set when this take's words are typed as they settle (no model polish will run); nil otherwise.
     private var liveTyping: LiveTypingSession?
+    /// A history write that failed is logged every time but said on the orb only once per run.
+    private var hasShownHistoryWriteFailure = false
 
     init(settings: DictationSettings, spaceStore: DictationSpaceStore, takeStore: TakeStore?, orb: OrbModel,
          capture: (any DictationCapturing)? = nil, host: DictationHost = DictationHost(), audioStore: TakeAudioStore = TakeAudioStore()) {
@@ -189,7 +194,9 @@ final class DictationTakeController: ObservableObject {
             orb.boxReason = "\(label) · paste or copy"
             orb.isBoxOpen = true
             if let last = lastTake, !settings.incognito {
-                try? takeStore?.revise(takeID: last.id, newText: rewritten, editor: "quick-\(label)")
+                if let historyNote = writeToHistory("quick rewrite", takeID: last.id, { try $0.revise(takeID: last.id, newText: rewritten, editor: "quick-\(label)") }) {
+                    orb.boxReason = "\(label) · paste or copy · \(historyNote)"
+                }
                 lastTake?.formattedText = rewritten
                 historyVersion += 1
             }
@@ -214,7 +221,9 @@ final class DictationTakeController: ObservableObject {
         if let last = lastTake, last.pasteOutcome == .leftInOrb, !settings.incognito {
             var pasted = last
             pasted.pasteOutcome = .posted
-            try? takeStore?.insert(pasted)
+            if let historyNote = writeToHistory("paste from the box", takeID: pasted.id, { try $0.insert(pasted) }) {
+                orb.boxReason = "\(orb.boxReason ?? "pasted") · \(historyNote)"
+            }
             lastTake = pasted
             historyVersion += 1
         }
@@ -304,10 +313,15 @@ final class DictationTakeController: ObservableObject {
             switch state {
             case .starting, .listening:
                 guard takeMode == .dictate else { break }
-                if liveTyping?.hasTyped == true {
+                if var session = liveTyping, session.hasTyped {
                     // Words already went into the field: an edit now would rewrite a selection the
-                    // person never meant. The take stays a dictation.
-                    orb.hint = "already typing — release and start an edit"
+                    // person never meant, so the take stays a dictation — but typing stops here,
+                    // since what is said from now on is an instruction and must never be typed.
+                    // What was heard before ⌃ and not typed yet goes to the pasteboard at release.
+                    markLiveTypingStopped(&session, reason: "too late for an edit", takeID: takeID)
+                    session.editKeyJoinedAfterTyping = true
+                    liveTyping = session
+                    orb.hint = "already typing — stopped here. let go, then start an edit"
                     break
                 }
                 takeMode = .edit
@@ -398,8 +412,9 @@ final class DictationTakeController: ObservableObject {
         // The focused element is read now (a few AX calls); the window's captions, which can take
         // hundreds of milliseconds in a browser, are read once the microphone is open.
         fieldAtPress = host.readFocusedField()
+        focusedTargetAtPress = host.readFocusedTextTarget()
         nearbyTermsAtPress = []
-        liveTyping = makeLiveTypingSessionIfWanted(mode: mode)
+        liveTyping = makeLiveTypingSessionIfWanted(mode: mode, focusedTarget: focusedTargetAtPress)
         audioStore.beginCapture()
         boxCloseWork?.cancel()
         dictationManager.updateContextualKeyterms(spaceStore.space.dictionary.map(\.written))
@@ -478,7 +493,9 @@ final class DictationTakeController: ObservableObject {
         // keeps what reached it.
         if let liveTyping, liveTyping.hasTyped {
             logLiveTypedTotal(liveTyping, takeID: thisTakeID)
-            recordInterruptedLiveTypedTake(liveTyping, takeID: thisTakeID, status: .cancelled, reason: reason)
+            if let historyNote = recordInterruptedLiveTypedTake(liveTyping, takeID: thisTakeID, status: .cancelled, reason: reason) {
+                orb.phase = .failed("\(reason) · \(historyNote)")
+            }
         }
         endTake()
         scheduleIdle(after: 1.4)
@@ -496,18 +513,23 @@ final class DictationTakeController: ObservableObject {
             // The typed words stay in the app; the take is recorded with them, and what was heard
             // but not typed yet goes to the pasteboard, as when typing stops.
             logLiveTypedTotal(liveTyping, takeID: failedTakeID)
-            recordInterruptedLiveTypedTake(liveTyping, takeID: failedTakeID, status: .failed, reason: message)
+            let historyNote = recordInterruptedLiveTypedTake(liveTyping, takeID: failedTakeID, status: .failed, reason: message)
+            var failureLine = message
             let heardButUntyped = heardButUntypedText(liveTyping)
             if !heardButUntyped.isEmpty {
                 host.copyToPasteboard(heardButUntyped)
-                orb.phase = .failed("\(message) — the rest is copied, press ⌘V")
+                failureLine = "\(message) — the rest is copied, press ⌘V"
             }
+            if let historyNote { failureLine += " · \(historyNote)" }
+            orb.phase = .failed(failureLine)
         } else if !settings.incognito, !message.hasPrefix("didn't catch") {
             let record = TakeRecord(id: failedTakeID, createdAt: takeStartedAt, mode: takeMode == .edit ? .edit : .dictate, status: .failed,
                                     rawText: orb.liveTranscript, formattedText: "", appBundleID: fieldAtPress.appBundleID,
                                     appName: fieldAtPress.appName, language: settings.language.bareCode, engine: settings.engine.rawValue,
                                     durationSeconds: Date().timeIntervalSince(takeStartedAt), failureReason: message)
-            try? takeStore?.insert(record)
+            if let historyNote = writeToHistory("failed take", takeID: failedTakeID, { try $0.insert(record) }) {
+                orb.phase = .failed("\(message) · \(historyNote)")
+            }
             historyVersion += 1
             // The words are still in the audio: keep it so the take can be heard again.
             if settings.retainFailedTakeAudio, settings.engine != .offline, pcm.count > 16_000 {
@@ -611,6 +633,9 @@ final class DictationTakeController: ObservableObject {
         } else if let target = field.appBundleID, let frontNow, target != frontNow {
             pasteOutcome = .leftOnPasteboard
             pasteMessage = "the app changed — copied, press ⌘V"
+        } else if focusMovedSincePress() {
+            pasteOutcome = .leftOnPasteboard
+            pasteMessage = "the focus moved — copied, press ⌘V"
         } else if field.isEditable || !host.isAccessibilityTrusted() || field.role == nil {
             // Editable, or unknown (no permission / the app exposes nothing): try the paste.
             switch host.paste(outputText) {
@@ -642,8 +667,9 @@ final class DictationTakeController: ObservableObject {
                                 appName: field.appName, language: settings.language.bareCode, engine: settings.engine.rawValue,
                                 durationSeconds: duration, pasteOutcome: pasteOutcome)
         lastTake = record
+        var historyNote: String?
         if !settings.incognito {
-            try? takeStore?.insert(record)
+            historyNote = writeToHistory("take", takeID: thisTakeID, { try $0.insert(record) })
             historyVersion += 1
         }
         onTakeFinished?(record)
@@ -659,6 +685,7 @@ final class DictationTakeController: ObservableObject {
         earcons.play(pasteOutcome == .verified || pasteOutcome == .posted ? .complete : .notify)
         earcons.tap()
         if formattingDegraded, pasteOutcome == .verified || pasteOutcome == .posted { pasteMessage = "moved to text box · cleaned up locally" }
+        if let historyNote { pasteMessage += " · \(historyNote)" }
         orb.phase = .done(pasteMessage)
         AppLog.append("take \(thisTakeID.uuidString.prefix(8)) done: \(outputText.count) chars, paste=\(pasteOutcome.rawValue), engine=\(settings.engine.rawValue), degraded=\(formattingDegraded)")
         endTake()
@@ -670,10 +697,15 @@ final class DictationTakeController: ObservableObject {
     /// A take's words are typed as they settle only when: it is a dictation (not a Hey Clicky
     /// edit), no model will polish it (the same decision `TakeFormatter.format` makes), the focused
     /// element is a real text field (not a web page, where letters are shortcuts) and not a
-    /// password field, and secure input is off.
-    private func makeLiveTypingSessionIfWanted(mode: TakeMode) -> LiveTypingSession? {
+    /// password field, it is not a terminal or OpenClicky's own window (`LiveTypingExclusions`),
+    /// and secure input is off.
+    private func makeLiveTypingSessionIfWanted(mode: TakeMode, focusedTarget: FocusedTextTarget?) -> LiveTypingSession? {
         guard mode == .dictate, !fieldAtPress.isSecure, !host.isSecureInputOn(),
-              let focusedTarget = host.readFocusedTextTarget(), focusedTarget.acceptsLiveTyping else { return nil }
+              let focusedTarget, focusedTarget.acceptsLiveTyping else { return nil }
+        if let reason = LiveTypingExclusions.reasonNotToType(into: focusedTarget, fieldBundleID: fieldAtPress.appBundleID) {
+            AppLog.append("take \(takeID.uuidString.prefix(8)) not typed live: \(reason); the words paste at release")
+            return nil
+        }
         let space = spaceStore.space
         let context = TakeFormattingContext(
             style: space.style(forAppBundleID: fieldAtPress.appBundleID), dictionary: space.dictionary, shortcuts: space.shortcuts,
@@ -691,6 +723,14 @@ final class DictationTakeController: ObservableObject {
             focusedTargetAtPress: focusedTarget, formattingContext: context)
     }
 
+    /// Another element of the same app has focus than at press (the search field instead of the
+    /// message box): the paste would land there. Only a confident "different": when either read
+    /// fails (no permission, an app that answers nothing) the paste goes ahead as before.
+    private func focusMovedSincePress() -> Bool {
+        guard let targetAtPress = focusedTargetAtPress, let targetNow = host.readFocusedTextTarget() else { return false }
+        return !targetNow.isSameElement(as: targetAtPress)
+    }
+
     /// A partial transcript: settled words are typed (when this take types live and the key is
     /// still held or the tapped take still listens) and the orb shows what has not been typed yet.
     private func handlePartialTranscript(_ partial: String, takeID thisTakeID: UUID) {
@@ -698,7 +738,8 @@ final class DictationTakeController: ObservableObject {
             orb.liveTranscript = partial
             return
         }
-        session.latestPartial = partial
+        // After a late ⌃ the words are an edit instruction: the take keeps what was heard before it.
+        if !session.editKeyJoinedAfterTyping { session.latestPartial = partial }
         let takeIsStillListening = state == .starting || state == .listening
         if session.stoppedReason == nil, takeIsStillListening {
             _ = session.committer.observe(partial: partial, at: host.now())
@@ -713,7 +754,7 @@ final class DictationTakeController: ObservableObject {
         if session.stoppedReason == nil, takeIsStillListening { scheduleLiveTypingPauseCheck(after: partial, takeID: thisTakeID) }
         // The words are already appearing in the app: the orb shows only the listening pill. Once
         // typing has stopped (focus moved, a held key), the untyped words show so nothing is lost.
-        orb.liveTranscript = session.stoppedReason == nil ? "" : untypedWords(of: partial, session: session).joined(separator: " ")
+        orb.liveTranscript = session.stoppedReason == nil ? "" : untypedWords(of: session.latestPartial, session: session).joined(separator: " ")
     }
 
     /// When the person stops talking no new partial comes, so the last word would wait for the
@@ -809,9 +850,12 @@ final class DictationTakeController: ObservableObject {
 
     /// The key came up on a take that was typed as it was spoken: only the words of the final
     /// transcript that were not typed yet are typed now. Never retyped, never deleted.
-    private func finishLiveTypedTake(rawText raw: String, session startingSession: LiveTypingSession,
+    private func finishLiveTypedTake(rawText finalTranscript: String, session startingSession: LiveTypingSession,
                                      duration: TimeInterval, takeID thisTakeID: UUID) {
         var session = startingSession
+        // ⌃ joined after words were typed: the final ends in the spoken edit instruction, which is
+        // neither typed nor copied; the take is what was heard up to ⌃.
+        let raw = session.editKeyJoinedAfterTyping ? session.latestPartial : finalTranscript
         let finalWords = StableWordCommitter.words(of: raw)
         let alignment = TranscriptAlignment.align(finalWords: finalWords, committedWords: session.typedRawWords)
         if !alignment.alignedByWords {
@@ -851,7 +895,9 @@ final class DictationTakeController: ObservableObject {
                                 durationSeconds: duration, pasteOutcome: pasteOutcome)
         lastTake = record
         if !settings.incognito {
-            try? takeStore?.insert(record)
+            if let historyNote = writeToHistory("live-typed take", takeID: thisTakeID, { try $0.insert(record) }) {
+                message += " · \(historyNote)"
+            }
             historyVersion += 1
         }
         onTakeFinished?(record)
@@ -874,16 +920,35 @@ final class DictationTakeController: ObservableObject {
     }
 
     /// A cancelled or failed take whose first words were already typed: history keeps them.
-    private func recordInterruptedLiveTypedTake(_ session: LiveTypingSession, takeID thisTakeID: UUID, status: TakeRecord.Status, reason: String) {
-        guard !settings.incognito else { return }
+    /// Returns the orb's note when that write failed (see `writeToHistory`).
+    private func recordInterruptedLiveTypedTake(_ session: LiveTypingSession, takeID thisTakeID: UUID, status: TakeRecord.Status, reason: String) -> String? {
+        guard !settings.incognito else { return nil }
         let record = TakeRecord(id: thisTakeID, createdAt: takeStartedAt, mode: .dictate, status: status,
                                 rawText: session.typedRawWords.joined(separator: " "), formattedText: session.typedText,
                                 appBundleID: fieldAtPress.appBundleID, appName: fieldAtPress.appName,
                                 language: settings.language.bareCode, engine: settings.engine.rawValue,
                                 durationSeconds: Date().timeIntervalSince(takeStartedAt), pasteOutcome: .posted,
                                 failureReason: "\(reason) · words typed before it stay")
-        try? takeStore?.insert(record)
+        let historyNote = writeToHistory("interrupted take", takeID: thisTakeID, { try $0.insert(record) })
         historyVersion += 1
+        return historyNote
+    }
+
+    /// Writes to history. A failure (the file locked by another OpenClicky past the busy timeout,
+    /// a full disk, a damaged database) is logged every time; the first one this run also returns
+    /// the words the orb adds to its line, so a take missing from history is never a surprise.
+    /// Without a store at all (it could not be opened) the History page says so instead.
+    private func writeToHistory(_ whatIsWritten: String, takeID writtenTakeID: UUID, _ write: (TakeStore) throws -> Void) -> String? {
+        guard let takeStore else { return nil }
+        do {
+            try write(takeStore)
+            return nil
+        } catch {
+            AppLog.append("take \(writtenTakeID.uuidString.prefix(8)) not saved to history (\(whatIsWritten)): \(error.localizedDescription)")
+            guard !hasShownHistoryWriteFailure else { return nil }
+            hasShownHistoryWriteFailure = true
+            return "not saved to history"
+        }
     }
 
     /// The box is for the moment the words had nowhere to go; it does not stay on screen.
@@ -991,7 +1056,8 @@ final class DictationTakeController: ObservableObject {
                                     rawText: raw, formattedText: formatted.text, appBundleID: original?.appBundleID, appName: original?.appName,
                                     language: settings.language.bareCode, engine: settings.engine.rawValue,
                                     durationSeconds: original?.durationSeconds ?? 0, pasteOutcome: .leftInOrb)
-            if !settings.incognito { try? takeStore?.insert(record) }
+            var historyNote: String?
+            if !settings.incognito { historyNote = writeToHistory("retried take", takeID: takeID, { try $0.insert(record) }) }
             historyVersion += 1
             lastTake = record
             audioStore.discard(takeID: takeID)
@@ -1001,7 +1067,7 @@ final class DictationTakeController: ObservableObject {
             orb.isBoxOpen = true
             scheduleBoxClose()
             earcons.play(.complete)
-            orb.phase = .done("retried · copy from the box")
+            orb.phase = .done("retried · copy from the box" + (historyNote.map { " · \($0)" } ?? ""))
             AppLog.append("take \(takeID.uuidString.prefix(8)) retried: \(formatted.text.count) chars")
             scheduleIdle(after: 2.5)
         } catch {

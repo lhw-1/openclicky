@@ -7,6 +7,7 @@
 //  was already typed.
 //
 
+import ApplicationServices
 import CoreGraphics
 import Foundation
 import Testing
@@ -138,8 +139,25 @@ struct LivePhraseFormatterTests {
         #expect(LivePhraseFormatter.containsControlCharacters("line one\nline two"))
         #expect(LivePhraseFormatter.containsControlCharacters("tab\there"))
         #expect(LivePhraseFormatter.containsControlCharacters("escape \u{1B}[A"))
-        #expect(LivePhraseFormatter.containsControlCharacters("zero\u{200B}width"))
+        #expect(LivePhraseFormatter.containsControlCharacters("next\u{85}line"))
+        #expect(LivePhraseFormatter.containsControlCharacters("line\u{2028}separator"))
+        #expect(LivePhraseFormatter.containsControlCharacters("paragraph\u{2029}separator"))
         #expect(!LivePhraseFormatter.containsControlCharacters(" Hello, there! 25 kg — ok"))
+    }
+
+    /// Format characters move no line: they are parts of ordinary words and emoji (F-12).
+    @Test func joinersSoftHyphensAndEmojiSequencesType() {
+        let wordsThatMustType = [
+            "ज़िन्दगी\u{200C}में",      // Hindi with a zero-width non-joiner
+            "കാര്\u{200D}",              // a Malayalam chillu written with a zero-width joiner
+            "👨\u{200D}👩\u{200D}👧",     // a family emoji
+            "🏳\u{FE0F}\u{200D}🌈",       // a flag emoji with a variation selector
+            "co\u{00AD}operate",         // a soft hyphen
+            "zero\u{200B}width",         // a zero-width space
+        ]
+        for word in wordsThatMustType {
+            #expect(!LivePhraseFormatter.containsControlCharacters(word), "\(word.unicodeScalars.map { String($0.value, radix: 16) })")
+        }
     }
 
     @Test func theCasualStyleStaysLowercase() {
@@ -200,10 +218,52 @@ struct TranscriptAlignmentTests {
         #expect(alignment.remainingWords(of: final) == final)
     }
 
+    /// A lone common word several words on is another occurrence, not the typed one (F-25).
+    @Test func aOneWordRunFarFromTheExpectedEndDoesNotAlign() {
+        let final = ["the", "cat", "sat", "on", "a", "mat", "near", "the", "door"]
+        let alignment = TranscriptAlignment.align(finalWords: final, committedWords: ["the", "cat", "sat", "on", "the"])
+        #expect(!alignment.alignedByWords)
+        #expect(alignment.remainingWords(of: final) == ["a", "mat", "near", "the", "door"])
+
+        let otherFinal = ["please", "send", "it", "two", "times", "to", "bob"]
+        let otherAlignment = TranscriptAlignment.align(finalWords: otherFinal, committedWords: ["please", "send", "it", "to"])
+        #expect(!otherAlignment.alignedByWords)
+        #expect(otherAlignment.remainingWords(of: otherFinal) == ["two", "times", "to", "bob"])
+    }
+
+    @Test func aOneWordRunOneWordAwayStillAligns() {
+        // "uh" dropped from the middle: the typed "go" now ends one word earlier.
+        let final = ["we", "go", "home", "now"]
+        let alignment = TranscriptAlignment.align(finalWords: final, committedWords: ["we", "uh", "go"])
+        #expect(alignment.alignedByWords)
+        #expect(alignment.remainingWords(of: final) == ["home", "now"])
+    }
+
     @Test func aFinalShorterThanTheCommittedWordsLeavesNothing() {
         let final = ["send", "it"]
         let alignment = TranscriptAlignment.align(finalWords: final, committedWords: ["send", "it", "to", "bob"])
         #expect(alignment.remainingWords(of: final).isEmpty)
+    }
+}
+
+/// How a paste is judged after the field is read back (F-29).
+struct PasteLandingTests {
+    private func field(role: String? = "AXTextArea", editable: Bool = true, value: String?) -> FocusedFieldSnapshot {
+        FocusedFieldSnapshot(appBundleID: "com.apple.Notes", appName: "Notes", role: role, isEditable: editable, isSecure: false, value: value, selectedText: nil)
+    }
+
+    @Test func textFoundInTheFieldIsVerified() {
+        #expect(PasteLanding.landing(of: "hello there", before: field(value: ""), after: field(value: "hello there")) == .verified)
+    }
+
+    @Test func aFieldThatCannotBeReadBackIsNoTarget() {
+        #expect(PasteLanding.landing(of: "hello there", before: field(value: ""), after: field(value: nil)) == .noTarget)
+        #expect(PasteLanding.landing(of: "hello there", before: field(value: ""), after: field(role: nil, editable: false, value: nil)) == .noTarget)
+        #expect(PasteLanding.landing(of: "hello there", before: field(value: ""), after: field(role: "AXGroup", editable: false, value: nil)) == .noTarget)
+    }
+
+    @Test func aReadableFieldWithoutTheTextIsPosted() {
+        #expect(PasteLanding.landing(of: "hello there", before: field(value: "abc"), after: field(value: "abc")) == .posted)
     }
 }
 
@@ -235,6 +295,29 @@ struct LiveTypingDecisionTests {
             #expect(!FocusedTextTarget.isLiveTypingTextRole(role))
         }
         #expect(!FocusedTextTarget.isLiveTypingTextRole(nil))
+    }
+
+    /// Letters are commands in a terminal's full-screen programs (F-07).
+    @Test func terminalsAreNeverTypedIntoLive() {
+        let terminalIDs = ["com.apple.Terminal", "com.googlecode.iterm2", "net.kovidgoyal.kitty", "dev.warp.Warp-Stable",
+                           "com.mitchellh.ghostty", "co.zeit.hyper", "org.alacritty", "com.github.wez.wezterm"]
+        for terminalID in terminalIDs {
+            let terminalView = FocusedTextTarget(processID: 777, element: AXUIElementCreateApplication(777), role: "AXTextArea", isSecure: false, bundleID: terminalID)
+            #expect(LiveTypingExclusions.reasonNotToType(into: terminalView, fieldBundleID: nil, ownProcessID: 1, ownBundleID: "org.openclicky.app") == "a terminal")
+            // NSWorkspace's answer counts too, when the pid could not be named.
+            let unnamed = FocusedTextTarget(processID: 777, element: AXUIElementCreateApplication(777), role: "AXTextArea", isSecure: false)
+            #expect(LiveTypingExclusions.reasonNotToType(into: unnamed, fieldBundleID: terminalID, ownProcessID: 1, ownBundleID: "org.openclicky.app") == "a terminal")
+        }
+        let notes = FocusedTextTarget(processID: 777, element: AXUIElementCreateApplication(777), role: "AXTextArea", isSecure: false, bundleID: "com.apple.Notes")
+        #expect(LiveTypingExclusions.reasonNotToType(into: notes, fieldBundleID: "com.apple.Notes", ownProcessID: 1, ownBundleID: "org.openclicky.app") == nil)
+    }
+
+    /// The record page's "try it here" box would get the words twice (F-23).
+    @Test func openClickysOwnWindowsAreNeverTypedIntoLive() {
+        let ownBox = FocusedTextTarget(processID: 1, element: AXUIElementCreateApplication(1), role: "AXTextArea", isSecure: false)
+        #expect(LiveTypingExclusions.reasonNotToType(into: ownBox, fieldBundleID: nil, ownProcessID: 1, ownBundleID: "org.openclicky.app") != nil)
+        let ownByBundle = FocusedTextTarget(processID: 2, element: AXUIElementCreateApplication(2), role: "AXTextArea", isSecure: false, bundleID: "org.openclicky.app")
+        #expect(LiveTypingExclusions.reasonNotToType(into: ownByBundle, fieldBundleID: nil, ownProcessID: 1, ownBundleID: "org.openclicky.app") != nil)
     }
 
     @Test func onlyTheDictationKeysOwnModifierMayBeHeldWhileTyping() {

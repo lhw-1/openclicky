@@ -23,8 +23,8 @@ extension SettingsCatalog {
                 view: AnyView(PermissionRow(permission: .microphone))),
             SettingsItem(
                 id: "privacy.accessibility", page: .privacy, section: "what it can use",
-                title: "accessibility", detail: "lets openclicky paste takes into other apps and read nearby text.",
-                keywords: ["permission", "paste", "grant", "keys", "event tap"],
+                title: "accessibility", detail: "lets openclicky type and paste takes into other apps and read nearby text. terminals get the words when you let go.",
+                keywords: ["permission", "paste", "grant", "keys", "event tap", "terminal", "live typing"],
                 view: AnyView(PermissionRow(permission: .accessibility))),
             SettingsItem(
                 id: "privacy.speechRecognition", page: .privacy, section: "what it can use",
@@ -116,7 +116,7 @@ private enum PrivacyPermission {
     var detail: String {
         switch self {
         case .microphone: return "openclicky listens only when you start a take. with this mac as the engine, audio never leaves it."
-        case .accessibility: return "lets openclicky paste takes into other apps and read nearby text."
+        case .accessibility: return "lets openclicky type and paste takes into other apps and read nearby text. terminals get the words when you let go."
         case .speechRecognition: return "apple’s on-device recogniser, for this mac as the engine."
         }
     }

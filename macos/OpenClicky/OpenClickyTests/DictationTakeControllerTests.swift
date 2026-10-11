@@ -11,6 +11,7 @@ import AVFoundation
 import CoreGraphics
 import Combine
 import Foundation
+import SQLite3
 import Testing
 @testable import OpenClicky
 
@@ -98,6 +99,8 @@ private struct Harness {
         var focusedTarget: FocusedTextTarget?
         /// The modifier keys physically held right now.
         var heldModifierFlags: CGEventFlags = []
+        /// What reading the field back after a paste finds.
+        var landing: PasteLanding = .verified
     }
 
     init(polisher: (any TakePolisher)? = nil, field: FocusedFieldSnapshot? = nil) throws {
@@ -123,7 +126,7 @@ private struct Harness {
         host.isSecureInputOn = { false }
         host.isAccessibilityTrusted = { true }
         host.paste = { text in pasted.texts.append(text); return .typed }
-        host.verifyPaste = { _, _ in .verified }
+        host.verifyPaste = { _, _ in pasted.landing }
         host.typeText = { text in pasted.typed.append(text); return true }
         host.copyToPasteboard = { text in pasted.copied.append(text) }
         host.now = { pasted.now }
@@ -531,19 +534,116 @@ struct DictationTakeControllerTests {
         #expect(h.pasted.texts.isEmpty)
     }
 
-    @Test @MainActor func controlJoiningAfterWordsWereTypedDoesNotBecomeAnEdit() async throws {
+    /// ⌃ after words were typed: typing stops there and the spoken edit is never typed (F-24).
+    @Test @MainActor func controlJoiningAfterWordsWereTypedStopsTypingAndNeverTypesTheEdit() async throws {
         let h = try Harness()
         h.controller.handle(.dictationPressed)
         await h.waitUntil { h.controller.state == .listening }
         speak("hello there my friend", in: h)
+        #expect(h.pasted.typed == ["Hello there"])
         h.controller.handle(.dictationEditModifierJoined)
         #expect(h.orb.phase == .listening)
-        #expect(h.orb.hint == "already typing — release and start an edit")
+        #expect(h.orb.hint == "already typing — stopped here. let go, then start an edit")
+        // The edit instruction is heard but never typed.
+        speak("hello there my friend make it formal", in: h)
+        #expect(h.pasted.typed == ["Hello there"])
+        h.controller.handle(.dictationReleased(wasTap: false))
+        h.capture.deliverFinal("hello there my friend make it formal")
+        await h.waitUntil { h.controller.state == .idle }
+        #expect(h.pasted.typed == ["Hello there"])
+        #expect(h.pasted.texts.isEmpty)
+        // What was dictated before ⌃ and not typed yet is copied; the instruction is not.
+        #expect(h.pasted.copied == ["my friend"])
+        let record = try #require(try h.store.recent().first)
+        #expect(record.mode == .dictate)
+        #expect(record.rawText == "hello there my friend")
+        #expect(!record.formattedText.contains("formal"))
+    }
+
+    // MARK: where the words may go
+
+    /// A terminal's focused view is an AXTextArea, but letters are commands there (F-07).
+    @Test @MainActor func aTerminalIsNeverTypedIntoLiveAndGetsThePaste() async throws {
+        let terminal = FocusedFieldSnapshot(appBundleID: "com.apple.Terminal", appName: "Terminal", role: "AXTextArea", isEditable: true, isSecure: false, value: "", selectedText: nil)
+        let h = try Harness(field: terminal)
+        h.pasted.frontApp = "com.apple.Terminal"
+        h.pasted.focusedTarget = FocusedTextTarget(processID: 6060, element: AXUIElementCreateApplication(6060), role: "AXTextArea", isSecure: false, bundleID: "com.apple.Terminal")
+        h.controller.handle(.dictationPressed)
+        await h.waitUntil { h.controller.state == .listening }
+        speak("quit now and type hello world", in: h)
+        #expect(h.pasted.typed.isEmpty)
+        h.controller.handle(.dictationReleased(wasTap: false))
+        h.capture.deliverFinal("quit now and type hello world")
+        await h.waitUntil { h.controller.state == .idle }
+        #expect(h.pasted.typed.isEmpty)
+        #expect(h.pasted.texts == ["Quit now and type hello world"])
+    }
+
+    /// The record page's box is OpenClicky's own: typed live it would get the words twice (F-23).
+    @Test @MainActor func openClickysOwnWindowIsNeverTypedIntoLive() async throws {
+        let h = try Harness()
+        h.pasted.focusedTarget = FocusedTextTarget(processID: getpid(), element: AXUIElementCreateApplication(getpid()), role: "AXTextArea", isSecure: false)
+        h.controller.handle(.dictationPressed)
+        await h.waitUntil { h.controller.state == .listening }
+        speak("hello there my friend", in: h)
+        #expect(h.pasted.typed.isEmpty)
         h.controller.handle(.dictationReleased(wasTap: false))
         h.capture.deliverFinal("hello there my friend")
         await h.waitUntil { h.controller.state == .idle }
-        #expect(h.pasted.typed == ["Hello there", " my friend"])
-        #expect(try h.store.recent().first?.mode == .dictate)
+        #expect(h.pasted.texts == ["Hello there my friend"])
+    }
+
+    /// The paste goes only into the element the key went down in (F-28).
+    @Test @MainActor func focusMovingInsideTheSameAppRefusesThePaste() async throws {
+        let h = try Harness()
+        h.controller.handle(.dictationPressed)
+        await h.waitUntil { h.controller.state == .listening }
+        h.controller.handle(.dictationReleased(wasTap: false))
+        // Same app, another element: the search field, not the message box.
+        h.pasted.focusedTarget = FocusedTextTarget(processID: Harness.notesProcessID, element: AXUIElementCreateSystemWide(), role: "AXSearchField", isSecure: false)
+        h.capture.deliverFinal("hello")
+        await h.waitUntil { h.controller.state == .idle }
+        #expect(h.pasted.texts.isEmpty)
+        #expect(h.pasted.copied == ["Hello"])
+        #expect(h.orb.phase == .done("the focus moved — copied, press ⌘V"))
+        #expect(try h.store.recent().first?.pasteOutcome == .leftOnPasteboard)
+    }
+
+    /// A paste that cannot be read back is not reported as landed (F-29).
+    @Test @MainActor func aPasteThatCannotBeSeenLandingIsLeftOnThePasteboard() async throws {
+        let h = try Harness()
+        h.pasted.landing = .noTarget
+        h.controller.handle(.dictationPressed)
+        await h.waitUntil { h.controller.state == .listening }
+        h.controller.handle(.dictationReleased(wasTap: false))
+        h.capture.deliverFinal("hello")
+        await h.waitUntil { h.controller.state == .idle }
+        #expect(h.pasted.texts == ["Hello"])
+        #expect(h.pasted.copied == ["Hello"])
+        #expect(h.orb.phase == .done("couldn't see it land — copied, press ⌘V"))
+        #expect(try h.store.recent().first?.pasteOutcome == .leftOnPasteboard)
+    }
+
+    // MARK: history writes
+
+    /// A write history refuses is said once on the orb and logged, never silently lost (F-33).
+    @Test @MainActor func aFailedHistoryWriteIsShownOnceOnTheOrb() async throws {
+        let h = try Harness()
+        // Break the store underneath: every insert from now on fails.
+        var database: OpaquePointer?
+        #expect(sqlite3_open(h.store.fileURL.path, &database) == SQLITE_OK)
+        #expect(sqlite3_exec(database, "DROP TABLE take_revisions; DROP TABLE takes;", nil, nil, nil) == SQLITE_OK)
+        sqlite3_close(database)
+
+        for expectedMessage in ["moved to text box · not saved to history", "moved to text box"] {
+            h.controller.handle(.dictationPressed)
+            await h.waitUntil { h.controller.state == .listening }
+            h.controller.handle(.dictationReleased(wasTap: false))
+            h.capture.deliverFinal("hello")
+            await h.waitUntil { h.controller.state == .idle }
+            #expect(h.orb.phase == .done(expectedMessage))
+            await h.settle(0.1)
+        }
     }
 
     @Test @MainActor func aFailedTakeCopiesTheHeardButUntypedWords() async throws {

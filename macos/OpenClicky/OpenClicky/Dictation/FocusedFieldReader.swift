@@ -35,6 +35,8 @@ struct FocusedTextTarget {
     let element: AXUIElement
     let role: String?
     let isSecure: Bool
+    /// The bundle id of the process that owns the element (nil when it cannot be told).
+    var bundleID: String? = nil
 
     /// Text roles live typing types into. Not AXWebArea (a focused page, where letters are
     /// single-key shortcuts — Gmail's e, #, !) and not the editable-ancestor guess the paste path
@@ -105,7 +107,8 @@ enum FocusedFieldReader {
         var processID: pid_t = 0
         guard AXUIElementGetPid(focused, &processID) == .success else { return nil }
         return FocusedTextTarget(processID: processID, element: focused, role: string(focused, kAXRoleAttribute),
-                                 isSecure: string(focused, kAXSubroleAttribute) == "AXSecureTextField")
+                                 isSecure: string(focused, kAXSubroleAttribute) == "AXSecureTextField",
+                                 bundleID: NSRunningApplication(processIdentifier: processID)?.bundleIdentifier)
     }
 
     /// Captions near the focused element: the titles and values of its window's visible controls,
@@ -175,9 +178,12 @@ enum FocusedFieldReader {
 enum PasteLanding {
     /// The field's text grew by the pasted text (or contains it): it landed.
     case verified
-    /// The keystroke was posted but the field could not be read back.
+    /// The keystroke was posted and a field read back, but the text was not seen in it (or another
+    /// app has focus now).
     case posted
-    /// No editable field had focus: nothing was posted; the text is left for the orb and the pasteboard.
+    /// After the paste no readable text field has focus (no role, not editable, no value to read —
+    /// a web area, an Electron view, a sheet that swallowed ⌘V): whether the words landed cannot
+    /// be told, so they are left on the pasteboard and the person's clipboard is not put back.
     case noTarget
     /// No Accessibility permission: the text is on the pasteboard only.
     case leftOnPasteboard
@@ -185,9 +191,13 @@ enum PasteLanding {
     /// Reads the field back, briefly after the paste, and compares it with what was there before.
     static func verify(text: String, before: FocusedFieldSnapshot, settleSeconds: TimeInterval = 0.35) async -> PasteLanding {
         try? await Task.sleep(nanoseconds: UInt64(settleSeconds * 1_000_000_000))
-        let after = FocusedFieldReader.snapshot()
+        return landing(of: text, before: before, after: FocusedFieldReader.snapshot())
+    }
+
+    /// The comparison `verify` makes, on the field as it was before the paste and as it is now.
+    static func landing(of text: String, before: FocusedFieldSnapshot, after: FocusedFieldSnapshot) -> PasteLanding {
         guard after.appBundleID == before.appBundleID else { return .posted }
-        guard let value = after.value else { return .posted }
+        guard after.role != nil, after.isEditable, let value = after.value else { return .noTarget }
         let needle = text.trimmingCharacters(in: .whitespacesAndNewlines)
         let probe = String(needle.prefix(200))
         if !probe.isEmpty, value.contains(probe) { return .verified }

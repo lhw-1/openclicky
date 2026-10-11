@@ -156,12 +156,18 @@ enum LivePhraseFormatter {
         return needsSeparatingSpace(typedSoFar: typedSoFar, next: text) ? " " + text : text
     }
 
-    /// A line break, tab, escape or any other control (Cc) or format (Cf) character. Typed as a
-    /// keystroke in a terminal a new line runs the command line, so such text is never typed; it
-    /// goes to the pasteboard instead. A dictionary term's written form can carry one.
+    /// A line break, tab, escape or any other control (Cc) character, or a line or paragraph
+    /// separator (U+2028, U+2029). Typed as a keystroke a new line sends a message or runs a
+    /// command, so such text is never typed; it goes to the pasteboard instead. A dictionary
+    /// term's written form can carry one. Format (Cf) characters are not among them: the
+    /// zero-width joiner and non-joiner are ordinary parts of Hindi, Malayalam and Bengali words
+    /// and of family and flag emoji, and a soft hyphen or a variation selector moves no line.
     static func containsControlCharacters(_ text: String) -> Bool {
         text.unicodeScalars.contains { scalar in
-            scalar.properties.generalCategory == .control || scalar.properties.generalCategory == .format
+            switch scalar.properties.generalCategory {
+            case .control, .lineSeparator, .paragraphSeparator: return true
+            default: return false
+            }
         }
     }
 
@@ -196,6 +202,10 @@ struct TranscriptAlignment: Equatable {
     /// A run counts only if it ends this close to where the committed words would end: "go" nine
     /// words further on is another "go", not the one that was typed.
     static let maximumDistanceFromExpectedEnd = 3
+    /// One word is weak evidence ("the", "to" come round every few words), so a run of one must
+    /// end almost exactly where the committed words would: "the cat sat on the" against "the cat
+    /// sat on a mat near the door" would otherwise line up on the second "the" and skip four words.
+    static let maximumDistanceForOneWordRun = 1
 
     func remainingWords(of words: [String]) -> [String] {
         guard remainderStartIndex < words.count else { return [] }
@@ -227,8 +237,9 @@ struct TranscriptAlignment: Equatable {
         for runLength in stride(from: min(longestTrailingRunLength, expectedEnd), through: 1, by: -1) {
             let trailingRun = Array(committedNormalized.suffix(runLength))
             guard finalNormalized.count >= runLength else { continue }
+            let allowedDistance = runLength == 1 ? maximumDistanceForOneWordRun : maximumDistanceFromExpectedEnd
             let nearbyEnds = (runLength...finalNormalized.count).filter { end in
-                abs(end - expectedEnd) <= maximumDistanceFromExpectedEnd
+                abs(end - expectedEnd) <= allowedDistance
                     && Array(finalNormalized[(end - runLength)..<end]) == trailingRun
             }
             if let nearestEnd = nearbyEnds.min(by: { abs($0 - expectedEnd) < abs($1 - expectedEnd) }) {
@@ -268,6 +279,32 @@ enum LiveTypingModifierGuard {
     }
 }
 
+/// Apps live typing never types into, whatever their focused element reports.
+enum LiveTypingExclusions {
+    /// Terminals report their view as an AXTextArea, but a full-screen program in them (less, vim,
+    /// htop, a password prompt) reads each key as a command: "quit" typed into `less` quit it on
+    /// the "q". They keep the paste path, which the terminal wraps as a bracketed paste.
+    static let terminalBundleIDs: Set<String> = [
+        "com.apple.Terminal", "com.googlecode.iterm2", "net.kovidgoyal.kitty", "dev.warp.Warp-Stable", "dev.warp.Warp-Preview",
+        "com.mitchellh.ghostty", "co.zeit.hyper", "org.alacritty", "com.github.wez.wezterm",
+    ]
+
+    /// Why the focused field must not be typed into live (for the log), or nil when it may be.
+    /// The target's own bundle id (from its pid) is the one that counts right after ⌘-Tab;
+    /// `fieldBundleID` (NSWorkspace's front app at press) covers a pid that could not be named.
+    /// OpenClicky's own windows — the record page's "try it here" box — take the paste path,
+    /// whose landing the page already understands; typed live, the box got the words twice.
+    static func reasonNotToType(into target: FocusedTextTarget, fieldBundleID: String?,
+                                ownProcessID: pid_t = getpid(), ownBundleID: String? = Bundle.main.bundleIdentifier) -> String? {
+        let bundleIDs = [target.bundleID, fieldBundleID].compactMap { $0 }
+        if target.processID == ownProcessID || (ownBundleID.map { bundleIDs.contains($0) } ?? false) {
+            return "openclicky's own window"
+        }
+        if bundleIDs.contains(where: { terminalBundleIDs.contains($0) }) { return "a terminal" }
+        return nil
+    }
+}
+
 /// One take's live typing, as the controller keeps it.
 struct LiveTypingSession {
     var committer: StableWordCommitter
@@ -286,6 +323,9 @@ struct LiveTypingSession {
     /// Why typing stopped before the take ended (the app changed, secure input came on, keystrokes
     /// could not be posted); nil while it may continue.
     var stoppedReason: String?
+    /// ⌃ joined after words were typed: what is said from then on is an edit instruction, never
+    /// typed or copied, and `latestPartial` stays what was heard up to that moment — the take.
+    var editKeyJoinedAfterTyping = false
 
     /// Anything reached the app: from here on the take finishes by typing, not by pasting.
     var hasTyped: Bool { typedPhraseCount > 0 }
