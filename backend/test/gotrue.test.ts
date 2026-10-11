@@ -36,6 +36,24 @@ describe("GoTrue", () => {
     expect(await gt.verifyCode("gran@example.com", "123456")).toEqual(session);
     expect(JSON.parse(String(calls[0].init.body))).toEqual({ type: "email", email: "gran@example.com", token: "123456" });
   });
+  it("sends a sign-up code that may create the user", async () => {
+    const { gt, calls } = fake(() => new Response("{}"));
+    await gt.sendSignupCode("gran@example.com");
+    expect(calls[0].url).toBe("https://p.supabase.co/auth/v1/otp");
+    expect(JSON.parse(String(calls[0].init.body))).toEqual({ email: "gran@example.com", create_user: true });
+  });
+  it("verifies a guest's confirmation code as type email_change", async () => {
+    const { gt, calls } = fake(() => new Response(JSON.stringify(session)));
+    expect(await gt.verifyEmailChange("gran@example.com", "123456")).toEqual(session);
+    expect(JSON.parse(String(calls[0].init.body))).toEqual({ type: "email_change", email: "gran@example.com", token: "123456" });
+  });
+  it("signs out the user's other sessions with the kept session's own token (empty 204 reply)", async () => {
+    const { gt, calls } = fake(() => new Response(null, { status: 204 }));
+    await gt.signOutOthers("keep-me");
+    expect(calls[0].url).toBe("https://p.supabase.co/auth/v1/logout?scope=others");
+    expect(calls[0].init.method).toBe("POST");
+    expect(headers(calls[0].init).Authorization).toBe("Bearer keep-me");
+  });
   it("reads and deletes users with the service key", async () => {
     const { gt, calls } = fake((url, init) => init.method === "DELETE" ? new Response("{}") : new Response(JSON.stringify({ id: "u1", is_anonymous: true, email: "" })));
     expect(await gt.getUser("u1")).toEqual({ id: "u1", is_anonymous: true, email: null });

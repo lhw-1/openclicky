@@ -45,8 +45,20 @@ export class GoTrue {
   async sendCode(email: string): Promise<void> {
     await this.call("/otp", { body: { email, create_user: false } });
   }
+  /** A code for an email with no account yet: the user is created by GoTrue but only confirmed by the code. */
+  async sendSignupCode(email: string): Promise<void> {
+    await this.call("/otp", { body: { email, create_user: true } });
+  }
   verifyCode(email: string, code: string): Promise<GoTrueSession> {
     return this.call("/verify", { body: { type: "email", email, token: code } }) as Promise<GoTrueSession>;
+  }
+  /** The code in a guest's confirmation mail: confirms the pending email and returns a session for that user. */
+  verifyEmailChange(email: string, code: string): Promise<GoTrueSession> {
+    return this.call("/verify", { body: { type: "email_change", email, token: code } }) as Promise<GoTrueSession>;
+  }
+  /** Signs out every session of the token's user except the token's own (refresh tokens stop working). */
+  async signOutOthers(accessToken: string): Promise<void> {
+    await this.call("/logout?scope=others", { token: accessToken });
   }
   async getUser(userId: string): Promise<{ id: string; is_anonymous: boolean; email: string | null } | null> {
     try {

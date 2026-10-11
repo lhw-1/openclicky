@@ -34,11 +34,31 @@ The app asks for an email and nothing else, and sends it with this Mac's device 
   by every guest that Mac has made, for `GUEST_DAYS`. Past that, metered calls answer
   `402 confirm_email`. Clicking the link flips the user's `is_anonymous` to false; from the next
   request on the account is confirmed and gets the normal monthly and daily limits.
+- **New email, but no room for another guest:** at most `max_guests_per_ip` (2) live guests per
+  address (an IPv4 host, or an IPv6 /64) and `max_guests_per_net` (6) per network (an IPv4 /24, or
+  an IPv6 /48), and `max_guests` in all. Guests already on the asking Mac don't count against its
+  address. Past a cap no guest is made: Supabase mails a 6-digit sign-up code (the "confirm signup"
+  template) and `/auth/start` answers `code_sent`, so newcomers still get in, but only with a mailbox
+  they can read. (Before 2026-10-11 a full pool answered `accounts_full` and locked everyone out.)
+  Rows keep keyed hashes of the address and network (`ip_hash`, `net_hash`), never the address.
 - **Same email again on the same Mac, still unconfirmed:** a new guest replaces the old one (old
   row gets `replaced_at`, old auth user is deleted). The Mac's guest pool is not reset.
 - **Email that already has a confirmed account:** Supabase mails a 6-digit code (the "magic link"
   template) and `/auth/start` answers `code_sent`; the app sends the code to `POST /auth/code`.
-- `POST /auth/resend` re-sends the confirmation link for the signed-in guest.
+  The **first** code sign-in on an account signs out every other session on it (`code_signed_in_at`
+  is stamped), so a stranger who typed the email and had the link clicked for them loses it.
+  Later code sign-ins (a second Mac) sign out nothing. A row without an email gets it here.
+- `POST /auth/resend` re-sends the confirmation mail for the signed-in guest.
+- `POST /auth/confirm {code}` (guest session required): the guest types the code from the
+  confirmation mail. Only someone with both the mailbox and that Mac can confirm. This needs the
+  "email change" template to carry the code (§4) and an app that has the code box; until then
+  the link confirms on its own, as before.
+- Attempt limits per hour, kept in Postgres (`oc_rate_hits`, so a deploy doesn't reset them):
+  `/auth/start` 30 per address and 5 per email; `/auth/code` 60 per address and 10 per email;
+  `/auth/confirm` 10 and `/auth/resend` 3 per user. A class behind one address fits. Every 429
+  carries `Retry-After`.
+- If the caps can't be read (a database hiccup), `/auth/start` and `/auth/code` answer
+  `503 accounts_unavailable` and `/auth/config` says `accountsOpen: null`, never "full".
 
 There are no passwords and no reset page.
 
@@ -69,7 +89,12 @@ GUEST_TOTAL_USD=1            # pre-confirmation allowance per Mac, dollars
 GUEST_DAYS=14                # days a guest may stay unconfirmed
 GUEST_TTS_CHARS=2000         # spoken characters per Mac before confirming
 MAX_ACCOUNTS_PER_DEVICE=2    # confirmed accounts one Mac may create
+IP_HASH_SALT=<random 32+ chars>  # optional; keys the address hashes (default: the service key, so rotating that resets the per-address caps)
 ```
+
+The guest allowance is the money one made-up guest can spend. With the per-address caps a farm
+needs many addresses, but each still gets `GUEST_TOTAL_USD`; a smaller value (`0.25`) shrinks the
+exposure without code changes, at the cost of a shorter try-out before confirming.
 
 `ACCOUNT_RESET_REDIRECT_URL` is no longer read and `FREE_MONTHLY_CREDITS` is unused in grant mode (only
 the legacy Stripe path reads it); delete them from the file. `/auth/config` no longer returns a `resetRedirectUrl`.
@@ -79,7 +104,8 @@ the legacy Stripe path reads it); delete them from the file. `/auth/config` no l
 | `GRANT_ACCOUNTS=true` | Requests without the user's own key are metered by the spend ledger and limited to Claude and ElevenLabs. **Without it the backend is unmetered** (every capability, nothing counted) even when Supabase is configured. This keeps the local launchd backend and any self-hosted backend as they were. With no service key (no ledger) metered requests get a 503 rather than being given away. |
 | `ACCOUNTS_OPEN=true` | New emails can become guests. Closed: `/auth/start` for a new email answers `accounts_full`; existing confirmed accounts still get their code and keep working. |
 | `oc_settings.max_accounts` | Cap on confirmed accounts (default 100, `admin max-accounts N`). |
-| `oc_settings.max_guests` | Cap on live guests (unconfirmed, not replaced, younger than `GUEST_DAYS`; default 300). Change it in SQL. |
+| `oc_settings.max_guests` | Cap on live guests (unconfirmed, not replaced, younger than `GUEST_DAYS`; default 300). Past it newcomers get a sign-up code instead of a guest. Change it in SQL. |
+| `oc_settings.max_guests_per_ip`, `max_guests_per_net` | Live guests per address (default 2) and per network (default 6); past them, a sign-up code. Change in SQL. |
 
 Deploy it with:
 
@@ -107,7 +133,9 @@ hangs while connecting; with the timeout it fails fast and a retry goes through.
 
 Function signatures change between versions (the schema drops the old ones), so a backend from
 before a schema change may not be able to call the new functions: **apply the schema and deploy
-the backend in the same sitting.**
+the backend in the same sitting.** Since 2026-10-11 the backend needs `oc_signup_room`,
+`oc_rate_hit` and the new `oc_accounts` columns (`ip_hash`, `net_hash`, `code_signed_in_at`):
+apply the schema **first** (the older backend ignores them), then deploy.
 
 ## 4. Supabase Auth settings
 
@@ -145,6 +173,18 @@ link is the email-change mail, and secure email change is off because an anonymo
 old address to confirm from; existing accounts sign in with a 6-digit code.
 `mailer_otp_exp` is 3600 (1 hour): GoTrue uses one expiry for both the codes and the confirmation
 links, so 15 minutes would also kill a link opened later that hour.
+
+Two template changes for the 2026-10-11 sign-up guard (not applied yet):
+
+- **Now, with the backend deploy:** the "confirm signup" template (`mailer_subjects_confirmation`,
+  `mailer_templates_confirmation_content`) must show the code, because a newcomer past the guest
+  caps signs up with one: subject "Your OpenClicky code", body as the magic-link one above
+  (`{{ .Token }}`). Without it they get a link and no code to type.
+- **Once an app with the guest code box has shipped and spread:** the "email change" template
+  should carry the code instead of the link, so the link can no longer confirm whoever typed the
+  email: `<p>Your OpenClicky confirmation code is</p><h2>{{ .Token }}</h2><p>Type it into
+  openclicky. If you didn't ask for this, ignore this email.</p>`. Older apps can't type it, so
+  their guests could not confirm: hold this until most people have updated.
 
 Check the fields read back. Already in place and unchanged:
 `mailer_autoconfirm=false`, `site_url=https://api.openclicky.flowsxr.com`, the `uri_allow_list`
@@ -218,5 +258,7 @@ npm run admin -w backend -- prune      # weekly: lists stale guest logins (repla
 
 Watch `budget` daily for the first two weeks after opening. Run `prune` **weekly**: replaced and
 expired guests can't spend, but their anonymous logins stay in `auth.users` until pruned. Prune
-deletes only anonymous users. Per-person controls: `limit`, `daily`, `block` / `unblock`,
+deletes only anonymous users; a sign-up code that was never typed leaves an unconfirmed,
+non-anonymous auth user with no `oc_accounts` row, which prune does not touch (harmless: it can't
+spend). Per-person controls: `limit`, `daily`, `block` / `unblock`,
 `max-accounts` (see the header of `backend/scripts/admin.mjs`).

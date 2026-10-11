@@ -2,26 +2,53 @@ import { describe, it, expect, vi, afterEach } from "vitest";
 import { SignJWT } from "jose";
 import { issueSessionToken } from "../src/auth.js";
 import { createApp } from "../src/app.js";
-import { normalizeEmail, isDeviceHash, allow } from "../src/accountAuth.js";
+import { normalizeEmail, isDeviceHash, allow, addressBlocks } from "../src/accountAuth.js";
 
 const env = { SUPABASE_URL: "https://p.supabase.co", SUPABASE_PUBLISHABLE_KEY: "pk", SUPABASE_SERVICE_KEY: "sk", ACCOUNTS_OPEN: "true", SUPABASE_JWT_SECRET: "x".repeat(32) };
 const device = "d".repeat(64);
 const post = (body: unknown, ip = "1.1.1.1") => ({ method: "POST", headers: { "content-type": "application/json", "x-forwarded-for": ip }, body: JSON.stringify(body) });
 const session = { access_token: "acc", refresh_token: "ref", expires_in: 3600, user: { id: "u-new" } };
 
-type Row = { user_id: string; email: string | null; device_hash: string | null; confirmed_at: string | null; replaced_at: string | null };
-/** A fake Supabase: oc_accounts rows in memory, auth users in memory, every call recorded. */
-function supabase(opts: { rows?: Row[]; users?: Record<string, { is_anonymous: boolean }>; open?: boolean; attach?: () => Response; insertFails?: number; verify?: () => Response } = {}) {
-  const rows = [...(opts.rows ?? [])];
+type Row = { user_id: string; email: string | null; device_hash: string | null; confirmed_at: string | null; replaced_at: string | null; ip_hash?: string | null; net_hash?: string | null; code_signed_in_at?: string | null };
+type Fake = {
+  rows?: Row[]; users?: Record<string, { is_anonymous: boolean }>; open?: boolean; attach?: () => Response; insertFails?: number; verify?: () => Response;
+  /** The live-guest pool (max_guests) is full. */ guestsFull?: boolean;
+  /** oc_signup_room fails, as a database hiccup would. */ roomFails?: boolean;
+  /** oc_rate_hit fails (schema not applied yet): the backend counts in memory instead. */ rateFails?: boolean;
+  /** Shared attempt counters, to stand for Postgres surviving a redeploy. */ hits?: Map<string, number>;
+};
+/** A fake Supabase: oc_accounts rows in memory, auth users in memory, every call recorded. The two
+ *  sign-up guard functions follow schema.sql: at most 2 live guests per address and 6 per network
+ *  (guests on the caller's own Mac don't count), and fixed-window attempt counters. */
+function supabase(opts: Fake = {}) {
+  const rows = (opts.rows ?? []).map((r) => ({ ...r })); // copies: a test's row literal is shared between tests
   const users = { ...(opts.users ?? {}) };
   const calls: { method: string; url: string; body?: any; auth?: string }[] = [];
+  const hits = opts.hits ?? new Map<string, number>();
   let insertFailures = opts.insertFails ?? 0;
+  let signups = 0;
   vi.stubGlobal("fetch", vi.fn(async (input: any, init: any = {}) => {
     const url = String(input), method = init.method ?? "GET";
     const body = init.body ? JSON.parse(init.body) : undefined;
     calls.push({ method, url, body, auth: init.headers?.Authorization });
     const u = new URL(url);
     if (u.pathname === "/rest/v1/rpc/oc_accounts_open") return new Response(JSON.stringify(opts.open ?? true));
+    if (u.pathname === "/rest/v1/rpc/oc_signup_room") {
+      if (opts.roomFails) return new Response("connection reset", { status: 503 });
+      const live = rows.filter((r) => users[r.user_id]?.is_anonymous && !r.replaced_at);
+      const others = live.filter((r) => body.p_device === null || r.device_hash !== body.p_device);
+      const guests = !opts.guestsFull
+        && (body.p_ip_hash === null || others.filter((r) => r.ip_hash === body.p_ip_hash).length < 2)
+        && (body.p_net_hash === null || others.filter((r) => r.net_hash === body.p_net_hash).length < 6);
+      return new Response(JSON.stringify({ accounts: opts.open ?? true, guests }));
+    }
+    if (u.pathname === "/rest/v1/rpc/oc_rate_hit") {
+      if (opts.rateFails) return new Response('{"code":"PGRST202"}', { status: 404 });
+      const n = (hits.get(body.p_key) ?? 0) + 1;
+      hits.set(body.p_key, n);
+      return new Response(JSON.stringify(n <= body.p_limit ? 0 : 1800));
+    }
+    if (u.pathname === "/auth/v1/logout") return new Response(null, { status: 204 });
     if (u.pathname === "/rest/v1/oc_accounts") {
       const q = u.searchParams;
       const match = (r: Row) =>
@@ -37,7 +64,11 @@ function supabase(opts: { rows?: Row[]; users?: Record<string, { is_anonymous: b
       }
       if (method === "PATCH") { rows.filter(match).forEach((r) => Object.assign(r, body)); return new Response(null, { status: 204 }); }
     }
-    if (u.pathname === "/auth/v1/signup") { users["u-new"] = { is_anonymous: true }; return new Response(JSON.stringify(session)); }
+    if (u.pathname === "/auth/v1/signup") {
+      const id = ++signups === 1 ? "u-new" : `u-new-${signups}`;
+      users[id] = { is_anonymous: true };
+      return new Response(JSON.stringify({ ...session, user: { id } }));
+    }
     if (u.pathname === "/auth/v1/user") return opts.attach ? opts.attach() : new Response("{}");
     if (u.pathname === "/auth/v1/otp") return new Response("{}");
     if (u.pathname === "/auth/v1/verify") return opts.verify ? opts.verify() : new Response(JSON.stringify({ ...session, user: { id: "u-old" } }));
@@ -48,7 +79,7 @@ function supabase(opts: { rows?: Row[]; users?: Record<string, { is_anonymous: b
     }
     throw new Error(`unexpected ${method} ${url}`);
   }));
-  return { rows, users, calls };
+  return { rows, users, calls, hits };
 }
 afterEach(() => { vi.unstubAllGlobals(); vi.restoreAllMocks(); });
 const start = (body: unknown, ip?: string, e: Record<string, string> = env) => createApp({ log: null }).request("/auth/start", post(body, ip), e);
@@ -159,13 +190,39 @@ describe("POST /auth/start", () => {
     expect(await (await start({ email: "a@b.co", device: "short" })).json()).toEqual({ error: "bad_request" });
     expect(s.calls).toHaveLength(0);
   });
-  it("five starts per IP per hour", async () => {
+  it("a classroom behind one address can all start; one email is held to five starts an hour, with Retry-After", async () => {
     supabase();
     const app = createApp({ log: null });
-    for (let i = 0; i < 5; i++) expect((await app.request("/auth/start", post({ email: `p${i}@b.co`, device }, "9.9.9.9"), env)).status).not.toBe(429);
-    const res = await app.request("/auth/start", post({ email: "p6@b.co", device }, "9.9.9.9"), env);
+    for (let i = 0; i < 25; i++) expect((await app.request("/auth/start", post({ email: `pupil${i}@school.example`, device }, "9.9.9.9"), env)).status).not.toBe(429);
+    for (let i = 0; i < 5; i++) expect((await app.request("/auth/start", post({ email: "same@b.co", device }, `8.8.${i}.8`), env)).status).not.toBe(429);
+    const res = await app.request("/auth/start", post({ email: "same@b.co", device }, "8.8.9.8"), env);
     expect(res.status).toBe(429);
     expect(await res.json()).toEqual({ error: "slow_down" });
+    expect(Number(res.headers.get("retry-after"))).toBeGreaterThan(0);
+  });
+  it("thirty starts an hour from one address", async () => {
+    supabase();
+    const app = createApp({ log: null });
+    for (let i = 0; i < 30; i++) expect((await app.request("/auth/start", post({ email: `p${i}@b.co`, device }, "9.9.9.9"), env)).status).not.toBe(429);
+    expect((await app.request("/auth/start", post({ email: "p31@b.co", device }, "9.9.9.9"), env)).status).toBe(429);
+  });
+  it("the attempt counters live in Postgres, keyed by hashes, so a redeploy does not reset them", async () => {
+    const hits = new Map<string, number>();
+    const s = supabase({ hits });
+    for (let i = 0; i < 5; i++) await createApp({ log: null }).request("/auth/start", post({ email: "same@b.co", device }, `8.8.${i}.8`), env);
+    supabase({ hits }); // a fresh process, the same database
+    expect((await createApp({ log: null }).request("/auth/start", post({ email: "same@b.co", device }, "8.8.8.1"), env)).status).toBe(429);
+    const keys = s.calls.filter((c) => c.url.endsWith("/rpc/oc_rate_hit")).map((c) => c.body.p_key as string);
+    expect(keys.length).toBeGreaterThan(0);
+    expect(keys.join(" ")).not.toMatch(/same@b\.co|8\.8\./);
+  });
+  it("without the counter table (schema not applied yet) attempts are still counted, in memory", async () => {
+    const err = vi.spyOn(console, "error").mockImplementation(() => {});
+    supabase({ rateFails: true });
+    const app = createApp({ log: null });
+    for (let i = 0; i < 5; i++) expect((await app.request("/auth/start", post({ email: "same@b.co", device }, `7.7.${i}.7`), env)).status).not.toBe(429);
+    expect((await app.request("/auth/start", post({ email: "same@b.co", device }, "7.7.9.7"), env)).status).toBe(429);
+    expect(JSON.stringify(err.mock.calls)).toContain("in memory");
   });
   it("never leaks GoTrue text or logs the email's session", async () => {
     const err = vi.spyOn(console, "error").mockImplementation(() => {});
@@ -173,6 +230,65 @@ describe("POST /auth/start", () => {
     const res = await start({ email: "gran@example.com", device });
     expect(JSON.stringify(await res.json())).not.toContain("secret");
     expect(JSON.stringify(err.mock.calls)).not.toContain("acc");
+  });
+});
+
+describe("POST /auth/start: guest farming (F-38)", () => {
+  const devices = ["a", "b", "c", "e", "f", "0", "1", "2"].map((ch) => ch.repeat(64));
+  const liveGuests = (s: ReturnType<typeof supabase>) => s.rows.filter((r) => s.users[r.user_id]?.is_anonymous && !r.replaced_at);
+
+  it("three device hashes from one address do not make three live guests: the third gets a sign-up code", async () => {
+    const s = supabase();
+    const app = createApp({ log: null });
+    const answers = [];
+    for (let i = 0; i < 3; i++) answers.push(await (await app.request("/auth/start", post({ email: `farm${i}@x.co`, device: devices[i] }, "203.0.113.7"), env)).json());
+    expect(answers.map((a) => a.status)).toEqual(["signed_in", "signed_in", "code_sent"]);
+    expect(liveGuests(s)).toHaveLength(2);
+    const otp = s.calls.filter((c) => c.url.endsWith("/auth/v1/otp"));
+    expect(otp).toHaveLength(1);
+    expect(otp[0].body).toEqual({ email: "farm2@x.co", create_user: true });
+  });
+  it("guests carry keyed hashes of their address and network, never the address", async () => {
+    const s = supabase();
+    await start({ email: "gran@example.com", device }, "203.0.113.7");
+    const row = s.rows[0];
+    expect(row.ip_hash).toMatch(/^[0-9a-f]{64}$/);
+    expect(row.net_hash).toMatch(/^[0-9a-f]{64}$/);
+    expect(row.ip_hash).not.toBe(row.net_hash);
+    expect(JSON.stringify(s.calls)).not.toContain("203.0.113");
+  });
+  it("hopping addresses inside one /24 still meets the network cap", async () => {
+    const s = supabase();
+    const app = createApp({ log: null });
+    const statuses = [];
+    for (let i = 0; i < 7; i++) statuses.push((await (await app.request("/auth/start", post({ email: `hop${i}@x.co`, device: devices[i] }, `198.51.100.${i + 1}`), env)).json()).status);
+    expect(statuses.slice(0, 6).every((x) => x === "signed_in")).toBe(true);
+    expect(statuses[6]).toBe("code_sent");
+    expect(liveGuests(s)).toHaveLength(6);
+  });
+  it("re-entering an email on your own Mac is not held against your address", async () => {
+    const s = supabase();
+    const app = createApp({ log: null });
+    const go = async (email: string, d: string) => (await app.request("/auth/start", post({ email, device: d }, "203.0.113.9"), env)).json();
+    expect((await go("me@x.co", devices[0])).status).toBe("signed_in");
+    expect((await go("partner@x.co", devices[1])).status).toBe("signed_in");
+    expect((await go("me@x.co", devices[0])).status).toBe("signed_in");
+    expect(liveGuests(s)).toHaveLength(2);
+  });
+  it("a full guest pool sends a sign-up code instead of locking newcomers out", async () => {
+    const s = supabase({ guestsFull: true });
+    const res = await start({ email: "newcomer@x.co", device });
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ status: "code_sent" });
+    expect(s.calls.some((c) => c.url.endsWith("/auth/v1/signup"))).toBe(false);
+  });
+  it("a database hiccup is 503 accounts_unavailable, not accounts_full (F-43)", async () => {
+    const err = vi.spyOn(console, "error").mockImplementation(() => {});
+    supabase({ roomFails: true });
+    const res = await start({ email: "newcomer@x.co", device });
+    expect(res.status).toBe(503);
+    expect(await res.json()).toEqual({ error: "accounts_unavailable" });
+    expect(JSON.stringify(err.mock.calls)).toContain("oc_signup_room");
   });
 });
 
@@ -210,11 +326,53 @@ describe("POST /auth/code", () => {
     expect(res.status).toBe(502);
     expect(JSON.stringify(await res.json())).not.toContain("access_token");
   });
-  it("429 slow_down on the 11th call from one IP in an hour", async () => {
+  it("a legacy row with no email gets it on sign-in (F-43)", async () => {
+    const s = supabase({ rows: [{ user_id: "u-old", email: null, device_hash: null, confirmed_at: "2026-09-01T00:00:00Z", replaced_at: null }] });
+    expect((await code({ email: "gran@example.com", code: "123456" })).status).toBe(200);
+    expect(s.rows[0].email).toBe("gran@example.com");
+  });
+  it("the first sign-in by code signs out every other session on the account; later ones do not (F-42)", async () => {
+    const s = supabase({ rows: [{ user_id: "u-old", email: "gran@example.com", device_hash: device, confirmed_at: "2026-10-01T00:00:00Z", replaced_at: null }] });
+    expect((await code({ email: "gran@example.com", code: "123456" })).status).toBe(200);
+    const logouts = () => s.calls.filter((c) => c.url.endsWith("/auth/v1/logout?scope=others"));
+    expect(logouts()).toHaveLength(1);
+    expect(logouts()[0].auth).toBe("Bearer acc");
+    expect(s.rows[0].code_signed_in_at).toBeTruthy();
+    expect((await code({ email: "gran@example.com", code: "123456" }, "6.6.6.7")).status).toBe(200);
+    expect(logouts()).toHaveLength(1);
+  });
+  it("still signs in when signing out the other sessions fails, and logs it", async () => {
+    const err = vi.spyOn(console, "error").mockImplementation(() => {});
+    const s = supabase({ rows: [{ user_id: "u-old", email: "gran@example.com", device_hash: device, confirmed_at: "2026-10-01T00:00:00Z", replaced_at: null }] });
+    const realFetch = globalThis.fetch;
+    vi.stubGlobal("fetch", vi.fn(async (input: any, init: any) => (String(input).includes("/logout") ? new Response("{}", { status: 500 }) : realFetch(input, init))));
+    expect((await code({ email: "gran@example.com", code: "123456" })).status).toBe(200);
+    expect(JSON.stringify(err.mock.calls)).toContain("other sessions");
+    expect(s.rows[0].code_signed_in_at).toBeTruthy();
+  });
+  it("a row-less user is not held to the guest pool: a code proves the mailbox", async () => {
+    const s = supabase({ guestsFull: true });
+    expect((await code({ email: "gran@example.com", code: "123456" })).status).toBe(200);
+    expect(s.rows).toContainEqual(expect.objectContaining({ user_id: "u-old", email: "gran@example.com" }));
+  });
+  it("a database hiccup for a row-less user is 503 accounts_unavailable, not accounts_full (F-43)", async () => {
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    const s = supabase({ roomFails: true });
+    const res = await code({ email: "gran@example.com", code: "123456" });
+    expect(res.status).toBe(503);
+    expect(await res.json()).toEqual({ error: "accounts_unavailable" });
+    expect(s.rows).toHaveLength(0);
+  });
+  it("a classroom behind one address can all type their codes", async () => {
+    supabase();
+    const app = createApp({ log: null });
+    for (let i = 0; i < 25; i++) expect((await app.request("/auth/code", post({ email: `pupil${i}@school.example`, code: "123456" }, "7.7.7.7"), env)).status).toBe(200);
+  });
+  it("429 slow_down on the 11th code for one email in an hour, whatever the address", async () => {
     supabase({ rows: [{ user_id: "u-old", email: "gran@example.com", device_hash: device, confirmed_at: "2026-10-01T00:00:00Z", replaced_at: null }] });
     const app = createApp({ log: null });
-    for (let i = 0; i < 10; i++) expect((await app.request("/auth/code", post({ email: "gran@example.com", code: "123456" }, "7.7.7.7"), env)).status).toBe(200);
-    const res = await app.request("/auth/code", post({ email: "gran@example.com", code: "123456" }, "7.7.7.7"), env);
+    for (let i = 0; i < 10; i++) expect((await app.request("/auth/code", post({ email: "gran@example.com", code: "123456" }, `7.7.${i}.7`), env)).status).toBe(200);
+    const res = await app.request("/auth/code", post({ email: "gran@example.com", code: "123456" }, "7.7.99.7"), env);
     expect(res.status).toBe(429);
     expect(await res.json()).toEqual({ error: "slow_down" });
   });
@@ -265,5 +423,77 @@ describe("POST /auth/resend", () => {
     expect(res.status).toBe(400);
     expect(await res.json()).toEqual({ error: "bad_request" });
     expect(s.calls).toHaveLength(0);
+  });
+});
+
+describe("POST /auth/confirm (a guest types the code from the confirmation mail, F-42)", () => {
+  const token = () => new SignJWT({ role: "authenticated" }).setProtectedHeader({ alg: "HS256" }).setAudience("authenticated").setSubject("u-guest").setIssuedAt().setExpirationTime("10m").sign(new TextEncoder().encode(env.SUPABASE_JWT_SECRET));
+  const confirm = async (body: unknown, app = createApp({ log: null })) =>
+    app.request("/auth/confirm", { method: "POST", headers: { authorization: `Bearer ${await token()}`, "content-type": "application/json", "x-forwarded-for": "1.2.3.4" }, body: JSON.stringify(body) }, env);
+  const guestRow: Row = { user_id: "u-guest", email: "gran@example.com", device_hash: device, confirmed_at: null, replaced_at: null };
+  const guestSession = () => new Response(JSON.stringify({ ...session, access_token: "acc-confirmed", user: { id: "u-guest" } }));
+
+  it("needs the guest's session", async () => {
+    supabase();
+    expect((await createApp({ log: null }).request("/auth/confirm", { method: "POST", body: '{"code":"123456"}' }, env)).status).toBe(401);
+  });
+  it("confirms the pending email with the code, signs out every other session, and returns the confirmed session", async () => {
+    const s = supabase({ rows: [guestRow], users: { "u-guest": { is_anonymous: true } }, verify: guestSession });
+    const res = await confirm({ code: "123456" });
+    expect(await res.json()).toEqual({ status: "signed_in", session: { access_token: "acc-confirmed", refresh_token: "ref", expires_in: 3600 }, confirmed: true });
+    const verify = s.calls.find((c) => c.url.endsWith("/auth/v1/verify"))!;
+    expect(verify.body).toEqual({ type: "email_change", email: "gran@example.com", token: "123456" });
+    expect(s.calls.find((c) => c.url.endsWith("/auth/v1/logout?scope=others"))!.auth).toBe("Bearer acc-confirmed");
+    expect(s.rows[0].confirmed_at).toBeTruthy();
+    expect(s.rows[0].code_signed_in_at).toBeTruthy();
+  });
+  it("a wrong code is 401 bad_code and changes nothing", async () => {
+    const s = supabase({ rows: [guestRow], users: { "u-guest": { is_anonymous: true } }, verify: () => new Response('{"error_code":"otp_expired"}', { status: 403 }) });
+    const res = await confirm({ code: "000000" });
+    expect(res.status).toBe(401);
+    expect(await res.json()).toEqual({ error: "bad_code" });
+    expect(s.rows[0].confirmed_at).toBeNull();
+    expect((await confirm({ code: "12" })).status).toBe(400);
+  });
+  it("says already_confirmed when the account is confirmed already", async () => {
+    const s = supabase({ rows: [guestRow], users: { "u-guest": { is_anonymous: false } } });
+    expect(await (await confirm({ code: "123456" })).json()).toEqual({ status: "already_confirmed" });
+    expect(s.calls.some((c) => c.url.endsWith("/auth/v1/verify"))).toBe(false);
+  });
+  it("ten tries an hour per guest", async () => {
+    supabase({ rows: [guestRow], users: { "u-guest": { is_anonymous: true } }, verify: () => new Response('{"error_code":"otp_expired"}', { status: 403 }) });
+    const app = createApp({ log: null });
+    for (let i = 0; i < 10; i++) expect((await confirm({ code: "000000" }, app)).status).toBe(401);
+    expect((await confirm({ code: "000000" }, app)).status).toBe(429);
+  });
+});
+
+describe("GET /auth/config", () => {
+  const config = async () => (await createApp({ log: null }).request("/auth/config", {}, env)).json();
+  it("stays open while confirmed accounts have room, even with the guest pool full", async () => {
+    supabase({ guestsFull: true });
+    expect((await config()).accountsOpen).toBe(true);
+    supabase({ open: false });
+    expect((await config()).accountsOpen).toBe(false);
+  });
+  it("a database hiccup leaves accountsOpen unknown (null), not 'full' (F-43)", async () => {
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    supabase({ roomFails: true });
+    expect((await config()).accountsOpen).toBeNull();
+  });
+});
+
+describe("addressBlocks", () => {
+  it("IPv4: the host, and its /24", () => {
+    expect(addressBlocks("203.0.113.7")).toEqual({ host: "203.0.113.7", net: "203.0.113.0/24" });
+    expect(addressBlocks("::ffff:203.0.113.7")).toEqual({ host: "203.0.113.7", net: "203.0.113.0/24" });
+  });
+  it("IPv6: the /64 a single home gets, and its /48", () => {
+    expect(addressBlocks("2001:db8:1:2:aaaa::1")).toEqual({ host: "2001:db8:1:2::/64", net: "2001:db8:1::/48" });
+    expect(addressBlocks("2001:DB8:1:2:bbbb:cccc:dddd:eeee")).toEqual({ host: "2001:db8:1:2::/64", net: "2001:db8:1::/48" });
+    expect(addressBlocks("2001:db8::1")).toEqual({ host: "2001:db8:0:0::/64", net: "2001:db8:0::/48" });
+  });
+  it("anything else is its own host with no network", () => {
+    expect(addressBlocks("unknown")).toEqual({ host: "unknown", net: null });
   });
 });

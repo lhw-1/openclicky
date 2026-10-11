@@ -7,7 +7,7 @@ import { createSkill } from "./skillsCreate.js";
 import { requestLogger, type LogSink } from "./log.js";
 import { SupabaseBillingStore, type BillingStore, type BillingContext } from "./billing.js";
 import { SupabaseRest } from "./db.js";
-import { registerAccountAuth } from "./accountAuth.js";
+import { registerAccountAuth, signupRoom } from "./accountAuth.js";
 import { requireAccount, accountSummary, ledgerUnavailable, type AccountContext } from "./account.js";
 import { proxyAnthropicOnGrant } from "./anthropicGrant.js";
 import { polishTake } from "./polish.js";
@@ -96,10 +96,12 @@ export function createApp(options: AppOptions = {}) {
   app.get("/auth/config", async (c) => {
     const env = getEnv(c);
     if (!env.SUPABASE_URL || !env.SUPABASE_PUBLISHABLE_KEY) return c.json({ error: "sign-in is not configured on this backend" }, 404);
-    let accountsOpen = env.ACCOUNTS_OPEN === "true";
+    // A full guest pool no longer closes sign-up (newcomers get a code), so only confirmed accounts count.
+    // When the cap can't be read, say nothing (null): "full" would be a guess, and /auth/start will tell.
+    let accountsOpen: boolean | null = env.ACCOUNTS_OPEN === "true";
     if (accountsOpen && env.SUPABASE_SERVICE_KEY) {
-      try { accountsOpen = await new SupabaseRest(env.SUPABASE_URL, env.SUPABASE_SERVICE_KEY).rpc<boolean>("oc_accounts_open", { p_guest_days: Number(env.GUEST_DAYS) || 14 }); }
-      catch (e) { console.error(`auth/config: ${(e as Error).message}`); accountsOpen = false; }
+      try { accountsOpen = (await signupRoom(new SupabaseRest(env.SUPABASE_URL, env.SUPABASE_SERVICE_KEY), env, null, null)).accounts; }
+      catch (e) { console.error(`auth/config: oc_signup_room: ${(e as Error).message}`); accountsOpen = null; }
     }
     const origin = new URL(c.req.url).origin;
     return c.json({
