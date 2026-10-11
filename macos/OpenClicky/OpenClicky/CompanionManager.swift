@@ -724,6 +724,7 @@ final class CompanionManager: ObservableObject {
         bindVoiceStateObservation()
         bindAudioPowerLevel()
         bindShortcutTransitions()
+        bindAskDictationOutcome()
         applyHearingForAccount()
         // A key or token changed in shell.json: the open Realtime session was minted with the old
         // one, so replace it rather than keep using it until the next relaunch.
@@ -1222,7 +1223,9 @@ final class CompanionManager: ObservableObject {
             // Don't register push-to-talk while the onboarding video is playing
             guard !showOnboardingVideo else { return }
             AppLog.append("ask: ⌃⌥ pressed, listening")
-            askHeardSomethingSinceLastPress = false
+            // A new press owns the outcome from here: whatever the last release was waiting for is over.
+            askOutcome = .listening
+            askLiveWordsShownSincePress = false
 
             // Cancel any pending transient hide so the overlay stays visible
             transientHideTask?.cancel()
@@ -1248,6 +1251,9 @@ final class CompanionManager: ObservableObject {
 
             // Dismiss the onboarding prompt / caption if it's showing
             dismissCursorCaption()
+            // Something by the pointer while the key is held: an engine that uploads on release
+            // shows no words until then, and the waveform alone did not read as "listening".
+            showAskCaption("listening…", holdSeconds: 60)
     
 
             ClickyAnalytics.trackPushToTalkStarted()
@@ -1259,12 +1265,16 @@ final class CompanionManager: ObservableObject {
                     updateDraftText: { [weak self] partialTranscript in
                         // The words appear by the pointer as they are heard, so the person can see
                         // it is listening (and what it heard) before letting go.
-                        self?.showAskLiveTranscript(partialTranscript)
+                        guard let self, self.askOutcome != .resolved else { return }
+                        if !partialTranscript.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                            self.askLiveWordsShownSincePress = true
+                        }
+                        self.showAskLiveTranscript(partialTranscript)
                     },
                     submitDraftText: { [weak self] finalTranscript in
                         guard let self else { return }
                         self.lastTranscript = finalTranscript
-                        self.askHeardSomethingSinceLastPress = true
+                        self.askOutcome = .resolved
                         let question = finalTranscript.trimmingCharacters(in: .whitespacesAndNewlines)
                         AppLog.append("ask: heard \(question.count) chars")
                         guard !question.isEmpty else {
@@ -1288,13 +1298,19 @@ final class CompanionManager: ObservableObject {
             pendingKeyboardShortcutStartTask = nil
             buddyDictationManager.stopPushToTalkFromKeyboardShortcut()
             AppLog.append("ask: ⌃⌥ released")
-            // A release that never produces a transcript used to end in silence: say so instead.
-            askNothingHeardCheck?.cancel()
-            askNothingHeardCheck = Task { @MainActor [weak self] in
-                try? await Task.sleep(nanoseconds: 4_000_000_000)
-                guard !Task.isCancelled, let self, !self.askHeardSomethingSinceLastPress else { return }
-                AppLog.append("ask: nothing heard after release")
-                self.showAskCaption("didn't catch that — hold ⌃⌥ and ask again", holdSeconds: 3)
+            guard askOutcome == .listening else { return }
+            if buddyDictationManager.isFinalizingTranscript {
+                // The session decides what was heard (an uploading engine only starts now); the
+                // outcome is shown when it ends (`askDictationSessionEnded`), not guessed on a timer.
+                askOutcome = .transcribing
+                if !askLiveWordsShownSincePress {
+                    showAskCaption("transcribing…", holdSeconds: 30)
+                }
+            } else {
+                // Nothing was recording (a tap, or a start that never got going). An error from the
+                // start lands first and is shown instead (`showAskDictationError`).
+                askOutcome = .transcribing
+                DispatchQueue.main.async { [weak self] in self?.askDictationSessionEnded() }
             }
         case .none:
             break
@@ -1892,9 +1908,45 @@ final class CompanionManager: ObservableObject {
 
     // MARK: - Ask lane feedback
 
-    /// Set when the recogniser hands over a transcript for the current ⌃⌥ press.
-    private var askHeardSomethingSinceLastPress = false
-    private var askNothingHeardCheck: Task<Void, Never>?
+    /// Where the current ⌃⌥ press is: held, waiting for the session's final words, or settled (a
+    /// question was handed over, or "didn't catch that" / an error was shown). Only an unsettled
+    /// press reacts to the dictation manager, which the fn lane shares.
+    enum AskOutcome { case resolved, listening, transcribing }
+    private var askOutcome: AskOutcome = .resolved
+    private var askLiveWordsShownSincePress = false
+    private var askDictationOutcomeCancellables: Set<AnyCancellable> = []
+
+    /// Follows the dictation session for the ask lane: its end without a question means nothing was
+    /// heard, and its error message (microphone or speech denied, an engine failure) is the reason.
+    private func bindAskDictationOutcome() {
+        // Delivered on the next main-queue turn: the manager publishes "no longer finalizing" just
+        // before it hands over the final words in the same call, so the question is in by then.
+        buddyDictationManager.$isFinalizingTranscript
+            .removeDuplicates()
+            .filter { !$0 }
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] _ in self?.askDictationSessionEnded() }
+            .store(in: &askDictationOutcomeCancellables)
+        buddyDictationManager.$lastErrorMessage
+            .compactMap { $0 }
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] errorMessage in self?.showAskDictationError(errorMessage) }
+            .store(in: &askDictationOutcomeCancellables)
+    }
+
+    private func askDictationSessionEnded() {
+        guard askOutcome == .transcribing else { return }
+        askOutcome = .resolved
+        AppLog.append("ask: nothing heard")
+        showAskCaption("didn't catch that — hold ⌃⌥ and ask again", holdSeconds: 3)
+    }
+
+    private func showAskDictationError(_ errorMessage: String) {
+        guard askOutcome != .resolved else { return }
+        askOutcome = .resolved
+        AppLog.append("ask: dictation failed: \(errorMessage)")
+        showAskCaption(errorMessage, holdSeconds: 6)
+    }
 
     /// A caption by the pointer for the ask lane (what was heard, "thinking…", a problem), beside
     /// the mouse when the buddy is docked.
