@@ -554,18 +554,18 @@ final class FirstRunTourController: ObservableObject {
                 symbol: "eye.fill", secondaryTitle: "skip")
         case .talk:
             return FirstRunTourCard(
-                step: .talk, title: canAsk ? "your turn: ask me something" : "asking me needs a free account",
+                step: .talk, title: canAsk ? "your turn: ask me something" : "you can ask me things too",
                 detail: canAsk
                     ? "hold control + option and ask “what’s this?” about anything on your screen. i answer out loud and point."
-                    : "dictation works on its own. for questions, add your email for a free account.",
+                    : "about anything on your screen, out loud, and i’ll point at it. add your email to switch it on, free.",
                 keys: ["⌃", "⌥"], status: status, statusIsGood: statusIsGood,
-                primaryTitle: canAsk ? nil : "set up", secondaryTitle: "skip")
+                primaryTitle: canAsk ? nil : "add email", secondaryTitle: "skip")
         case .act:
             return FirstRunTourCard(
-                step: .act, title: canAsk ? "hand me a task" : "tasks need a free account too",
-                detail: canAsk ? taskExamples : "with a free account i can open apps, make folders and more for you.",
+                step: .act, title: canAsk ? "hand me a task" : "i can do things for you too",
+                detail: canAsk ? taskExamples : "open apps, make folders, and more, just by asking. add your email to switch it on, free.",
                 keys: ["⌃", "⌥"], status: status, statusIsGood: statusIsGood,
-                primaryTitle: canAsk ? nil : "set up", secondaryTitle: "skip")
+                primaryTitle: canAsk ? nil : "add email", secondaryTitle: "skip")
         case .done:
             return FirstRunTourCard(
                 step: .done, title: "you’re all set",
