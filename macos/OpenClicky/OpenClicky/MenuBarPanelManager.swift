@@ -2,13 +2,10 @@
 //  MenuBarPanelManager.swift
 //  OpenClicky
 //
-//  Manages the NSStatusItem (menu bar icon) and a custom borderless NSPanel
-//  that drops down below it when clicked. The panel hosts a SwiftUI view
-//  (CompanionPanelView) via NSHostingView. Uses the same NSPanel pattern as
-//  FloatingSessionButton and GlobalPushToTalkOverlay for consistency.
-//
-//  The panel is non-activating so it does not steal focus from the user's
-//  current app, and auto-dismisses when the user clicks outside.
+//  Manages the NSStatusItem (menu bar icon) and its menu: what OpenClicky is doing, agent mode,
+//  docking the pointer, the windows, and quit. The custom borderless panel (CompanionPanelView)
+//  is left only for a first run's intro and the permission card's gear; it is non-activating, so
+//  it does not steal focus, and auto-dismisses when the user clicks outside.
 //
 
 import AppKit
@@ -97,41 +94,60 @@ final class MenuBarPanelManager: NSObject {
         button.image?.isTemplate = true
         button.action = #selector(statusItemClicked)
         button.target = self
-        // Left click: the companion panel. Right click: the app menu (window, settings, quit).
+        // Either click opens the menu.
         button.sendAction(on: [.leftMouseUp, .rightMouseUp])
     }
 
+    /// The status item's menu, for either click: what OpenClicky is doing, its two quick
+    /// switches, the windows, and quit. A plain menu with checkmarks, like any Mac menu bar app.
     private func showStatusMenu() {
         guard let statusItem else { return }
         let menu = NSMenu()
-        menu.addItem(withTitle: "open openclicky", action: #selector(openWindow), keyEquivalent: "").target = self
-        menu.addItem(withTitle: "open the island", action: #selector(openIsland), keyEquivalent: "").target = self
-        menu.addItem(withTitle: "history", action: #selector(openHistory), keyEquivalent: "").target = self
-        let dictationItem = NSMenuItem(title: companionManager.dictationSettings.orbVisible ? "hide the orb" : "show the orb", action: #selector(toggleOrb), keyEquivalent: "")
-        dictationItem.target = self
-        menu.addItem(dictationItem)
-        let incognito = NSMenuItem(title: "incognito", action: #selector(toggleIncognito), keyEquivalent: "")
-        incognito.target = self
-        incognito.state = companionManager.dictationSettings.incognito ? .on : .off
-        menu.addItem(incognito)
+        let header = NSMenuItem()
+        let headerView = NSHostingView(rootView: StatusMenuHeader(statusText: statusText, dictationKey: companionManager.dictationSettings.dictationKey.keycapLabel))
+        headerView.frame = NSRect(x: 0, y: 0, width: 280, height: 46)
+        header.view = headerView
+        menu.addItem(header)
         menu.addItem(.separator())
-        menu.addItem(withTitle: "settings…", action: #selector(openSettings), keyEquivalent: ",").target = self
-        menu.addItem(withTitle: "check for updates…", action: #selector(checkForUpdates), keyEquivalent: "").target = self
+        addItem(to: menu, title: "Agent Mode", action: #selector(toggleAgentMode), isOn: companionManager.isAgentModeEnabled)
+        addItem(to: menu, title: companionManager.hudPlacement.isSideDrawer ? "Dock Pointer in the Drawer" : "Dock Pointer in the Island",
+                action: #selector(toggleDock), isOn: companionManager.isCursorDocked)
         menu.addItem(.separator())
-        menu.addItem(withTitle: "quit openclicky", action: #selector(quit), keyEquivalent: "q").target = self
+        addItem(to: menu, title: "Open OpenClicky", action: #selector(openWindow))
+        addItem(to: menu, title: "Open the Island", action: #selector(openIsland))
+        addItem(to: menu, title: "Settings…", action: #selector(openSettings), keyEquivalent: ",")
+        addItem(to: menu, title: "Replay Welcome…", action: #selector(replayWelcome))
+        menu.addItem(.separator())
+        addItem(to: menu, title: "Quit OpenClicky", action: #selector(quit), keyEquivalent: "q")
         statusItem.menu = menu
         statusItem.button?.performClick(nil)
-        // The menu is attached only for the click, so a left click keeps opening the panel.
+        // The menu is attached only for the click, or AppKit would keep it attached for good.
         DispatchQueue.main.async { statusItem.menu = nil }
     }
 
+    private func addItem(to menu: NSMenu, title: String, action: Selector, keyEquivalent: String = "", isOn: Bool? = nil) {
+        let item = NSMenuItem(title: title, action: action, keyEquivalent: keyEquivalent)
+        item.target = self
+        if let isOn { item.state = isOn ? .on : .off }
+        menu.addItem(item)
+    }
+
+    /// "Ready", or what OpenClicky is busy with.
+    private var statusText: String {
+        switch companionManager.voiceState {
+        case .idle: return companionManager.agentActivityText == nil ? "Ready" : "Agent working"
+        case .listening: return "Listening"
+        case .processing: return "Thinking"
+        case .responding: return "Speaking"
+        }
+    }
+
+    @objc private func toggleAgentMode() { companionManager.setAgentModeEnabled(!companionManager.isAgentModeEnabled) }
+    @objc private func toggleDock() { companionManager.setCursorDocked(!companionManager.isCursorDocked) }
     @objc private func openWindow() { companionManager.showDictationWindow(section: .record) }
     @objc private func openIsland() { companionManager.notchHUDManager.openPanel() }
-    @objc private func openHistory() { companionManager.showDictationWindow(section: .history) }
-    @objc private func openSettings() { companionManager.showDictationWindow(settingsPage: .general) }
-    @objc private func toggleOrb() { companionManager.dictationSettings.orbVisible.toggle() }
-    @objc private func toggleIncognito() { companionManager.dictationSettings.incognito.toggle() }
-    @objc private func checkForUpdates() { AppUpdater.shared.start(); AppUpdater.shared.checkNow() }
+    @objc private func openSettings() { companionManager.showSettings() }
+    @objc private func replayWelcome() { companionManager.showDictationOnboarding(replay: true) }
     @objc private func quit() { companionManager.quitWithFarewell() }
 
     /// The mark, as a template image: the ring and its pointer, matching the app icon.
@@ -157,16 +173,8 @@ final class MenuBarPanelManager: NSObject {
     }
 
     @objc private func statusItemClicked() {
-        if NSApp.currentEvent?.type == .rightMouseUp {
-            hidePanel()
-            showStatusMenu()
-            return
-        }
-        if let panel, panel.isVisible {
-            hidePanel()
-        } else {
-            showPanel()
-        }
+        hidePanel()
+        showStatusMenu()
     }
 
     // MARK: - Panel Lifecycle
@@ -283,5 +291,26 @@ final class MenuBarPanelManager: NSObject {
             NSEvent.removeMonitor(monitor)
             clickOutsideMonitor = nil
         }
+    }
+}
+
+/// The menu's first row: a status dot, the name, what it is doing, and the two keys to remember.
+private struct StatusMenuHeader: View {
+    let statusText: String
+    let dictationKey: String
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 3) {
+            HStack(spacing: 8) {
+                Circle().fill(statusText == "Ready" ? Color(nsColor: .systemGreen) : Color(nsColor: .systemOrange)).frame(width: 8, height: 8)
+                Text("OpenClicky").font(.system(size: 13, weight: .bold))
+                Spacer()
+                Text(statusText).font(.system(size: 13)).foregroundStyle(.secondary)
+            }
+            Text("Hold ⌃⌥ to talk · hold \(dictationKey) to dictate").font(.system(size: 12)).foregroundStyle(.secondary)
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 6)
+        .frame(width: 280, alignment: .leading)
     }
 }

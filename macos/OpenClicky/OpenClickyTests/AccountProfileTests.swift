@@ -72,10 +72,7 @@ struct AccountProfileTests {
         #expect(!summary(plan: "grant", onPlan: true).isSwitchedOff)
         #expect(!summary(plan: "grant", onPlan: false, blocked: true).isSwitchedOff) // paused has its own sentence
         #expect(!summary(plan: "unmetered", onPlan: true).isSwitchedOff)
-        #expect(NotchSettingsView.planDescription(kind: .account, summary: summary(plan: "grant", onPlan: false)) == BillingSummary.switchedOffMessage)
         #expect(BillingSummary.switchedOffMessage == "this login isn't switched on for openclicky yet — write to hello@flowsxr.com, or use your own key.")
-        #expect(NotchSettingsView.planDescription(kind: .account, summary: summary(plan: "grant", spent: 2.1)) == "account · 21% used")
-        #expect(NotchSettingsView.planDescription(kind: .ownKeys, summary: summary(plan: "unmetered")) == "not metered")
     }
 
     // MARK: §3.5 — the running-low notice, once a month

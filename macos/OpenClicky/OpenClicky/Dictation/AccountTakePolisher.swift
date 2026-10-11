@@ -28,6 +28,9 @@ struct AccountTakePolisher: TakePolisher {
     var send: (URLRequest) async throws -> (Data, URLResponse) = { try await URLSession.shared.data(for: $0) }
     /// What a 401 does to the session (refresh once, sign out on the second); injectable for tests.
     var signIn: BackendSignIn.SignInRejectionHandling = .live
+    /// Puts the stored sign-in on the request; injectable so tests carry a token of their own
+    /// (a request sent without one gets its 401 back, never a refresh).
+    var authorize: (inout URLRequest) -> Void = { OpenClickyConfiguration.authorize(&$0) }
 
     var displayName: String { "OpenClicky" }
 
@@ -37,7 +40,7 @@ struct AccountTakePolisher: TakePolisher {
         request.httpMethod = "POST"
         request.timeoutInterval = 20
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        OpenClickyConfiguration.authorize(&request)
+        authorize(&request)
         request.httpBody = try JSONSerialization.data(withJSONObject: ["purpose": purpose, "system": system, "text": user])
         // A refused sign-in is refreshed once and sent again; a second refusal throws
         // `BackendSignInError.expired`, whose sentence is the sign-in one, not "couldn't reach".

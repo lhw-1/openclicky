@@ -58,4 +58,5 @@ jobs:
         if: failure()
         working-directory: macos/OpenClicky
         run: |
-          grep -E "error:|failed on" build.log test.log 2>/dev/null | sort -u | head -60 || true
+          # Swift Testing says which check failed in "recorded an issue" / "Expectation failed" lines.
+          grep -E "error:|failed on|recorded an issue|Expectation failed" build.log test.log 2>/dev/null | sort -u | head -60 || true

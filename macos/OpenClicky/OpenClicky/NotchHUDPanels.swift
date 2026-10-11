@@ -226,15 +226,12 @@ enum NotchVoiceDestination {
         return engine == .sarvam ? "add sarvam key ›" : "set up backend ›"
     }
 
-    /// Where the pill (and the Home warning card) sends the user: the voice page for Sarvam's key,
-    /// shell.json for the backend the other engines need, the voice page when nothing is missing.
+    /// Where the pill (and the Home warning card) sends the user: Settings → Account when the
+    /// engine still needs a key or a sign-in, Settings → Dictation when nothing is missing.
     @MainActor
     static func openSetup(for engine: DictationEngineChoice, companionManager: CompanionManager) {
-        if DictationEngineResolver.unavailableReason(for: engine) != nil && engine != .sarvam {
-            OpenClickyConfiguration.revealSettingsFile()
-        } else {
-            companionManager.showDictationWindow(settingsPage: .voice)
-        }
+        let isMissingSomething = DictationEngineResolver.unavailableReason(for: engine) != nil
+        companionManager.showSettings(isMissingSomething ? .account : .dictation)
     }
 }
 
@@ -1017,113 +1014,100 @@ struct AgentRowView: View {
 
 // MARK: - Settings
 
-/// The Settings tab: the two live toggles (the orb, agent mode), a summary card per area
-/// (dictation, backend & account, agent, pointer), and links to the full settings window,
-/// shell.json and the own-key page. Under them, MORE keeps the island-only controls the window
-/// does not have (language, realtime voice, always listening, the pointer, the menu bar icon,
-/// signing in) so nothing that lived here is lost.
+/// The Settings tab: quick controls only. Four switches (the orb, agent mode, dock the pointer,
+/// show the pointer), where the island lives, and two actions: open the Settings window (⌘,) and
+/// quit. Everything else lives in the Settings window. Controls are hand-drawn because the island
+/// never becomes key, and system controls grey out in a panel that isn't.
 struct NotchSettingsView: View {
     @ObservedObject var companionManager: CompanionManager
     @ObservedObject var settings: DictationSettings
-    /// Mirrors `language` in shell.json; written back on change. See ReplyLanguage.swift.
-    @State private var replyLanguageCode = ReplyLanguage.currentCode
-    /// The account's allowance, for the plan row; refreshed whenever the tab appears.
-    @StateObject private var billing = BillingStatusModel()
 
-    private let summaryColumns = [GridItem(.flexible(), spacing: 8), GridItem(.flexible(), spacing: 8)]
+    private let tileColumns = [GridItem(.flexible(), spacing: 10), GridItem(.flexible(), spacing: 10)]
 
     var body: some View {
-        ScrollView(showsIndicators: false) {
-            VStack(alignment: .leading, spacing: 10) {
-                HStack(spacing: 8) {
-                    liveToggle(title: "the orb", detail: "pill at the bottom", isOn: Binding(
-                        get: { settings.orbVisible },
-                        set: { settings.orbVisible = $0 }
-                    ))
-                    liveToggle(title: "agent mode", detail: "work goes to codex", isOn: Binding(
-                        get: { companionManager.isAgentModeEnabled },
-                        set: { companionManager.setAgentModeEnabled($0) }
-                    ))
-                }
-
-                LazyVGrid(columns: summaryColumns, alignment: .leading, spacing: 8) {
-                    summaryCard(title: "DICTATION", rows: [
-                        ("hears you", NotchVoiceDestination.listenerName(for: settings.engine)),
-                        ("speech-to-text", NotchVoiceDestination.speechToTextName(for: settings.engine)),
-                        ("ai clean-up", polishModelDescription),
-                    ]) { companionManager.showDictationWindow(settingsPage: .voice) }
-                    summaryCard(title: "BACKEND & ACCOUNT", rows: [
-                        ("host", OpenClickyConfiguration.backendHostDescription),
-                        ("token", OpenClickyConfiguration.hasAccountToken ? "configured" : OpenClickyConfiguration.isConfigured ? "not needed · your own key" : "missing"),
-                        ("plan", Self.planDescription(kind: AccountCapabilities.current().kind, summary: billing.summary)),
-                    ]) { companionManager.showDictationWindow(settingsPage: .account) }
-                    summaryCard(title: "AGENT", rows: [
-                        ("workspace", OpenClickyConfiguration.workspacePath.replacingOccurrences(of: NSHomeDirectory(), with: "~")),
-                        ("model", OpenClickyConfiguration.agentModelOverride ?? "codex"),
-                    ]) { OpenClickyConfiguration.revealSettingsFile() }
-                    summaryCard(title: "POINTER", rows: [
-                        ("shows", companionManager.isClickyCursorEnabled ? companionManager.pointerPresence.label : "only while you talk"),
-                        ("shortcuts", "see home"),
-                    ]) { companionManager.showDictationWindow(settingsPage: .shortcuts) }
-                }
-
-                HStack(spacing: 8) {
-                    Button(action: { companionManager.showDictationWindow(settingsPage: .general) }) {
-                        Text("open all settings")
-                            .font(.system(size: 13, weight: .semibold))
-                            .foregroundColor(.black)
-                            .frame(maxWidth: .infinity)
-                            .frame(height: 32)
-                            .background(RoundedRectangle(cornerRadius: DS.HUD.tileRadius, style: .continuous).fill(DS.HUD.text))
-                    }
-                    .buttonStyle(.plain)
-                    .pointerCursor()
-                    linkButton(title: "shell.json ↗", help: OpenClickyConfiguration.settingsFileURL.path.replacingOccurrences(of: NSHomeDirectory(), with: "~")) {
-                        OpenClickyConfiguration.revealSettingsFile()
-                    }
-                    linkButton(title: "use my own key ↗", help: "use your own openai key instead of an account") {
-                        companionManager.showDictationWindow(settingsPage: .account)
-                    }
-                }
-
-                moreSection
+        VStack(alignment: .leading, spacing: 10) {
+            LazyVGrid(columns: tileColumns, alignment: .leading, spacing: 10) {
+                switchTile(title: "the orb", detail: "pill at the bottom", isOn: Binding(
+                    get: { settings.orbVisible },
+                    set: { settings.orbVisible = $0 }
+                ))
+                switchTile(title: "agent mode", detail: "work goes to codex", isOn: Binding(
+                    get: { companionManager.isAgentModeEnabled },
+                    set: { companionManager.setAgentModeEnabled($0) }
+                ))
+                switchTile(title: "dock the pointer", detail: companionManager.hudPlacement.isSideDrawer ? "waits in the drawer" : "waits under the notch", isOn: Binding(
+                    get: { companionManager.isCursorDocked },
+                    set: { companionManager.setCursorDocked($0) }
+                ))
+                switchTile(title: "show the pointer", detail: companionManager.isClickyCursorEnabled ? companionManager.pointerPresence.label : "only while you talk", isOn: Binding(
+                    get: { companionManager.isClickyCursorEnabled },
+                    set: { companionManager.setClickyCursorEnabled($0) }
+                ))
             }
-            .padding(.horizontal, DS.HUD.bodySidePadding)
-            .padding(.bottom, 16)
+
+            VStack(alignment: .leading, spacing: 10) {
+                Text("where openclicky lives").font(.system(size: 13, weight: .semibold)).foregroundColor(DS.HUD.text)
+                HStack(spacing: 6) {
+                    ForEach(HUDPlacement.allCases) { placement in
+                        let isSelected = companionManager.hudPlacement == placement
+                        Button(action: { companionManager.setHUDPlacement(placement) }) {
+                            Text(placement.title)
+                                .font(.system(size: 12, weight: isSelected ? .semibold : .regular))
+                                .foregroundColor(isSelected ? .black : DS.HUD.text)
+                                .frame(maxWidth: .infinity)
+                                .frame(height: 28)
+                                .background(RoundedRectangle(cornerRadius: 9, style: .continuous).fill(isSelected ? DS.HUD.text : DS.HUD.surfaceRaised))
+                                .contentShape(Rectangle())
+                        }
+                        .buttonStyle(.plain)
+                        .pointerCursor()
+                        .accessibilityLabel(placement.title)
+                        .accessibilityAddTraits(isSelected ? .isSelected : [])
+                    }
+                }
+            }
+            .padding(.horizontal, 12)
+            .padding(.vertical, 10)
+            .background(RoundedRectangle(cornerRadius: 12, style: .continuous).fill(DS.HUD.surface))
+
+            HStack(spacing: 10) {
+                Button(action: { companionManager.showSettings() }) {
+                    HStack(spacing: 8) {
+                        Text("open settings…").font(.system(size: 13, weight: .semibold)).foregroundColor(.black)
+                        Text("⌘,").font(.system(size: 13)).foregroundColor(.black.opacity(0.45))
+                    }
+                    .frame(maxWidth: .infinity)
+                    .frame(height: 36)
+                    .background(RoundedRectangle(cornerRadius: 12, style: .continuous).fill(DS.HUD.text))
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .pointerCursor()
+                Button(action: { companionManager.quitWithFarewell() }) {
+                    HStack(spacing: 6) {
+                        Image(systemName: "power").font(.system(size: 12, weight: .semibold))
+                        Text("quit").font(.system(size: 13))
+                    }
+                    .foregroundColor(DS.HUD.text)
+                    .padding(.horizontal, 16)
+                    .frame(height: 36)
+                    .background(RoundedRectangle(cornerRadius: 12, style: .continuous).fill(DS.HUD.surfaceRaised))
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .pointerCursor()
+                .accessibilityLabel("quit openclicky")
+            }
         }
-        .onAppear { billing.refresh() }
+        .padding(.horizontal, DS.HUD.bodySidePadding)
+        .padding(.bottom, 16)
     }
 
-    /// The model that polishes takes (`DictationEngineResolver.makePolisher`), or why none does.
-    private var polishModelDescription: String {
-        guard DictationEngineResolver.wantsModelPolish(settings: settings) else { return "off" }
-        let sarvamKey = OpenClickyConfiguration.settings.sarvamKey?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-        if !sarvamKey.isEmpty { return "on · sarvam" }
-        let credentials = ProviderRouter.currentCredentials()
-        if credentials.openAIKey != nil { return "on · your openai key" }
-        if credentials.anthropicKey != nil { return "on · your anthropic key" }
-        if OpenClickyConfiguration.isConfigured { return "on · openclicky" }
-        return "none yet"
-    }
-
-    /// "account · 45% used" once the allowance has loaded, "account" until then.
-    static func planDescription(kind: AccountKind, summary: BillingSummary?) -> String {
-        if let summary, summary.isSwitchedOff { return BillingSummary.switchedOffMessage }
-        if summary?.plan == "unmetered", kind != .signedOut { return "not metered" }
-        switch kind {
-        case .ownKeys: return "your own key"
-        case .signedOut: return "not signed in"
-        case .account:
-            guard let summary, summary.isMetered else { return "account" }
-            return "account · \(Int((summary.fractionUsed * 100).rounded()))% used"
-        }
-    }
-
-    private func liveToggle(title: String, detail: String, isOn: Binding<Bool>) -> some View {
+    private func switchTile(title: String, detail: String, isOn: Binding<Bool>) -> some View {
         HStack {
             VStack(alignment: .leading, spacing: 1) {
                 Text(title).font(.system(size: 13, weight: .semibold)).foregroundColor(DS.HUD.text)
-                Text(detail).font(.system(size: 11)).foregroundColor(DS.HUD.text3)
+                Text(detail).font(.system(size: 11)).foregroundColor(DS.HUD.text3).lineLimit(1)
             }
             Spacer(minLength: 4)
             Toggle("", isOn: isOn)
@@ -1134,228 +1118,8 @@ struct NotchSettingsView: View {
         }
         .padding(.horizontal, 12)
         .frame(maxWidth: .infinity)
-        .frame(height: 44)
+        .frame(height: 48)
         .background(RoundedRectangle(cornerRadius: 12, style: .continuous).fill(DS.HUD.surface))
-    }
-
-    /// One area's summary; a click opens where that area is changed.
-    private func summaryCard(title: String, rows: [(String, String)], onOpen: @escaping () -> Void) -> some View {
-        Button(action: onOpen) {
-            VStack(alignment: .leading, spacing: 6) {
-                NotchSectionHeader(title: title)
-                ForEach(rows, id: \.0) { row in
-                    HStack(spacing: 6) {
-                        Text(row.0).foregroundColor(DS.HUD.text2)
-                        Spacer(minLength: 4)
-                        Text(row.1).foregroundColor(DS.HUD.text).lineLimit(1).truncationMode(.middle)
-                    }
-                    .font(.system(size: 12))
-                }
-            }
-            .padding(.horizontal, 12)
-            .padding(.vertical, 10)
-            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-            .background(RoundedRectangle(cornerRadius: 12, style: .continuous).fill(DS.HUD.surface))
-            .contentShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
-        }
-        .buttonStyle(.plain)
-        .pointerCursor()
-    }
-
-    private func linkButton(title: String, help: String, action: @escaping () -> Void) -> some View {
-        Button(action: action) {
-            Text(title)
-                .font(.system(size: 12))
-                .foregroundColor(DS.HUD.text)
-                .padding(.horizontal, 12)
-                .frame(height: 32)
-                .background(RoundedRectangle(cornerRadius: DS.HUD.tileRadius, style: .continuous).fill(DS.HUD.surfaceRaised))
-        }
-        .buttonStyle(.plain)
-        .pointerCursor()
-        .help(help)
-    }
-
-    // MARK: More (the controls only the island has)
-
-    private var moreSection: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            NotchSectionHeader(title: "MORE")
-                .padding(.top, 6)
-            VStack(spacing: 0) {
-                languageRow
-                placementRow
-                // Realtime voice and hands-free run on OpenAI Realtime, which only an own OpenAI key
-                // can use. A free account would see switches that do nothing (and a "turn it on"
-                // note while it already looked on), so it gets one plain line instead.
-                if AccountCapabilities.current().usesRealtime {
-                    moreToggleRow(title: "fast voice", detail: "talks back instantly, over openai realtime", isOn: Binding(
-                        get: { companionManager.isRealtimeVoiceEnabled },
-                        set: { companionManager.setRealtimeVoiceEnabled($0) }
-                    ))
-                    moreToggleRow(title: "always listening", detail: "hands-free: just talk, no keys (needs fast voice)", isOn: Binding(
-                        get: { companionManager.isAlwaysListening },
-                        set: { companionManager.setAlwaysListening($0) }
-                    ))
-                } else {
-                    fastVoiceNeedsOwnKeyRow
-                }
-                moreToggleRow(title: "dock the pointer in the notch", detail: "the pointer lives in the hud", isOn: Binding(
-                    get: { companionManager.isCursorDocked },
-                    set: { companionManager.setCursorDocked($0) }
-                ))
-                moreToggleRow(title: "show the pointer", detail: "off: it appears only while you talk", isOn: Binding(
-                    get: { companionManager.isClickyCursorEnabled },
-                    set: { companionManager.setClickyCursorEnabled($0) }
-                ))
-                moreToggleRow(title: "menu bar icon", detail: "off by default: this hud is openclicky's home", isOn: Binding(
-                    get: { companionManager.isMenuBarIconVisible },
-                    set: { companionManager.setMenuBarIconVisible($0) }
-                ))
-            }
-            .background(RoundedRectangle(cornerRadius: 12, style: .continuous).fill(DS.HUD.surface))
-
-            // Sign in, or the plan and credits (BillingStatus.swift).
-            VStack(spacing: 0) {
-                NotchAccountSection(
-                    row: { moreValueRow(systemImage: $0, title: $1, value: $2) },
-                    action: { moreActionRow(systemImage: $0, title: $1, detail: $2, action: $3) },
-                    openAccountPage: { companionManager.showDictationWindow(settingsPage: .account) }
-                )
-            }
-            .background(RoundedRectangle(cornerRadius: 12, style: .continuous).fill(DS.HUD.surface))
-
-            VStack(spacing: 0) {
-                moreActionRow(systemImage: "macwindow", title: "open openclicky", detail: "history, dictionary, shortcuts, styles") {
-                    companionManager.showDictationWindow()
-                }
-                moreActionRow(systemImage: "ladybug", title: "report a bug", detail: "opens the project's issue tracker") {
-                    if let url = URL(string: "https://github.com/prasanthsasikumar/openclicky/issues") { NSWorkspace.shared.open(url) }
-                }
-                moreActionRow(systemImage: "power", title: "quit openclicky", detail: nil) { companionManager.quitWithFarewell() }
-            }
-            .background(RoundedRectangle(cornerRadius: 12, style: .continuous).fill(DS.HUD.surface))
-        }
-    }
-
-    /// The one language OpenClicky speaks and listens in. Takes effect on the next turn: the
-    /// Realtime session re-sends its instructions and transcription language when they change.
-    private var languageRow: some View {
-        HStack {
-            VStack(alignment: .leading, spacing: 1) {
-                Text("language").font(.system(size: 13, weight: .semibold)).foregroundColor(DS.HUD.text)
-                Text("clicky speaks and listens in this").font(.system(size: 11)).foregroundColor(DS.HUD.text3)
-            }
-            Spacer()
-            Picker("", selection: Binding(
-                get: { replyLanguageCode },
-                set: { chosenLanguageCode in
-                    replyLanguageCode = chosenLanguageCode
-                    OpenClickyConfiguration.update { $0.language = chosenLanguageCode }
-                }
-            )) {
-                ForEach(ReplyLanguage.choices) { choice in Text(choice.name).tag(choice.code) }
-            }
-            .labelsHidden()
-            .pickerStyle(.menu)
-            .frame(width: 120)
-            .pointerCursor()
-        }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 8)
-    }
-
-    /// Where the island lives: the notch, a drawer on either screen edge, or hidden (shortcuts only).
-    private var placementRow: some View {
-        HStack {
-            VStack(alignment: .leading, spacing: 1) {
-                Text("where openclicky lives").font(.system(size: 13, weight: .semibold)).foregroundColor(DS.HUD.text)
-                Text(companionManager.hudPlacement.detail).font(.system(size: 11)).foregroundColor(DS.HUD.text3).lineLimit(2)
-            }
-            Spacer()
-            Picker("", selection: Binding(
-                get: { companionManager.hudPlacement },
-                set: { companionManager.setHUDPlacement($0) }
-            )) {
-                ForEach(HUDPlacement.allCases) { placement in Text(placement.title).tag(placement) }
-            }
-            .labelsHidden()
-            .pickerStyle(.menu)
-            .frame(width: 120)
-            .pointerCursor()
-        }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 8)
-        .overlay(alignment: .top) { Rectangle().fill(DS.HUD.line).frame(height: 1) }
-    }
-
-    /// What a free account sees in place of the fast-voice and always-listening switches.
-    private var fastVoiceNeedsOwnKeyRow: some View {
-        HStack {
-            VStack(alignment: .leading, spacing: 1) {
-                Text("fast voice and hands-free").font(.system(size: 13, weight: .semibold)).foregroundColor(DS.HUD.text)
-                Text("need your own openai key. your free account uses the standard voice.").font(.system(size: 11)).foregroundColor(DS.HUD.text3)
-            }
-            Spacer()
-            Button("use my own key") { companionManager.showDictationWindow(settingsPage: .account) }
-                .buttonStyle(.plain)
-                .font(.system(size: 12, weight: .semibold))
-                .foregroundColor(DS.HUD.text)
-                .padding(.horizontal, 10).padding(.vertical, 5)
-                .background(Capsule().fill(DS.HUD.surfaceRaisedSoft))
-                .pointerCursor()
-        }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 8)
-        .overlay(alignment: .top) { Rectangle().fill(DS.HUD.line).frame(height: 1) }
-    }
-
-    private func moreToggleRow(title: String, detail: String, isOn: Binding<Bool>) -> some View {
-        HStack {
-            VStack(alignment: .leading, spacing: 1) {
-                Text(title).font(.system(size: 13, weight: .semibold)).foregroundColor(DS.HUD.text)
-                Text(detail).font(.system(size: 11)).foregroundColor(DS.HUD.text3)
-            }
-            Spacer()
-            Toggle("", isOn: isOn)
-                .toggleStyle(HUDSwitchToggleStyle())
-                .labelsHidden()
-                .pointerCursor()
-                .accessibilityLabel(title)
-        }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 8)
-        .overlay(alignment: .top) { Rectangle().fill(DS.HUD.line).frame(height: 1) }
-    }
-
-    private func moreValueRow(systemImage: String, title: String, value: String) -> some View {
-        HStack {
-            Image(systemName: systemImage).font(.system(size: 12)).foregroundColor(DS.HUD.text3).frame(width: 18)
-            Text(title.lowercased()).font(.system(size: 13, weight: .semibold)).foregroundColor(DS.HUD.text)
-            Spacer()
-            Text(value).font(.system(size: 12)).foregroundColor(DS.HUD.text2).lineLimit(1).truncationMode(.middle)
-        }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 10)
-    }
-
-    private func moreActionRow(systemImage: String, title: String, detail: String?, action: @escaping () -> Void) -> some View {
-        Button(action: action) {
-            HStack {
-                Image(systemName: systemImage).font(.system(size: 12)).foregroundColor(DS.HUD.text3).frame(width: 18)
-                VStack(alignment: .leading, spacing: 1) {
-                    Text(title.lowercased()).font(.system(size: 13, weight: .semibold)).foregroundColor(DS.HUD.text)
-                    if let detail { Text(detail).font(.system(size: 11)).foregroundColor(DS.HUD.text3).lineLimit(1).truncationMode(.middle) }
-                }
-                Spacer()
-                Image(systemName: "chevron.right").font(.system(size: 10, weight: .semibold)).foregroundColor(DS.HUD.text3)
-            }
-            .padding(.horizontal, 12)
-            .padding(.vertical, 10)
-            .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-        .pointerCursor()
     }
 }
 

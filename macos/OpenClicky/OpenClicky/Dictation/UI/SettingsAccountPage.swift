@@ -2,10 +2,9 @@
 //  SettingsAccountPage.swift
 //  OpenClicky
 //
-//  Settings → account (was account + plan & usage): who you are and what it costs. Set up a free
-//  account or sign in with just an email (AccountSheet), or sign out; how much of the free allowance is
-//  used and what each engine costs; your own openai key; and the backend host and token from
-//  shell.json, read-only.
+//  Settings → Account: who you are and what it costs. Sign in (or set up a free account with just
+//  an email, in AccountSheet) or sign out; how much of the free allowance is used and what each
+//  engine costs; your own OpenAI and Sarvam keys; and the backend host and token from shell.json.
 //
 
 import AppKit
@@ -13,163 +12,138 @@ import SwiftUI
 
 extension SettingsCatalog {
     func accountItems() -> [SettingsItem] {
-        let isSignedIn = OpenClickyAuthSession.shared.accountEmail != nil
-        return [
+        [
             SettingsItem(
-                id: "account.signedIn", page: .account, section: "you",
-                title: "signed in", detail: "sign out; history stays safe on this mac.",
-                keywords: ["account", "sign out", "log out", "email"],
-                isRelevant: { OpenClickyAuthSession.shared.accountEmail != nil },
-                view: AnyView(SignedInAccountRows())),
+                id: "account.profile", page: .account, section: "",
+                title: "Account", detail: "Sign in or out. A free account adds AI polish and spoken answers; dictation on this Mac works without one.",
+                keywords: ["account", "sign in", "sign up", "sign out", "log in", "log out", "create", "email", "code", "free"],
+                view: AnyView(AccountProfileRow())),
             SettingsItem(
-                id: "account.start", page: .account, section: "you",
-                title: "a free openclicky account", detail: "polished dictation and spoken answers, on us — no keys to find.",
-                keywords: ["account", "sign in", "sign up", "create", "log in", "email", "code", "free"],
-                isRelevant: { OpenClickyAuthSession.shared.accountEmail == nil },
-                view: AnyView(AccountStartRow())),
-            SettingsItem(
-                id: "account.noAccountNeeded", page: .account, section: "you",
-                title: "no account needed", detail: "dictation on this mac works without an account.",
-                keywords: ["offline", "own key", "without"],
-                chrome: .bare,
-                isRelevant: { OpenClickyAuthSession.shared.accountEmail == nil },
-                view: AnyView(SettingsFootnote(text: "dictation on this mac works without an account; your own keys work without one too."))),
-            SettingsItem(
-                id: "account.plan", page: .account, section: "plan & usage",
-                title: "plan", detail: isSignedIn ? "how much of this month's free allowance is used." : "no account needed on this mac.",
+                id: "account.plan", page: .account, section: "Plan & usage",
+                title: "Free allowance", detail: "How much of this month’s free allowance is used.",
                 keywords: ["billing", "allowance", "usage", "plan", "cost", "price", "limit"],
                 view: AnyView(PlanSummary())),
             SettingsItem(
-                id: "account.usage.takes", page: .account, section: "plan & usage",
-                title: "takes", detail: "as long as you like; the quiet-take timeout ends a silent one.",
-                keywords: ["length", "limit"],
-                view: AnyView(SettingsRow(title: "takes", detail: "as long as you like; the quiet-take timeout ends a silent one.") { EmptyView() })),
-            SettingsItem(
-                id: "account.usage.offline", page: .account, section: "plan & usage",
-                title: "this mac", detail: "unlimited, on this mac, no account.",
+                id: "account.usage.offline", page: .account, section: "Plan & usage",
+                title: "This Mac", detail: "Unlimited, no account.",
                 keywords: ["offline", "free", "engine"],
-                view: AnyView(SettingsRow(title: "this mac", detail: "unlimited, on this mac, no account.") { SettingsTag(text: "free", tint: Paper.success) })),
+                view: AnyView(SettingsRow(title: "This Mac", detail: "Unlimited, no account.") { SettingsTag(text: "Free", isPositive: true) })),
             SettingsItem(
-                id: "account.usage.sarvam", page: .account, section: "plan & usage",
-                title: "sarvam", detail: "billed by sarvam to your key — see dashboard.sarvam.ai.",
-                keywords: ["sarvam", "billing", "engine"],
-                view: AnyView(SettingsRow(title: "sarvam", detail: "billed by sarvam to your key — see dashboard.sarvam.ai.") {
-                    Button("dashboard ↗") { openExternalLink("https://dashboard.sarvam.ai") }.buttonStyle(PaperPillButtonStyle())
+                id: "account.usage.sarvam", page: .account, section: "Plan & usage",
+                title: "Sarvam", detail: "Billed by Sarvam to your key.",
+                keywords: ["sarvam", "billing", "engine", "dashboard"],
+                view: AnyView(SettingsRow(title: "Sarvam", detail: "Billed by Sarvam to your key.") {
+                    Button("Dashboard ↗") { openExternalLink("https://dashboard.sarvam.ai") }
                 })),
             SettingsItem(
-                id: "account.usage.backend", page: .account, section: "plan & usage",
-                title: "openai and assemblyai, via openclicky", detail: "",
+                id: "account.usage.backend", page: .account, section: "Plan & usage",
+                title: "OpenAI and AssemblyAI", detail: "Through OpenClicky.",
                 keywords: ["openai", "assemblyai", "allowance", "metered", "engine"],
                 view: AnyView(BackendEngineUsageRow())),
             SettingsItem(
-                id: "account.ownOpenAIKey", page: .account, section: "your keys",
-                title: "use my own openai key", detail: "sent to the openclicky backend with each request and used instead of your free allowance; nothing is metered. kept in ~/.openclicky/shell.json.",
+                id: "account.ownOpenAIKey", page: .account, section: "Your keys",
+                title: "OpenAI", detail: "Unlocks fast voice and hands-free.",
                 keywords: ["openai", "api key", "byok", "own key", "openaiApiKey"],
                 view: AnyView(OwnOpenAIKeyEditor())),
             SettingsItem(
-                id: "account.backendHost", page: .account, section: "backend",
-                title: "backend host", detail: "where openclicky’s model calls go. change it in shell.json.",
+                id: "account.sarvamKey", page: .account, section: "Your keys",
+                title: "Sarvam", detail: "For the Sarvam engine.",
+                keywords: ["sarvam", "saaras", "api key", "api-subscription-key", "key"],
+                view: AnyView(SarvamKeyEditor())),
+            SettingsItem(
+                id: "account.keysNote", page: .account, section: "Your keys",
+                title: "Where keys go", detail: "Keys are sent to the OpenClicky backend with each request and used instead of your free allowance. Stored in ~/.openclicky/shell.json.",
+                keywords: ["shell.json", "byok"],
+                chrome: .footer,
+                view: AnyView(SettingsFootnote(text: "Keys are sent to the OpenClicky backend with each request and used instead of your free allowance. Stored in ~/.openclicky/shell.json."))),
+            SettingsItem(
+                id: "account.backendHost", page: .account, section: "Backend",
+                title: "Host", detail: "Where OpenClicky’s model calls go. Change it in shell.json.",
                 keywords: ["backend", "server", "url", "host", "shell.json"],
                 view: AnyView(BackendDetailsRow(kind: .host))),
             SettingsItem(
-                id: "account.backendToken", page: .account, section: "backend",
-                title: "token", detail: "the session token every request carries; written by sign-in.",
+                id: "account.backendToken", page: .account, section: "Backend",
+                title: "Session token", detail: "Written when you sign in.",
                 keywords: ["token", "bearer", "shell.json", "session"],
                 view: AnyView(BackendDetailsRow(kind: .token))),
         ]
     }
 }
 
-struct SettingsFootnote: View {
-    let text: String
-    @Environment(\.settingsSearchQuery) private var searchQuery
-
-    var body: some View {
-        Text(settingsHighlighted(text, query: searchQuery))
-            .font(Paper.caption).foregroundStyle(Paper.inkSecondary)
-            .fixedSize(horizontal: false, vertical: true)
-            .padding(.top, 4).padding(.leading, 2)
-    }
-}
-
 // MARK: - you
 
-private struct SignedInAccountRows: View {
+/// Signed in: the address, sign out, and the confirmation code while the address is unconfirmed.
+/// Signed out: "Not signed in" and Sign In…, which opens the account sheet.
+private struct AccountProfileRow: View {
     @ObservedObject private var authSession = OpenClickyAuthSession.shared
     @StateObject private var billing = BillingStatusModel()
+    @State private var showsAccountSheet = false
     @State private var resendNote: String?
     @State private var resendWork = AccountWorkSlot()
 
     var body: some View {
-        if let accountEmail = authSession.accountEmail {
-            HStack(spacing: 14) {
-                ZStack {
-                    Circle().fill(Paper.accentSoft)
-                    Text(String(accountEmail.prefix(1)).lowercased()).font(Paper.body(16, weight: .semibold)).foregroundStyle(Paper.ink)
-                }
-                .frame(width: 40, height: 40)
-                .accessibilityHidden(true)
-                VStack(alignment: .leading, spacing: 3) {
-                    Text(accountEmail).font(Paper.rowTitle).foregroundStyle(Paper.ink)
-                    Text("signing out keeps your history on this mac.").font(Paper.caption).foregroundStyle(Paper.inkSecondary)
+        HStack(alignment: .center, spacing: 12) {
+            ZStack {
+                Circle().fill(authSession.accountEmail == nil ? Color(nsColor: .tertiaryLabelColor) : SettingsLook.accent)
+                Text(initial).font(.system(size: 18, weight: .semibold)).foregroundStyle(.white)
+            }
+            .frame(width: 44, height: 44)
+            .accessibilityHidden(true)
+            VStack(alignment: .leading, spacing: 2) {
+                if let accountEmail = authSession.accountEmail {
+                    Text(accountEmail).font(.system(size: 15, weight: .semibold))
+                    Text("Signing out keeps your history on this Mac.").font(.system(size: 12)).foregroundStyle(.secondary)
                     if billing.summary?.isUnconfirmed == true {
-                        HStack(spacing: 8) {
-                            Text(resendNote ?? "unconfirmed — check your inbox for the link.")
-                                .font(Paper.caption).foregroundStyle(Paper.inkSecondary)
-                            Button("resend link", action: resend)
-                                .buttonStyle(.plain).font(Paper.caption).foregroundStyle(Paper.accentFill).pointerCursor()
+                        HStack(spacing: 6) {
+                            Text(resendNote ?? "Unconfirmed — check your inbox for the code.")
+                                .font(SettingsLook.caption).foregroundStyle(.secondary)
+                            Button("Resend", action: resend).buttonStyle(.link).font(SettingsLook.caption)
                         }
                         GuestConfirmationCodeField(onConfirmed: { billing.refresh() })
                     }
+                } else {
+                    Text("Not signed in").font(.system(size: 15, weight: .semibold))
+                    Text("A free account adds AI polish and spoken answers. Dictation on this Mac works without one.")
+                        .font(.system(size: 12)).foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                    // Signed out by a dead sign-in, not by the person: say why, where they look.
+                    if let sessionExpiredNotice = authSession.sessionExpiredNotice {
+                        Text(sessionExpiredNotice).font(SettingsLook.caption).foregroundStyle(SettingsLook.danger)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
                 }
-                Spacer()
-                Button("sign out") {
+            }
+            Spacer(minLength: 12)
+            if authSession.accountEmail != nil {
+                Button("Sign Out") {
                     authSession.signOut()
                     ShellSettingsRevision.shared.noteChanged()
                 }
-                .buttonStyle(PaperPillButtonStyle())
+            } else {
+                Button("Sign In…") { showsAccountSheet = true }
+                    .buttonStyle(.borderedProminent)
+                    .tint(SettingsLook.accent)
             }
-            .padding(.horizontal, Paper.Metric.rowHorizontal)
-            .padding(.vertical, Paper.Metric.rowVertical)
-            .onAppear { billing.refresh() }
-            .onDisappear { resendWork.cancel() }
         }
+        .padding(.vertical, 6)
+        .onAppear { if authSession.accountEmail != nil { billing.refresh() } }
+        .onDisappear { resendWork.cancel() }
+        .task { await authSession.refreshAccountsOpen() }
+        .sheet(isPresented: $showsAccountSheet) {
+            // The own-key field is on this page, behind the sheet: closing it is the way there.
+            AccountSheet(onDone: { showsAccountSheet = false }, onUseOwnKey: { showsAccountSheet = false })
+        }
+    }
+
+    private var initial: String {
+        if let accountEmail = authSession.accountEmail { return String(accountEmail.prefix(1)).uppercased() }
+        return String(NSFullUserName().prefix(1)).uppercased()
     }
 
     private func resend() {
         resendWork.start {
             let sent = await authSession.resendLink()
-            resendNote = sent ? "sent — check your inbox." : "couldn't send it — try again in a minute."
-        }
-    }
-}
-
-/// Signed out: one button, opening the account sheet with the email form.
-private struct AccountStartRow: View {
-    @State private var showsAccountSheet = false
-    @ObservedObject private var authSession = OpenClickyAuthSession.shared
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            Text("a free openclicky account").font(Paper.rowTitle).foregroundStyle(Paper.ink)
-            Text("polished dictation and spoken answers, on us — no keys to find.")
-                .font(Paper.caption).foregroundStyle(Paper.inkSecondary)
-                .fixedSize(horizontal: false, vertical: true)
-            // Signed out by a dead sign-in, not by the person: say why, where they look.
-            if let sessionExpiredNotice = authSession.sessionExpiredNotice {
-                Text(sessionExpiredNotice).font(Paper.caption).foregroundStyle(Paper.danger)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-            Button("set up or sign in with your email") { showsAccountSheet = true }
-                .buttonStyle(PaperPillButtonStyle(prominent: true))
-        }
-        .padding(.horizontal, Paper.Metric.rowHorizontal)
-        .padding(.vertical, Paper.Metric.rowVertical + 4)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .task { await authSession.refreshAccountsOpen() }
-        .sheet(isPresented: $showsAccountSheet) {
-            // The own-key field is on this page, behind the sheet: closing it is the way there.
-            AccountSheet(onDone: { showsAccountSheet = false }, onUseOwnKey: { showsAccountSheet = false })
+            resendNote = sent ? "Sent — check your inbox." : "Couldn’t send it — try again in a minute."
         }
     }
 }
@@ -184,49 +158,57 @@ private struct PlanSummary: View {
 
     var body: some View {
         let _ = shellSettingsRevision.revision
-        VStack(alignment: .leading, spacing: 8) {
+        VStack(alignment: .leading, spacing: 6) {
             if let summary = billing.summary {
-                HStack(alignment: .firstTextBaseline, spacing: 8) {
-                    Text("openclicky").font(Paper.cardTitle).foregroundStyle(Paper.ink)
-                    SettingsTag(text: summary.byok ? "your keys" : summary.isMetered ? "free account" : "not metered")
-                }
                 if summary.byok {
-                    Text("openclicky meters nothing: every request runs on your own key.").font(Paper.caption).foregroundStyle(Paper.inkSecondary)
+                    meterHeader(trailing: "Your keys")
+                    Text("OpenClicky meters nothing: every request runs on your own key.").font(SettingsLook.caption).foregroundStyle(.secondary)
                 } else if !summary.isMetered {
-                    Text("this backend meters nothing: every request runs without an allowance.").font(Paper.caption).foregroundStyle(Paper.inkSecondary)
+                    meterHeader(trailing: "Not metered")
+                    Text("This backend meters nothing: every request runs without an allowance.").font(SettingsLook.caption).foregroundStyle(.secondary)
                 } else if summary.isSwitchedOff {
+                    meterHeader(trailing: "Paused")
                     Text(BillingSummary.switchedOffMessage)
-                        .font(Paper.caption).foregroundStyle(Paper.inkSecondary)
+                        .font(SettingsLook.caption).foregroundStyle(.secondary)
                         .fixedSize(horizontal: false, vertical: true)
                 } else {
-                    AccountUsageBar(summary: summary)
+                    meterHeader(trailing: "\(Int((summary.fractionUsed * 100).rounded()))% used")
+                    ProgressView(value: min(1, max(0, summary.fractionUsed)))
+                        .progressViewStyle(.linear)
+                        .tint(SettingsLook.accent)
                     DisclosureGroup(isExpanded: $showsDetails) {
                         Text(summary.usageDetails())
-                            .font(Paper.caption).foregroundStyle(Paper.inkSecondary)
+                            .font(SettingsLook.caption).foregroundStyle(.secondary)
                             .fixedSize(horizontal: false, vertical: true)
                             .frame(maxWidth: .infinity, alignment: .leading)
                             .padding(.top, 4)
                     } label: {
-                        Text("details").font(Paper.caption).foregroundStyle(Paper.inkSecondary)
+                        Text("Details").font(SettingsLook.caption).foregroundStyle(.secondary)
                     }
-                    .pointerCursor()
                 }
             } else if OpenClickyConfiguration.usesOwnKeys {
-                Text("your own keys").font(Paper.cardTitle).foregroundStyle(Paper.ink)
-                Text("no account needed: your keys in shell.json go straight to openai and anthropic, and nothing is metered.").font(Paper.caption).foregroundStyle(Paper.inkSecondary)
-            } else if authSession.accountEmail == nil && !OpenClickyConfiguration.isConfigured {
-                Text("no account needed on this mac.").font(Paper.cardTitle).foregroundStyle(Paper.ink)
-                Text("dictation on this mac needs none — a free account above adds polish and spoken answers.")
-                    .font(Paper.caption).foregroundStyle(Paper.inkSecondary)
+                meterHeader(trailing: "Your keys")
+                Text("No account needed: your keys in shell.json go straight to OpenAI and Anthropic, and nothing is metered.")
+                    .font(SettingsLook.caption).foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
+            } else if authSession.accountEmail == nil && !OpenClickyConfiguration.isConfigured {
+                meterHeader(trailing: "Sign in to see usage")
+                ProgressView(value: 0).progressViewStyle(.linear).tint(SettingsLook.accent)
             } else {
-                Text(billing.errorText ?? "loading…").font(Paper.caption).foregroundStyle(Paper.inkSecondary)
+                meterHeader(trailing: billing.errorText ?? "Loading…")
             }
         }
-        .padding(Paper.Metric.rowHorizontal + 4)
-        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.vertical, 2)
         .onAppear { billing.refresh() }
         .onChange(of: shellSettingsRevision.revision) { _, _ in billing.refresh() }
+    }
+
+    private func meterHeader(trailing: String) -> some View {
+        HStack {
+            Text("Free allowance").font(SettingsLook.rowTitle)
+            Spacer()
+            Text(trailing).font(.system(size: 12)).foregroundStyle(.secondary)
+        }
     }
 }
 
@@ -236,37 +218,42 @@ private struct BackendEngineUsageRow: View {
     var body: some View {
         let _ = shellSettingsRevision.revision
         let detail: String
+        let badge: String
         if OpenClickyConfiguration.usesOwnKeys {
             detail = OpenClickyConfiguration.hasAccountToken
-                ? "openai runs straight on your own key, not metered. assemblyai is on your account."
-                : "openai runs straight on your own key, not metered. assemblyai needs an account."
+                ? "OpenAI runs straight on your own key, not metered. AssemblyAI is on your account."
+                : "OpenAI runs straight on your own key, not metered. AssemblyAI needs an account."
+            badge = "Your key"
         } else if OpenClickyConfiguration.isConfigured {
-            detail = "counted against your free allowance."
+            detail = "Through OpenClicky, counted against your free allowance."
+            badge = "Allowance"
         } else {
-            detail = "need an account or your own openai key."
+            detail = "Through OpenClicky. Needs an account or your own OpenAI key."
+            badge = "Needs account"
         }
-        return SettingsRow(title: "openai and assemblyai, via openclicky", detail: detail) { EmptyView() }
+        return SettingsRow(title: "OpenAI and AssemblyAI", detail: detail) {
+            Text(badge).font(.system(size: 12, design: .monospaced)).foregroundStyle(.secondary)
+        }
     }
 }
+
+// MARK: - your keys
 
 private struct OwnOpenAIKeyEditor: View {
     @State private var openaiKey = OpenClickyConfiguration.settings.openaiApiKey ?? ""
     @State private var status: String?
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            SettingsRow(title: "use my own openai key", detail: "sent to the openclicky backend with each request and used instead of your free allowance; nothing is metered. kept in ~/.openclicky/shell.json.") { EmptyView() }
+        SettingsRow(title: "OpenAI", detail: status ?? "Unlocks fast voice and hands-free.") {
             HStack(spacing: 8) {
-                SecureField("sk-…", text: $openaiKey)
+                SecureField("", text: $openaiKey, prompt: Text("sk-…"))
+                    .labelsHidden()
                     .textFieldStyle(.roundedBorder)
-                    .frame(maxWidth: 320)
+                    .frame(width: 180)
                     .onSubmit(saveKey)
-                    .accessibilityLabel("openai key")
-                Button("save") { saveKey() }.buttonStyle(PaperPillButtonStyle(prominent: true))
-                if let status { Text(status).font(Paper.micro).foregroundStyle(Paper.success) }
+                    .accessibilityLabel("OpenAI key")
+                Button("Save", action: saveKey)
             }
-            .padding(.horizontal, Paper.Metric.rowHorizontal)
-            .padding(.bottom, Paper.Metric.rowVertical)
         }
     }
 
@@ -275,7 +262,70 @@ private struct OwnOpenAIKeyEditor: View {
         OpenClickyConfiguration.update { $0.openaiApiKey = trimmed.isEmpty ? nil : trimmed }
         // A changed key is a changed credential: a live realtime session reconnects with it.
         NotificationCenter.default.post(name: OpenClickyConfiguration.credentialsChangedNotification, object: nil)
-        status = trimmed.isEmpty ? "key removed" : "✓ saved"
+        status = trimmed.isEmpty ? "Key removed." : "✓ Saved."
+    }
+}
+
+/// The Sarvam key: field, test, save, and what happened. Kept in ~/.openclicky/shell.json.
+private struct SarvamKeyEditor: View {
+    @State private var sarvamKey = OpenClickyConfiguration.settings.sarvamKey ?? ""
+    @State private var keyCheck: KeyCheck = .idle
+
+    enum KeyCheck: Equatable {
+        case idle, checking, works, saved, removed
+        case failed(String)
+    }
+
+    var body: some View {
+        SettingsRow(title: "Sarvam", detail: statusText) {
+            HStack(spacing: 8) {
+                SecureField("", text: $sarvamKey, prompt: Text("Sarvam key"))
+                    .labelsHidden()
+                    .textFieldStyle(.roundedBorder)
+                    .frame(width: 180)
+                    .onSubmit(saveKey)
+                    .accessibilityLabel("Sarvam key")
+                Button("Test", action: testKey).disabled(keyCheck == .checking)
+                Button("Save", action: saveKey)
+            }
+        }
+    }
+
+    private var statusText: String {
+        switch keyCheck {
+        case .idle:
+            return (OpenClickyConfiguration.settings.sarvamKey ?? "").isEmpty
+                ? "For the Sarvam engine. Get one at dashboard.sarvam.ai."
+                : "For the Sarvam engine. Key saved."
+        case .checking: return "Checking…"
+        case .works: return "✓ The key works and is saved."
+        case .saved: return "✓ Saved."
+        case .removed: return "Key removed."
+        case .failed(let message): return message
+        }
+    }
+
+    private func saveKey() {
+        let trimmed = sarvamKey.trimmingCharacters(in: .whitespacesAndNewlines)
+        OpenClickyConfiguration.update { $0.sarvamKey = trimmed.isEmpty ? nil : trimmed }
+        ShellSettingsRevision.shared.noteChanged()
+        keyCheck = trimmed.isEmpty ? .removed : .saved
+    }
+
+    private func testKey() {
+        let trimmed = sarvamKey.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { keyCheck = .failed("Paste a key first."); return }
+        keyCheck = .checking
+        Task {
+            do {
+                _ = try await SarvamSpeechClient(key: trimmed).complete(system: "Reply with the single word: ok", user: "ping", maxTokens: 5)
+                // A key that answers is worth keeping.
+                saveKey()
+                keyCheck = .works
+            } catch {
+                keyCheck = .failed(error.localizedDescription)
+            }
+        }
     }
 }
 
@@ -290,24 +340,19 @@ private struct BackendDetailsRow: View {
         let _ = shellSettingsRevision.revision
         switch kind {
         case .host:
-            SettingsRow(title: "backend host", detail: "where openclicky’s model calls go. change it in shell.json.") {
-                HStack(spacing: 8) {
-                    Text(OpenClickyConfiguration.backendHostDescription)
-                        .font(Paper.key).foregroundStyle(Paper.ink)
-                        .textSelection(.enabled)
-                        .help(OpenClickyConfiguration.backendBaseURL)
-                    Button("show shell.json") { OpenClickyConfiguration.revealSettingsFile() }.buttonStyle(PaperPillButtonStyle())
-                }
+            SettingsRow(title: "Host", detail: OpenClickyConfiguration.backendHostDescription) {
+                Button("Show shell.json") { OpenClickyConfiguration.revealSettingsFile() }
+                    .help(OpenClickyConfiguration.backendBaseURL)
             }
         case .token:
-            SettingsRow(title: "token", detail: "the session token every request carries; written by sign-in.") {
-                Text(maskedToken).font(Paper.key).foregroundStyle(OpenClickyConfiguration.token == nil ? Paper.inkTertiary : Paper.ink)
+            SettingsRow(title: "Session token", detail: "Written when you sign in.") {
+                Text(maskedToken).font(SettingsLook.key).foregroundStyle(.secondary)
             }
         }
     }
 
     private var maskedToken: String {
-        guard let token = OpenClickyConfiguration.token else { return "none" }
+        guard let token = OpenClickyConfiguration.token else { return "None" }
         return "••••" + String(token.suffix(4))
     }
 }
