@@ -1,0 +1,452 @@
+//
+//  FirstRunTour.swift
+//  OpenClicky
+//
+//  The first-run tour, told entirely from the island. Once the permission cards are done the
+//  pointer flies out of the notch to the mouse and introduces itself; then one card at a time
+//  shows the keys (animated, pressed and held) for each thing OpenClicky does — dictate, ask, hand
+//  over a task — and moves on only when it has seen that thing work: a take with words, a spoken
+//  answer, an agent task or quick action. A step that needs what the person does not have yet (an
+//  account or key for asking) says so and offers the way there, or a skip. The step is kept in
+//  UserDefaults, so the Screen Recording relaunch picks the tour up where it was.
+//
+
+import AppKit
+import Combine
+import SwiftUI
+
+enum FirstRunTourStep: String {
+    case meet, dictate, talk, act, done
+
+    /// The three practice steps get a progress dash each.
+    var practiceIndex: Int? {
+        switch self {
+        case .dictate: return 0
+        case .talk: return 1
+        case .act: return 2
+        case .meet, .done: return nil
+        }
+    }
+}
+
+/// What the island's tour card shows.
+struct FirstRunTourCard: Equatable {
+    var step: FirstRunTourStep
+    var title: String
+    var detail: String
+    /// Keycaps drawn pressed and held, or an SF Symbol when there are no keys to show.
+    var keys: [String] = []
+    var symbol: String?
+    /// A line under the copy: what was heard, or why it did not work.
+    var status: String?
+    var statusIsGood = false
+    /// Nothing was heard: offer the microphone menu under the status.
+    var offersMicrophoneChange = false
+    var primaryTitle: String?
+    var secondaryTitle: String
+}
+
+@MainActor
+final class FirstRunTourController: ObservableObject {
+    @Published private(set) var card: FirstRunTourCard?
+
+    private static let stepKey = "openclicky.firstRunTour.step"
+    private static let doneKey = "openclicky.firstRunTour.done"
+
+    fileprivate weak var companionManager: CompanionManager?
+    fileprivate var step: FirstRunTourStep?
+    fileprivate var status: String?
+    fileprivate var statusIsGood = false
+    fileprivate var offersMicrophoneChange = false
+    private var permissionTimer: Timer?
+    private var advanceWorkItem: DispatchWorkItem?
+    private var cancellables = Set<AnyCancellable>()
+    private var previousVoiceState: CompanionVoiceState = .idle
+
+    // MARK: Starting
+
+    /// Called once at launch, after the island and the permission cards are up.
+    func start(companionManager: CompanionManager) {
+        self.companionManager = companionManager
+        let defaults = UserDefaults.standard
+        if defaults.bool(forKey: Self.doneKey) { return }
+        let storedStep = defaults.string(forKey: Self.stepKey).flatMap(FirstRunTourStep.init(rawValue:))
+        // Someone who used OpenClicky before the tour existed has been through the old welcome.
+        if storedStep == nil && (companionManager.dictationSettings.hasCompletedDictationOnboarding || companionManager.hasCompletedOnboarding) {
+            defaults.set(true, forKey: Self.doneKey)
+            return
+        }
+        observe(companionManager)
+        waitForPermissions(thenStartAt: storedStep ?? .meet)
+    }
+
+    /// The menu bar's "Replay Welcome…" and Settings → General: the whole tour again.
+    func replay() {
+        guard let companionManager else { return }
+        UserDefaults.standard.set(false, forKey: Self.doneKey)
+        if cancellables.isEmpty { observe(companionManager) }
+        waitForPermissions(thenStartAt: .meet)
+    }
+
+    private func waitForPermissions(thenStartAt firstStep: FirstRunTourStep) {
+        permissionTimer?.invalidate()
+        if companionManager?.allPermissionsGranted == true {
+            go(to: firstStep)
+            return
+        }
+        // The permission cards own the island until every permission is in.
+        permissionTimer = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self] timer in
+            Task { @MainActor in
+                guard let self, self.companionManager?.allPermissionsGranted == true else { return }
+                timer.invalidate()
+                self.go(to: firstStep)
+            }
+        }
+    }
+
+    // MARK: What the tour watches for
+
+    private func observe(_ companionManager: CompanionManager) {
+        cancellables.removeAll()
+        companionManager.dictationTakeController.$lastTake
+            .dropFirst()
+            .compactMap { $0 }
+            .sink { [weak self] take in self?.takeFinished(take) }
+            .store(in: &cancellables)
+        companionManager.$voiceState
+            .removeDuplicates()
+            .sink { [weak self] voiceState in self?.voiceStateChanged(voiceState) }
+            .store(in: &cancellables)
+        companionManager.$agentActivityText
+            .compactMap { $0 }
+            .sink { [weak self] _ in self?.taskStarted() }
+            .store(in: &cancellables)
+        companionManager.$lastSuccessfulQuickActionAt
+            .compactMap { $0 }
+            .sink { [weak self] _ in self?.taskStarted() }
+            .store(in: &cancellables)
+        companionManager.dictationSettings.$dictationKey
+            .dropFirst()
+            .sink { [weak self] _ in DispatchQueue.main.async { self?.publish() } }
+            .store(in: &cancellables)
+    }
+
+    private func takeFinished(_ take: TakeRecord) {
+        guard step == .dictate else { return }
+        let words = take.displayText.trimmingCharacters(in: .whitespacesAndNewlines)
+        if take.status == .complete && !words.isEmpty {
+            succeed(with: "✓ heard you: “\(words.prefix(60))\(words.count > 60 ? "…" : "")”")
+        } else {
+            status = "didn’t catch any words. try again — or pick another microphone."
+            statusIsGood = false
+            offersMicrophoneChange = true
+            publish()
+        }
+    }
+
+    private func voiceStateChanged(_ voiceState: CompanionVoiceState) {
+        defer { previousVoiceState = voiceState }
+        // An answer was spoken and finished: that is asking Clicky, working.
+        if step == .talk && previousVoiceState == .responding && voiceState == .idle {
+            succeed(with: "✓ that’s asking clicky. it can point at things too.")
+        }
+    }
+
+    private func taskStarted() {
+        guard step == .act else { return }
+        succeed(with: "✓ on it — results show up in the island.")
+    }
+
+    // MARK: Moving through the steps
+
+    private func succeed(with message: String) {
+        status = message
+        statusIsGood = true
+        offersMicrophoneChange = false
+        publish()
+        scheduleAdvance(after: 2.6)
+    }
+
+    private func scheduleAdvance(after seconds: TimeInterval) {
+        advanceWorkItem?.cancel()
+        let workItem = DispatchWorkItem { [weak self] in self?.advance() }
+        advanceWorkItem = workItem
+        DispatchQueue.main.asyncAfter(deadline: .now() + seconds, execute: workItem)
+    }
+
+    private func advance() {
+        switch step {
+        case .meet: go(to: .dictate)
+        case .dictate: go(to: .talk)
+        case .talk: go(to: .act)
+        case .act: go(to: .done)
+        case .done, .none: finish()
+        }
+    }
+
+    private func go(to newStep: FirstRunTourStep) {
+        advanceWorkItem?.cancel()
+        step = newStep
+        status = nil
+        statusIsGood = false
+        offersMicrophoneChange = false
+        UserDefaults.standard.set(newStep.rawValue, forKey: Self.stepKey)
+        if newStep == .meet {
+            companionManager?.hasCompletedOnboarding = true
+            companionManager?.introducePointerForTour()
+        }
+        publish()
+    }
+
+    private func finish() {
+        advanceWorkItem?.cancel()
+        step = nil
+        let defaults = UserDefaults.standard
+        defaults.set(true, forKey: Self.doneKey)
+        defaults.removeObject(forKey: Self.stepKey)
+        companionManager?.dictationSettings.hasCompletedDictationOnboarding = true
+        publish()
+    }
+
+    // MARK: The card's buttons
+
+    func primaryAction() {
+        guard let step, let companionManager else { return }
+        switch step {
+        case .meet:
+            go(to: .dictate)
+        case .dictate:
+            if needsFnFreed {
+                FnKeyGuard.freeFn()
+                publish()
+            }
+        case .talk, .act:
+            if !OpenClickyConfiguration.isConfigured { companionManager.showSettings(.account) }
+        case .done:
+            companionManager.showSettings(.general)
+            finish()
+        }
+    }
+
+    func secondaryAction() {
+        guard let step else { return }
+        switch step {
+        case .meet: finish()
+        case .done: finish()
+        case .dictate, .talk, .act: advance()
+        }
+    }
+
+    /// The dictate step's "change microphone" link.
+    func changeMicrophone() {
+        guard let companionManager else { return }
+        MicrophoneMenu.present(settings: companionManager.dictationSettings)
+        status = "now: \(MicrophoneMenu.currentName(settings: companionManager.dictationSettings)). try again."
+        statusIsGood = false
+        offersMicrophoneChange = true
+        publish()
+    }
+
+    /// fn is the dictation key but macOS still opens the emoji picker with it.
+    private var needsFnFreed: Bool {
+        companionManager?.dictationSettings.dictationKey == .fn && !FnKeyGuard.isFnFree
+    }
+
+    // MARK: The card
+
+    fileprivate func publish() {
+        card = step.map(makeCard)
+        companionManager?.notchHUDManager.setTourCard(card)
+    }
+
+    private func makeCard(for step: FirstRunTourStep) -> FirstRunTourCard {
+        let key = companionManager?.dictationSettings.dictationKey.keycapLabel ?? "fn"
+        let canAsk = OpenClickyConfiguration.isConfigured
+        switch step {
+        case .meet:
+            return FirstRunTourCard(
+                step: .meet, title: "hi, i’m clicky",
+                detail: "your pointer’s new sidekick. i’ll show you three things — about a minute.",
+                symbol: "hand.wave.fill",
+                primaryTitle: "let’s go", secondaryTitle: "skip tour")
+        case .dictate:
+            let fnNote = needsFnFreed ? "macOS opens emoji on fn — let me switch that off first." : nil
+            return FirstRunTourCard(
+                step: .dictate, title: "hold \(key) and say something",
+                detail: "try “hello openclicky, this is my first take”, then let go. if macOS asks to allow speech recognition, click allow.",
+                keys: [key], status: status ?? fnNote, statusIsGood: statusIsGood,
+                offersMicrophoneChange: offersMicrophoneChange,
+                primaryTitle: needsFnFreed ? "free fn" : nil, secondaryTitle: "skip")
+        case .talk:
+            return FirstRunTourCard(
+                step: .talk, title: canAsk ? "now ask me something" : "asking me needs a key or an account",
+                detail: canAsk
+                    ? "hold control + option and ask “what’s on my screen?” i answer out loud and point."
+                    : "dictation works on its own. for questions, add your own key or a free account.",
+                keys: ["⌃", "⌥"], status: status, statusIsGood: statusIsGood,
+                primaryTitle: canAsk ? nil : "set up", secondaryTitle: "skip")
+        case .act:
+            return FirstRunTourCard(
+                step: .act, title: canAsk ? "hand me a task" : "tasks need a key or an account too",
+                detail: canAsk
+                    ? "hold control + option and say “make a folder on my desktop called hello clicky”."
+                    : "with a key or a free account i can open apps, make folders and run agents for you.",
+                keys: ["⌃", "⌥"], status: status, statusIsGood: statusIsGood,
+                primaryTitle: canAsk ? nil : "set up", secondaryTitle: "skip")
+        case .done:
+            return FirstRunTourCard(
+                step: .done, title: "you’re all set",
+                detail: "hover the notch any time. keys, microphone and the rest live in settings.",
+                symbol: "checkmark.circle.fill",
+                primaryTitle: "open settings", secondaryTitle: "done")
+        }
+    }
+}
+
+#if DEBUG
+extension FirstRunTourController {
+    /// The UI tour shows each card without walking the steps (nothing is saved).
+    func debugShow(_ shownStep: FirstRunTourStep?, status shownStatus: String? = nil, isGood: Bool = false, companionManager: CompanionManager) {
+        self.companionManager = companionManager
+        step = shownStep
+        status = shownStatus
+        statusIsGood = isGood
+        offersMicrophoneChange = shownStep == .dictate && shownStatus != nil && !isGood
+        publish()
+    }
+}
+#endif
+
+// MARK: - The island card
+
+struct FirstRunTourCardView: View {
+    let card: FirstRunTourCard
+    @ObservedObject var controller: FirstRunTourController
+    var topInset: CGFloat = 0
+
+    var body: some View {
+        HStack(alignment: .center, spacing: 14) {
+            illustration
+                .frame(width: 84, height: 56)
+                .accessibilityHidden(true)
+
+            VStack(alignment: .leading, spacing: 3) {
+                Text(card.title)
+                    .font(.system(size: 15, weight: .semibold))
+                    .foregroundColor(DS.HUD.text)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.85)
+                Text(card.detail)
+                    .font(.system(size: 12))
+                    .foregroundColor(DS.HUD.text2)
+                    .lineSpacing(1)
+                    .lineLimit(3)
+                    .fixedSize(horizontal: false, vertical: true)
+                if let status = card.status {
+                    Text(status)
+                        .font(.system(size: 12, weight: .medium))
+                        .foregroundColor(card.statusIsGood ? Color(red: 0.4, green: 0.85, blue: 0.5) : DS.HUD.pointer)
+                        .lineLimit(2)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .padding(.top, 2)
+                    if card.offersMicrophoneChange {
+                        Button("change microphone") { controller.changeMicrophone() }
+                            .buttonStyle(.plain)
+                            .font(.system(size: 12))
+                            .foregroundColor(DS.HUD.text)
+                            .underline()
+                            .pointerCursor()
+                    }
+                }
+                if let practiceIndex = card.step.practiceIndex {
+                    progressDashes(current: practiceIndex).padding(.top, 5)
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+
+            VStack(spacing: 6) {
+                if let primaryTitle = card.primaryTitle {
+                    Button(action: { controller.primaryAction() }) {
+                        Text(primaryTitle)
+                            .font(.system(size: 13, weight: .semibold))
+                            .foregroundColor(.black)
+                            .padding(.horizontal, 14)
+                            .frame(minWidth: 72)
+                            .frame(height: 30)
+                            .background(RoundedRectangle(cornerRadius: 9, style: .continuous).fill(DS.HUD.pointer))
+                    }
+                    .buttonStyle(.plain)
+                    .pointerCursor()
+                }
+                Button(action: { controller.secondaryAction() }) {
+                    Text(card.secondaryTitle)
+                        .font(.system(size: 12))
+                        .foregroundColor(DS.HUD.text2)
+                        .frame(minWidth: 72)
+                        .frame(height: 24)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .pointerCursor()
+            }
+            .fixedSize()
+        }
+        .padding(.top, topInset + 12)
+        .padding(.horizontal, DS.HUD.bodySidePadding)
+        .padding(.bottom, 14)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+    }
+
+    @ViewBuilder
+    private var illustration: some View {
+        if !card.keys.isEmpty {
+            TourKeycaps(keys: card.keys)
+        } else if let symbol = card.symbol {
+            Image(systemName: symbol)
+                .font(.system(size: 26, weight: .semibold))
+                .foregroundColor(DS.HUD.pointer)
+                .frame(width: 56, height: 56)
+                .background(Circle().fill(DS.HUD.pointerTint))
+        }
+    }
+
+    private func progressDashes(current: Int) -> some View {
+        HStack(spacing: 5) {
+            ForEach(0..<3, id: \.self) { index in
+                Capsule()
+                    .fill(index <= current ? DS.HUD.pointer : DS.HUD.surfaceRaised)
+                    .frame(width: 18, height: 3)
+            }
+        }
+    }
+}
+
+/// The step's keys as keycaps, pressed down together and held, then let go, over and over —
+/// the gesture the card asks for.
+struct TourKeycaps: View {
+    let keys: [String]
+
+    var body: some View {
+        TimelineView(.animation) { timeline in
+            let press = KeyboardSketch.pressAmount(at: timeline.date.timeIntervalSinceReferenceDate)
+            HStack(spacing: 5) {
+                ForEach(Array(keys.enumerated()), id: \.offset) { _, key in
+                    Text(key)
+                        .font(.system(size: 15, weight: .semibold))
+                        .foregroundColor(press > 0.5 ? .black : DS.HUD.text)
+                        .frame(width: keys.count > 1 ? 36 : 48, height: 36)
+                        .background(
+                            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                                .fill(press > 0.5 ? DS.HUD.pointer : DS.HUD.surfaceRaised)
+                        )
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                                .strokeBorder(Color.white.opacity(0.18), lineWidth: 1)
+                        )
+                        .shadow(color: .black.opacity(0.5), radius: 0, x: 0, y: (1 - press) * 3)
+                        .offset(y: press * 3)
+                }
+            }
+        }
+    }
+}

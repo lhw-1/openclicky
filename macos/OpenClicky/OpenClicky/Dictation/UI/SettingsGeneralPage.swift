@@ -37,10 +37,10 @@ extension SettingsCatalog {
                 view: AnyView(SettingsRow(title: "Open at login", detail: "So \(dictationKeyName) always works.") { LoginItemToggle() })),
             SettingsItem(
                 id: "general.walkthrough", page: .general, section: "Startup",
-                title: "Welcome walkthrough", detail: "Permissions, engine and a first take. About two minutes.",
+                title: "Welcome tour", detail: "Clicky shows you dictating, asking and handing over a task, from the island.",
                 keywords: ["onboarding", "setup", "replay", "tour", "first run"],
-                view: AnyView(SettingsRow(title: "Welcome walkthrough", detail: "Permissions, engine and a first take. About two minutes.") {
-                    Button("Replay…") { companionManager.showDictationOnboarding(replay: true) }
+                view: AnyView(SettingsRow(title: "Welcome tour", detail: "Clicky shows you dictating, asking and handing over a task, from the island.") {
+                    Button("Replay…") { companionManager.firstRunTour.replay() }
                 })),
             SettingsItem(
                 id: "general.reduceMotion", page: .general, section: "Motion",

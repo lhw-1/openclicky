@@ -161,9 +161,9 @@ final class CompanionManager: ObservableObject {
 
     private var isQuitting = false
 
-    /// Quits with a goodbye: a line typed into the island (and said by the system voice) that
-    /// tells how to bring OpenClicky back, then the app terminates. A second quit while the
-    /// goodbye plays quits at once.
+    /// Quits with a goodbye: a short chime and a line typed into the island that tells how to
+    /// bring OpenClicky back (no voice), then the app terminates. A second quit while the goodbye
+    /// shows quits at once.
     func quitWithFarewell() {
         guard !isQuitting else {
             NSApp.terminate(nil)
@@ -173,10 +173,8 @@ final class CompanionManager: ObservableObject {
         let farewell = Farewell.random()
         notchHUDManager.closeTextComposer()
         notchHUDManager.showGoodbye(farewell.text)
-        let utterance = AVSpeechUtterance(string: farewell.spoken)
-        utterance.rate = AVSpeechUtteranceDefaultSpeechRate
         systemSpeechSynthesizer.stopSpeaking(at: .immediate)
-        systemSpeechSynthesizer.speak(utterance)
+        dictationTakeController.earcons.play(.goodbye)
         // Long enough to type the line (30 ms a character) and read it, never long enough to feel stuck.
         let typingSeconds = Double(farewell.text.count) * 0.03
         let lingerSeconds = min(max(typingSeconds + 1.6, 2.6), 4.5)
@@ -294,7 +292,9 @@ final class CompanionManager: ObservableObject {
         }
         realtimeVoiceClient.onMacAction = { [weak self] action in
             guard let self else { return .failed("OpenClicky is not available") }
-            return await self.macActionRunner.perform(action)
+            let outcome = await self.macActionRunner.perform(action)
+            if outcome.didSomething { self.lastSuccessfulQuickActionAt = Date() }
+            return outcome
         }
         realtimeLevelCancellable = realtimeVoiceClient.$inputLevel.sink { [weak self] level in
             guard let self, self.usesRealtimeVoice, self.voiceState == .listening else { return }
@@ -844,38 +844,6 @@ final class CompanionManager: ObservableObject {
         }
     }
 
-    /// Called by BlueCursorView after the buddy finishes its pointing
-    /// animation and returns to cursor-following mode.
-    /// Triggers the onboarding sequence — dismisses the panel and restarts
-    /// the overlay so the welcome animation and intro video play.
-    func triggerOnboarding() {
-        // Post notification so the panel manager can dismiss the panel
-        NotificationCenter.default.post(name: .clickyDismissPanel, object: nil)
-
-        // Mark onboarding as completed so the Start button won't appear
-        // again on future launches — the cursor will auto-show instead
-        hasCompletedOnboarding = true
-
-        ClickyAnalytics.trackOnboardingStarted()
-
-        // Show the overlay for the first time — isFirstAppearance triggers
-        // the welcome animation and onboarding video
-        overlayWindowManager.showOverlay(onScreens: NSScreen.screens, companionManager: self)
-        isOverlayVisible = true
-    }
-
-    /// Replays the onboarding experience from the "Watch Onboarding Again"
-    /// footer link. Same flow as triggerOnboarding but the cursor overlay
-    /// is already visible so we just restart the welcome animation and video.
-    func replayOnboarding() {
-        NotificationCenter.default.post(name: .clickyDismissPanel, object: nil)
-        ClickyAnalytics.trackOnboardingReplayed()
-        // Tear down any existing overlays and recreate with isFirstAppearance = true
-        overlayWindowManager.hasShownOverlayBefore = false
-        overlayWindowManager.showOverlay(onScreens: NSScreen.screens, companionManager: self)
-        isOverlayVisible = true
-    }
-
     func clearDetectedElementLocation() {
         detectedElementScreenLocation = nil
         detectedElementDisplayFrame = nil
@@ -968,8 +936,11 @@ final class CompanionManager: ObservableObject {
                 PermissionPromptController.requestFromSystem(step)
             }
         }
+        permissionPromptController.openSettings = { [weak self] in self?.showSettings() }
         permissionPromptController.start(notchHUDManager: notchHUDManager)
         permissionPromptController.update(with: permissionStatus)
+        // The welcome tour waits for the last permission, then takes the island.
+        firstRunTour.start(companionManager: self)
     }
 
     /// Triggers the macOS screen content picker by performing a dummy
@@ -1142,7 +1113,6 @@ final class CompanionManager: ObservableObject {
         self?.dictationTakeController.historyDidChange()
     }
     private var dictationWindowController: DictationWindowController?
-    private var onboardingWindowController: OnboardingWindowController?
 
     /// OpenClicky's one window: your words (record, history, dictionary, snippets, styles) and
     /// the settings pages. A settings page wins over a section.
@@ -1158,13 +1128,26 @@ final class CompanionManager: ObservableObject {
         showDictationWindow(settingsPage: page)
     }
 
-    /// The first-run chapters; `replay` shows them again after they were completed.
-    func showDictationOnboarding(replay: Bool = false) {
-        guard replay || !dictationSettings.hasCompletedDictationOnboarding else { return }
-        if onboardingWindowController == nil { onboardingWindowController = OnboardingWindowController(companionManager: self) }
-        onboardingWindowController?.model.chapter = .welcome
-        onboardingWindowController?.model.firstTakeText = ""
-        onboardingWindowController?.show()
+    // MARK: - First-run tour
+
+    /// The island's welcome: meet the pointer, then dictate, ask, hand over a task.
+    let firstRunTour = FirstRunTourController()
+
+    /// When a quick action (open an app, make a folder…) last did what was asked; the tour's
+    /// "hand me a task" step watches it.
+    @Published private(set) var lastSuccessfulQuickActionAt: Date?
+
+    /// The tour's first moment: the pointer flies out of the notch to the mouse and says hello.
+    func introducePointerForTour() {
+        if !isCursorDocked {
+            cursorLaunchOriginScreenLocation = notchHUDManager.dockPoint
+            overlayWindowManager.hasShownOverlayBefore = true
+            overlayWindowManager.showOverlay(onScreens: NSScreen.screens, companionManager: self)
+            isOverlayVisible = true
+        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.6) { [weak self] in
+            self?.streamCursorCaption("hi! i’m clicky. i follow your pointer, and point at things when you ask.", holdSeconds: 6)
+        }
     }
 
     /// Starts the orb and keeps the event tap's dictation key in step with Settings.
@@ -1189,9 +1172,6 @@ final class CompanionManager: ObservableObject {
         realtimeVoiceClient.preferredMicrophoneUID = dictationSettings.preferredMicrophoneUID
         AppUpdater.shared.start()
         clipboardHistoryMonitor.start()
-        if !dictationSettings.hasCompletedDictationOnboarding {
-            showDictationOnboarding()
-        }
     }
 
     private func handleCompanionShortcut(_ shortcutEvent: CompanionShortcutEvent) {
@@ -1310,9 +1290,6 @@ final class CompanionManager: ObservableObject {
                 overlayWindowManager.showOverlay(onScreens: NSScreen.screens, companionManager: self)
                 isOverlayVisible = true
             }
-
-            // Dismiss the menu bar panel so it doesn't cover the screen
-            NotificationCenter.default.post(name: .clickyDismissPanel, object: nil)
 
             // Cancel any in-progress response, agent run, and TTS from a previous utterance
             stopActiveAnswer()
@@ -1696,7 +1673,6 @@ final class CompanionManager: ObservableObject {
                 overlayWindowManager.showOverlay(onScreens: NSScreen.screens, companionManager: self)
                 isOverlayVisible = true
             }
-            NotificationCenter.default.post(name: .clickyDismissPanel, object: nil)
             stopActiveAnswer()
             currentResponseTask?.cancel()
             openClickyAgentClient.cancel()

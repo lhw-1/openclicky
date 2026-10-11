@@ -1061,6 +1061,8 @@ struct NotchSettingsView: View {
                 ))
             }
 
+            NotchMicrophoneRow(settings: settings)
+
             VStack(alignment: .leading, spacing: 10) {
                 Text("where openclicky lives").font(.system(size: 13, weight: .semibold)).foregroundColor(DS.HUD.text)
                 HStack(spacing: 6) {
@@ -1136,6 +1138,80 @@ struct NotchSettingsView: View {
         .frame(maxWidth: .infinity)
         .frame(height: 48)
         .background(RoundedRectangle(cornerRadius: 12, style: .continuous).fill(DS.HUD.surface))
+    }
+}
+
+/// Which microphone hears you, on the island: the wrong one picked by default is the first thing
+/// a new user hits, and it should not take a trip through Settings. A tap opens a real menu at the
+/// pointer (system pop-ups grey out in the island, which never becomes key).
+struct NotchMicrophoneRow: View {
+    @ObservedObject var settings: DictationSettings
+
+    var body: some View {
+        Button(action: { MicrophoneMenu.present(settings: settings) }) {
+            HStack(spacing: 10) {
+                Image(systemName: "mic.fill").font(.system(size: 12, weight: .semibold)).foregroundColor(DS.HUD.text2)
+                VStack(alignment: .leading, spacing: 1) {
+                    Text("microphone").font(.system(size: 13, weight: .semibold)).foregroundColor(DS.HUD.text)
+                    Text(MicrophoneMenu.currentName(settings: settings)).font(.system(size: 11)).foregroundColor(DS.HUD.text3).lineLimit(1)
+                }
+                Spacer(minLength: 8)
+                Text("change").font(.system(size: 12)).foregroundColor(DS.HUD.text2)
+                Image(systemName: "chevron.up.chevron.down").font(.system(size: 10, weight: .semibold)).foregroundColor(DS.HUD.text3)
+            }
+            .padding(.horizontal, 12)
+            .frame(height: 48)
+            .background(RoundedRectangle(cornerRadius: 12, style: .continuous).fill(DS.HUD.surface))
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .pointerCursor()
+        .accessibilityLabel("microphone: \(MicrophoneMenu.currentName(settings: settings)). change")
+    }
+}
+
+/// The microphone menu the island and the first-run tour open: the Mac's default, then every
+/// input, the chosen one ticked.
+@MainActor
+enum MicrophoneMenu {
+    static func currentName(settings: DictationSettings) -> String {
+        if let uid = settings.preferredMicrophoneUID,
+           let device = MicrophoneDevices.available().first(where: { $0.uid == uid }) {
+            return device.name
+        }
+        return "mac default · \(MicrophoneDevices.defaultInputName() ?? "none found")"
+    }
+
+    static func present(settings: DictationSettings) {
+        let target = MicrophoneMenuTarget(settings: settings)
+        let menu = NSMenu()
+        let defaultItem = NSMenuItem(title: "Mac Default (\(MicrophoneDevices.defaultInputName() ?? "none"))", action: #selector(MicrophoneMenuTarget.choose(_:)), keyEquivalent: "")
+        defaultItem.target = target
+        defaultItem.representedObject = ""
+        defaultItem.state = settings.preferredMicrophoneUID == nil ? .on : .off
+        menu.addItem(defaultItem)
+        menu.addItem(.separator())
+        for device in MicrophoneDevices.available() {
+            let item = NSMenuItem(title: device.name, action: #selector(MicrophoneMenuTarget.choose(_:)), keyEquivalent: "")
+            item.target = target
+            item.representedObject = device.uid
+            item.state = settings.preferredMicrophoneUID == device.uid ? .on : .off
+            menu.addItem(item)
+        }
+        // popUp runs the menu to completion, so the target lives long enough.
+        menu.popUp(positioning: nil, at: NSEvent.mouseLocation, in: nil)
+        withExtendedLifetime(target) {}
+    }
+}
+
+private final class MicrophoneMenuTarget: NSObject {
+    let settings: DictationSettings
+
+    init(settings: DictationSettings) { self.settings = settings }
+
+    @MainActor @objc func choose(_ item: NSMenuItem) {
+        let uid = item.representedObject as? String ?? ""
+        settings.preferredMicrophoneUID = uid.isEmpty ? nil : uid
     }
 }
 
