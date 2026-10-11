@@ -6,7 +6,8 @@ export class AuthError extends Error {
   status = 401;
 }
 
-export type Principal = { sub: string; email?: string; via: "supabase" | "session" };
+/** `byok`: no account, the request brought its own OpenAI key (ownKey.ts); only the model routes accept it. */
+export type Principal = { sub: string; email?: string; via: "supabase" | "session" | "byok" };
 
 /** `typ` header that marks tokens minted by this backend (vs. Supabase user JWTs). */
 const SESSION_TYP = "openclicky-session";

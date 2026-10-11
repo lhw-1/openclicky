@@ -349,9 +349,9 @@ struct CompanionPanelView: View {
 
                     Spacer()
 
-                    Text(OpenClickyConfiguration.isConfigured
+                    Text(OpenClickyConfiguration.hasAccountToken
                          ? OpenClickyConfiguration.backendHostDescription
-                         : "no token — click to set up")
+                         : OpenClickyConfiguration.isConfigured ? "your own key · no account needed" : "no key or token — click to set up")
                         .font(.system(size: 11, weight: .medium))
                         .foregroundColor(OpenClickyConfiguration.isConfigured ? DS.Colors.textTertiary : DS.Colors.accent)
                         .lineLimit(1)

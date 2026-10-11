@@ -834,7 +834,7 @@ struct NotchAgentsView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             if !OpenClickyConfiguration.isConfigured {
-                emptyState("connect a backend to see your agents.", detail: "sign in from settings, or add a token to ~/.openclicky/shell.json.")
+                emptyState("add a key to see your agents.", detail: "put your own openai key in ~/.openclicky/shell.json (no account needed), or sign in from settings.")
                 Spacer(minLength: 0)
             } else if threadStore.threads.isEmpty && threadStore.isLoading {
                 emptyState("loading agents…", detail: nil)
@@ -1051,7 +1051,7 @@ struct NotchSettingsView: View {
                     ]) { companionManager.showDictationWindow(settingsPage: .voice) }
                     summaryCard(title: "BACKEND & ACCOUNT", rows: [
                         ("host", OpenClickyConfiguration.backendHostDescription),
-                        ("token", OpenClickyConfiguration.isConfigured ? "configured" : "missing"),
+                        ("token", OpenClickyConfiguration.hasAccountToken ? "configured" : OpenClickyConfiguration.isConfigured ? "not needed · your own key" : "missing"),
                         ("plan", Self.planDescription(kind: AccountCapabilities.current().kind, summary: billing.summary)),
                     ]) { companionManager.showDictationWindow(settingsPage: .account) }
                     summaryCard(title: "AGENT", rows: [
@@ -1096,6 +1096,9 @@ struct NotchSettingsView: View {
         guard DictationEngineResolver.wantsModelPolish(settings: settings) else { return "off" }
         let sarvamKey = OpenClickyConfiguration.settings.sarvamKey?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         if !sarvamKey.isEmpty { return "on · sarvam" }
+        let credentials = ProviderRouter.currentCredentials()
+        if credentials.openAIKey != nil { return "on · your openai key" }
+        if credentials.anthropicKey != nil { return "on · your anthropic key" }
         if OpenClickyConfiguration.isConfigured { return "on · openclicky" }
         return "none yet"
     }

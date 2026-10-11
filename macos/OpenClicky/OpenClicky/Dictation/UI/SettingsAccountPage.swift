@@ -213,7 +213,7 @@ private struct PlanSummary: View {
                 }
             } else if OpenClickyConfiguration.usesOwnKeys {
                 Text("your own keys").font(Paper.cardTitle).foregroundStyle(Paper.ink)
-                Text("openclicky meters nothing: every request runs on the keys in shell.json.").font(Paper.caption).foregroundStyle(Paper.inkSecondary)
+                Text("no account needed: your keys in shell.json go straight to openai and anthropic, and nothing is metered.").font(Paper.caption).foregroundStyle(Paper.inkSecondary)
             } else if authSession.accountEmail == nil && !OpenClickyConfiguration.isConfigured {
                 Text("no account needed on this mac.").font(Paper.cardTitle).foregroundStyle(Paper.ink)
                 Text("dictation on this mac needs none — a free account above adds polish and spoken answers.")
@@ -237,7 +237,9 @@ private struct BackendEngineUsageRow: View {
         let _ = shellSettingsRevision.revision
         let detail: String
         if OpenClickyConfiguration.usesOwnKeys {
-            detail = "your own openai key pays for these; not metered."
+            detail = OpenClickyConfiguration.hasAccountToken
+                ? "openai runs straight on your own key, not metered. assemblyai is on your account."
+                : "openai runs straight on your own key, not metered. assemblyai needs an account."
         } else if OpenClickyConfiguration.isConfigured {
             detail = "counted against your free allowance."
         } else {

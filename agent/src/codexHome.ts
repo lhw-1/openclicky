@@ -2,6 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import type { AgentConfig } from "./config.js";
 import { activeDir, syncActiveDir } from "./skillsLibrary.js";
+import { OPENAI_DIRECT_BASE } from "./providerRoute.js";
 
 export interface RenderVars {
   root: string;
@@ -15,6 +16,11 @@ export interface RenderVars {
   userSkillsActive: string;
   /** Directories outside the workspace Codex's sandbox may write to; empty renders no section. */
   writableRoots?: string[];
+  /**
+   * The person's own OpenAI key is set (OPENCLICKY_OPENAI_KEY): Codex calls OpenAI directly with it
+   * instead of the OpenClicky backend. The key itself is never written into config.toml.
+   */
+  ownOpenAIKey?: boolean;
 }
 
 const tomlString = (s: string) => JSON.stringify(s);
@@ -79,11 +85,18 @@ export function renderSandboxWritableRoots(roots: string[] | undefined): string 
   return ["[sandbox_workspace_write]", `writable_roots = [${roots.map(tomlString).join(", ")}]`].join("\n");
 }
 
+/** Own OpenAI key: straight to OpenAI on it. Otherwise the backend on the account's session token. */
+export function renderProviderRoute(v: Pick<RenderVars, "backendUrl" | "ownOpenAIKey">): string {
+  if (v.ownOpenAIKey) return [`base_url = ${tomlString(OPENAI_DIRECT_BASE)}`, 'env_key = "OPENCLICKY_OPENAI_KEY"'].join("\n");
+  return [`base_url = ${tomlString(v.backendUrl.replace(/\/+$/, "") + "/v1")}`, 'env_key = "OPENCLICKY_SESSION_TOKEN"'].join("\n");
+}
+
 /** Fill the placeholders in config/codex-config.toml. */
 export function renderCodexConfig(template: string, v: RenderVars): string {
   const modelLine = v.model ? `model = ${tomlString(v.model)}` : "";
   return template
     .replaceAll("{{MODEL_LINE}}", modelLine)
+    .replaceAll("{{PROVIDER_ROUTE}}", renderProviderRoute(v))
     .replaceAll("{{OPENCLICKY_ROOT}}", tomlStringInner(v.root))
     .replaceAll("{{BACKEND_URL}}", v.backendUrl.replace(/\/+$/, ""))
     .replaceAll("{{WORKSPACE}}", tomlStringInner(v.workspace))
@@ -120,6 +133,7 @@ export function ensureCodexHome(cfg: AgentConfig): { configPath: string } {
       cuaDriverBin: cfg.cuaDriverBin,
       userSkillsActive: activeDir(cfg.userSkillsDir),
       writableRoots: cfg.writableRoots,
+      ownOpenAIKey: Boolean(cfg.openaiApiKey),
     }),
   );
   return { configPath };

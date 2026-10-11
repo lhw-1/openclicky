@@ -37,7 +37,13 @@ nonisolated enum BackendSignIn {
                      signIn: SignInRejectionHandling = .live) async throws -> (Data, URLResponse) {
         let firstAnswer = try await transport(request)
         guard isSignInRejection(status: statusCode(of: firstAnswer.1), body: firstAnswer.0) else { return firstAnswer }
-        switch await signIn.handleRejection(bearerToken(in: request)) {
+        // Sent with no token (a Mac on its own keys, no account): there is no sign-in to renew or
+        // end, so nobody is signed out or told to sign in again; the caller reads the answer.
+        guard let sentToken = bearerToken(in: request), !sentToken.isEmpty else {
+            AppLog.append("sign-in: 401 for a request sent with no token; no sign-in to renew, nothing signed out")
+            return firstAnswer
+        }
+        switch await signIn.handleRejection(sentToken) {
         case .signedOut: throw BackendSignInError.expired
         case .couldNotCheck: throw BackendSignInError.couldNotRenew
         case .tryAgain: break

@@ -1607,6 +1607,8 @@ final class CompanionManager: ObservableObject {
     /// (sign-in and limits have their own sentences). The token sentence is kept for the backend
     /// refusing the token; a capture failure or a dropped connection says what actually happened.
     static func askFailureSentence(for error: Error, screenRecordingAllowed: Bool) -> String {
+        // No key for Claude and no account: say which key would do.
+        if let unavailable = error as? ProviderRouteUnavailable { return unavailable.sentence }
         if error is AskScreenCaptureError {
             return screenRecordingAllowed
                 ? "i couldn't see your screen just now — please ask again."

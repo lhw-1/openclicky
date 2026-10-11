@@ -90,15 +90,17 @@ Modeled on the HeyClicky idea, built as a **headless agent core plus a native sh
 - **Pointing from Realtime voice** — the voice model gets a `point_at` tool, so "where is the export
   button?" flies the buddy to it while the answer is spoken, one call per step for walkthroughs.
 
-Keys never leave the backend: the agent strips `OPENAI_API_KEY` / `ANTHROPIC_API_KEY` from Codex's
-environment and only ever presents the user's token, and the app does the same for the CLI. Pay for
-model calls with [your own key or a free account](docs/setup.md#paying-for-model-calls-your-own-keys-or-a-free-account).
+**Your own keys need no account.** Put `openaiApiKey` (and `anthropicApiKey` for the Claude lanes —
+an OpenAI key alone does not cover those) in `~/.openclicky/shell.json` and leave `token` empty: the
+app and the CLI then call OpenAI and Anthropic directly, and OpenClicky's servers are not involved.
+The hosted backend is only for people without keys, and the backend's own keys never leave it. See
+[own keys or a free account](docs/setup.md#paying-for-model-calls-your-own-keys-or-a-free-account).
 
 **Free accounts.** OpenClicky's hosted backend runs on a research grant, so anyone can use it for
 free while the grant lasts: type your email during setup and it works at once, with a $1 starter
 allowance per Mac; click the link in the email and it becomes $10 of use a month ($2 a day). There are
 no passwords: on another Mac you sign in with your email and a 6-digit code. Places are limited (100
-confirmed accounts); when they are full, bring your own key instead.
+confirmed accounts); when they are full, use your own key instead — that never needs an account.
 
 Not there yet: active-document reading, connectors (Composio app connections are switched off in
 0.8.0 and return in a later release), cua-driver itself (only the wiring), HeyClicky's

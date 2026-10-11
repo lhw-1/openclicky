@@ -1,7 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import type { AgentConfig } from "./config.js";
-import { backendHeaders } from "./backendHeaders.js";
+import { openaiRoute, needsOpenAI, DIRECT_DEFAULTS } from "./providerRoute.js";
 
 export interface AskOptions {
   imagePath?: string;
@@ -57,11 +57,13 @@ export function parseSseStream(text: string): string {
 }
 
 /**
- * The lightweight "ask" lane: one chat completion through the backend, no agent spawn.
- * Keys never touch this process; the backend picks the model (OPENAI_MODEL) when we send "default".
+ * The lightweight "ask" lane: one chat completion, no agent spawn. With the person's own OpenAI key
+ * it goes straight to OpenAI; otherwise through the backend on their token, which picks the model
+ * (OPENAI_MODEL) for "default".
  */
 export async function ask(cfg: AgentConfig, question: string, opts: AskOptions = {}): Promise<string> {
-  if (!cfg.token) throw new Error("missing token: set OPENCLICKY_TOKEN or pass --token (Supabase JWT or session token)");
+  const route = openaiRoute(cfg, "/v1/chat/completions", "/chat/completions", { "content-type": "application/json", accept: "text/event-stream" });
+  if (!route) throw new Error(`ask ${needsOpenAI}`);
   const f = opts.fetchImpl ?? fetch;
 
   const userContent: unknown = opts.imagePath
@@ -71,11 +73,11 @@ export async function ask(cfg: AgentConfig, question: string, opts: AskOptions =
       ]
     : question;
 
-  const res = await f(`${cfg.backendUrl}/v1/chat/completions`, {
+  const res = await f(route.url, {
     method: "POST",
-    headers: backendHeaders(cfg, { "content-type": "application/json", accept: "text/event-stream" }),
+    headers: route.headers,
     body: JSON.stringify({
-      model: "default",
+      model: route.direct ? DIRECT_DEFAULTS.openaiModel : "default",
       stream: true,
       messages: [
         { role: "system", content: opts.system ?? ASK_SYSTEM_PROMPT },
@@ -83,7 +85,7 @@ export async function ask(cfg: AgentConfig, question: string, opts: AskOptions =
       ],
     }),
   });
-  if (!res.ok) throw new Error(`backend ${res.status}: ${(await res.text()).slice(0, 500)}`);
+  if (!res.ok) throw new Error(`${route.direct ? "openai" : "backend"} ${res.status}: ${(await res.text()).slice(0, 500)}`);
 
   const contentType = res.headers.get("content-type") ?? "";
   if (!contentType.includes("text/event-stream")) {

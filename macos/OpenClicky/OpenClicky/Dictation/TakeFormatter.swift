@@ -277,23 +277,36 @@ enum BackendPolishError: LocalizedError, Equatable {
 struct BackendTakePolisher: TakePolisher {
     var displayName: String { "OpenClicky" }
     func polish(system: String, user: String) async throws -> String {
-        guard let url = URL(string: "\(OpenClickyConfiguration.backendBaseURL)/v1/chat/completions") else {
-            throw BackendPolishError.invalidBackendURL
-        }
-        var request = URLRequest(url: url)
-        request.httpMethod = "POST"
-        request.timeoutInterval = 20
-        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        OpenClickyConfiguration.authorize(&request)
         let body: [String: Any] = [
             "model": "gpt-4o-mini",
             "messages": [["role": "system", "content": system], ["role": "user", "content": user]],
             "temperature": 0.2,
         ]
-        request.httpBody = try JSONSerialization.data(withJSONObject: body)
-        // A refused sign-in is refreshed once and sent again (BackendSignIn); what is left here is
-        // the backend's answer, or the person's own provider key's.
-        let (data, response) = try await BackendSignIn.send(request) { try await URLSession.shared.data(for: $0) }
+        let data: Data
+        let response: URLResponse
+        switch ProviderRouter.current(for: .openAIChat) {
+        case .openAIDirect:
+            // The person's own OpenAI key: the same chat completion, sent to OpenAI itself.
+            guard let openAIKey = ProviderRouter.currentCredentials().openAIKey else { throw BackendPolishError.refused(status: 0, message: ProviderRouter.needsOpenAIKeySentence) }
+            var request = DirectProviderRequests.openAIChatCompletions(key: openAIKey)
+            request.timeoutInterval = 20
+            request.httpBody = try JSONSerialization.data(withJSONObject: body)
+            (data, response) = try await URLSession.shared.data(for: request)
+        case .unavailable(let sentence):
+            throw BackendPolishError.refused(status: 0, message: sentence)
+        case .backend, .anthropicDirect:
+            guard let url = URL(string: "\(OpenClickyConfiguration.backendBaseURL)/v1/chat/completions") else {
+                throw BackendPolishError.invalidBackendURL
+            }
+            var request = URLRequest(url: url)
+            request.httpMethod = "POST"
+            request.timeoutInterval = 20
+            request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+            OpenClickyConfiguration.authorize(&request)
+            request.httpBody = try JSONSerialization.data(withJSONObject: body)
+            // A refused sign-in is refreshed once and sent again (BackendSignIn); what is left here is the backend's answer.
+            (data, response) = try await BackendSignIn.send(request) { try await URLSession.shared.data(for: $0) }
+        }
         guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode) else {
             throw BackendPolishError.refused(status: (response as? HTTPURLResponse)?.statusCode ?? 0, message: String(decoding: data.prefix(200), as: UTF8.self))
         }

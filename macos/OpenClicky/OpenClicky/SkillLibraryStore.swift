@@ -180,17 +180,22 @@ final class SkillLibraryStore: ObservableObject {
         let trimmed = request.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { throw fail(.emptyRequest) }
         if let hint = AccountCapabilities.current().skillTeachingUnavailableHint { throw fail(.needsOwnKey(hint)) }
-        guard OpenClickyConfiguration.isConfigured,
-              let endpoint = URL(string: "\(OpenClickyConfiguration.backendBaseURL)/skills/create") else {
+        let route = ProviderRouter.current(for: .skillDrafting)
+        if let sentence = route.unavailableSentence { throw fail(.needsOwnKey(sentence)) }
+
+        var capabilities: [String] = []
+        if OpenClickyConfiguration.activeComposioMcpUrl != nil { capabilities.append("composio") }
+        if OpenClickyConfiguration.resolvedCuaDriverBin != nil { capabilities.append("computer-use") }
+
+        if route == .openAIDirect, let openAIKey = ProviderRouter.currentCredentials().openAIKey {
+            return try await draftSkillOnOwnKey(request: trimmed, openAIKey: openAIKey, capabilities: capabilities)
+        }
+        guard let endpoint = URL(string: "\(OpenClickyConfiguration.backendBaseURL)/skills/create") else {
             throw fail(.notConfigured)
         }
         isCreating = true
         lastError = nil
         defer { isCreating = false }
-
-        var capabilities: [String] = []
-        if OpenClickyConfiguration.activeComposioMcpUrl != nil { capabilities.append("composio") }
-        if OpenClickyConfiguration.resolvedCuaDriverBin != nil { capabilities.append("computer-use") }
 
         var urlRequest = URLRequest(url: endpoint)
         urlRequest.httpMethod = "POST"
@@ -209,6 +214,33 @@ final class SkillLibraryStore: ObservableObject {
                 throw SkillLibraryError.backend(message)
             }
             guard let markdown = object["markdown"] as? String else { throw SkillLibraryError.backend("no markdown in response") }
+            return try importSkill(markdown: markdown)
+        } catch {
+            lastError = error.localizedDescription
+            throw error
+        }
+    }
+
+    /// "teach a skill" on the person's own OpenAI key: the backend's drafting prompt, sent to OpenAI
+    /// itself. The skills it may lean on are the ones in this library plus the capabilities above.
+    private func draftSkillOnOwnKey(request: String, openAIKey: String, capabilities: [String]) async throws -> SkillFile {
+        isCreating = true
+        lastError = nil
+        defer { isCreating = false }
+        do {
+            let knownSkills = librarySkills.map(\.id) + capabilities
+            var urlRequest = try DirectProviderRequests.openAISkillDraft(key: openAIKey, request: request, capabilities: knownSkills)
+            urlRequest.timeoutInterval = 90
+            let (data, response) = try await URLSession.shared.data(for: urlRequest)
+            let status = (response as? HTTPURLResponse)?.statusCode ?? 0
+            guard (200..<300).contains(status) else {
+                AppLog.append("skills: drafting on the own openai key failed (\(status))")
+                throw SkillLibraryError.backend("openai answered \(status) — check your openai key in shell.json.")
+            }
+            guard let markdown = DirectProviderRequests.skillMarkdown(fromCompletion: data) else {
+                AppLog.append("skills: openai's draft had no text")
+                throw SkillLibraryError.backend("the model did not return a skill file.")
+            }
             return try importSkill(markdown: markdown)
         } catch {
             lastError = error.localizedDescription
@@ -290,7 +322,7 @@ enum SkillLibraryError: LocalizedError {
         switch self {
         case .invalidMarkdown: return "The skill file needs frontmatter with a name and a description."
         case .emptyRequest: return "Describe what the skill should do."
-        case .notConfigured: return "Add your OpenClicky token in shell.json first."
+        case .notConfigured: return "the openclicky backend address in shell.json isn't a valid url."
         case .needsOwnKey(let message), .backend(let message): return message
         }
     }
