@@ -99,6 +99,14 @@ final class UITour {
             companionManager.showDictationWindow(section: section)
             await shootWindow(named: String(format: "window-%@-%02d-%@", appearanceName, index, section.rawValue), window: mainWindow, scrolls: scrolls)
         }
+        if scrolls, let window = mainWindow {
+            // The record page at the window's narrowest: its two columns stack.
+            let fullFrame = window.frame
+            window.setContentSize(DictationWindowController.minimumSize)
+            companionManager.showDictationWindow(section: .record)
+            await shoot("window-\(appearanceName)-00-record-narrow", window: window)
+            window.setFrame(fullFrame, display: true)
+        }
         for page in DictationSettingsPage.allCases {
             index += 1
             companionManager.showSettings(page)

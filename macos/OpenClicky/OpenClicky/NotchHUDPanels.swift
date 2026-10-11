@@ -22,7 +22,8 @@ struct NotchFullPanelView: View {
         VStack(spacing: 0) {
             // The tab bar lives in the menu-bar band, on either side of the physical notch.
             NotchTabBar(model: model, companionManager: companionManager, threadStore: threadStore)
-                .frame(height: model.topBandHeight)
+                .padding(.top, 6)
+                .frame(height: model.tabBarHeight)
 
             Group {
                 switch model.activeTab {
@@ -246,14 +247,16 @@ struct NotchHomeView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
-            HStack(alignment: .top, spacing: 16) {
+            if model.placement.isSideDrawer {
+                // The drawer is one narrow column: the pointer, then the shortcuts, then skills.
                 NotchPointerCard(companionManager: companionManager, model: model)
-                    .frame(width: 232)
-
-                if let engineWarning = NotchEngineWarning(engine: companionManager.dictationSettings.engine) {
-                    NotchEngineWarningView(warning: engineWarning, companionManager: companionManager)
-                } else {
-                    NotchShortcutList(companionManager: companionManager, settings: companionManager.dictationSettings)
+                shortcutsOrWarning
+                    .padding(.horizontal, 4)
+            } else {
+                HStack(alignment: .top, spacing: 16) {
+                    NotchPointerCard(companionManager: companionManager, model: model)
+                        .frame(width: 232)
+                    shortcutsOrWarning
                 }
             }
 
@@ -261,6 +264,15 @@ struct NotchHomeView: View {
         }
         .padding(.horizontal, DS.HUD.bodySidePadding)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+    }
+
+    @ViewBuilder
+    private var shortcutsOrWarning: some View {
+        if let engineWarning = NotchEngineWarning(engine: companionManager.dictationSettings.engine) {
+            NotchEngineWarningView(warning: engineWarning, companionManager: companionManager)
+        } else {
+            NotchShortcutList(companionManager: companionManager, settings: companionManager.dictationSettings)
+        }
     }
 }
 
@@ -1022,7 +1034,11 @@ struct NotchSettingsView: View {
     @ObservedObject var companionManager: CompanionManager
     @ObservedObject var settings: DictationSettings
 
-    private let tileColumns = [GridItem(.flexible(), spacing: 10), GridItem(.flexible(), spacing: 10)]
+    /// Two tiles a row under the notch; one in a side drawer, which is too narrow for two.
+    private var tileColumns: [GridItem] {
+        let column = GridItem(.flexible(), spacing: 10)
+        return companionManager.hudPlacement.isSideDrawer ? [column] : [column, column]
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {

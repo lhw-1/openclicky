@@ -181,6 +181,9 @@ struct OnboardingView: View {
                         VStack(spacing: 10) {
                             Keycap(text: key.keycapLabel)
                             Text(key.displayName).font(Paper.body(12)).foregroundStyle(Paper.ink)
+                            if key == .rightControl {
+                                Text("external keyboards").font(Paper.body(10)).foregroundStyle(Paper.inkTertiary)
+                            }
                         }
                         .frame(width: 130, height: 86)
                         .background(RoundedRectangle(cornerRadius: 12).fill(Paper.card))
@@ -189,6 +192,8 @@ struct OnboardingView: View {
                     .buttonStyle(.plain).pointerCursor()
                 }
             }
+            KeyboardSketch(key: settings.dictationKey, accent: Paper.accentFill)
+                .frame(height: 150, alignment: .leading)
             if settings.dictationKey == .fn, !FnKeyGuard.isFnFree {
                 HStack(spacing: 10) {
                     Text("macOS also uses fn to \(FnKeyGuard.currentUsage()?.description ?? "do something"). let openclicky set it to do nothing?").font(Paper.body(12)).foregroundStyle(Paper.inkSecondary)

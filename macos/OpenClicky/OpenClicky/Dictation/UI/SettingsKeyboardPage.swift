@@ -35,6 +35,11 @@ extension SettingsCatalog {
                     DictationKeyPicker(settings: settings)
                 })),
             SettingsItem(
+                id: "keyboard.where", page: .keyboard, section: "Dictation",
+                title: "Where the key is", detail: "A sketch of a MacBook keyboard with the dictation key held.",
+                keywords: ["where", "keyboard", "right option", "right command", "right control", "left", "macbook"],
+                view: AnyView(KeyboardSketchRow(settings: settings))),
+            SettingsItem(
                 id: "keyboard.fnWarning", page: .keyboard, section: "Dictation",
                 title: "fn also opens \(fnKeyState.usageNoun)", detail: "macOS uses the same key. You can switch it back in the system’s Keyboard settings.",
                 keywords: ["fn", "emoji", "globe", "free the fn key", "keyboard settings"],
@@ -147,6 +152,16 @@ private struct FnKeyWarningRow: View {
         }
         .padding(.vertical, 4)
         .onAppear { fnKeyState.refresh() }
+    }
+}
+
+private struct KeyboardSketchRow: View {
+    @ObservedObject var settings: DictationSettings
+
+    var body: some View {
+        KeyboardSketch(key: settings.dictationKey)
+            .frame(maxWidth: .infinity, alignment: .center)
+            .padding(.vertical, 8)
     }
 }
 
