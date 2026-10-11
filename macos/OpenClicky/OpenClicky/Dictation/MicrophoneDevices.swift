@@ -18,7 +18,8 @@ struct MicrophoneDevice: Identifiable, Equatable {
     var id: String { uid }
 }
 
-enum MicrophoneDevices {
+/// Plain CoreAudio calls and no app state, so the realtime client's audio queue can use it too.
+nonisolated enum MicrophoneDevices {
 
     /// Every input device, the system default first.
     static func available() -> [MicrophoneDevice] {
@@ -36,14 +37,48 @@ enum MicrophoneDevices {
         return stringProperty(of: deviceID, kAudioObjectPropertyName)
     }
 
-    /// Points the engine's input at the device with `uid`; nil or an unknown UID leaves the default.
-    static func apply(preferredUID: String?, to engine: AVAudioEngine) {
-        guard let preferredUID, !preferredUID.isEmpty,
-              let deviceID = allDeviceIDs().first(where: { stringProperty(of: $0, kAudioDevicePropertyDeviceUID) == preferredUID }),
-              let audioUnit = engine.inputNode.audioUnit else { return }
+    /// Points the engine's input at the device with `uid`, or at the system default when `uid` is
+    /// nil or no longer connected. The default is set explicitly, not left alone: an engine kept for
+    /// the app's life stays on the last device it was given, so going back to "mac default" did
+    /// nothing until relaunch. Returns false when no device could be selected (logged).
+    @discardableResult
+    static func apply(preferredUID: String?, to engine: AVAudioEngine) -> Bool {
+        let connected = allDeviceIDs().compactMap { deviceID in
+            stringProperty(of: deviceID, kAudioDevicePropertyDeviceUID).map { ConnectedInput(deviceID: deviceID, uid: $0) }
+        }
+        let choice = deviceToSelect(preferredUID: preferredUID, connected: connected, defaultDeviceID: defaultInputDeviceID())
+        if choice.chosenUIDIsMissing, let preferredUID {
+            AppLog.append("microphone: \(preferredUID) is not connected, using the mac default")
+        }
+        guard let deviceID = choice.deviceID else {
+            AppLog.append("microphone: no input device to select")
+            return false
+        }
+        guard let audioUnit = engine.inputNode.audioUnit else {
+            AppLog.append("microphone: the engine has no input unit")
+            return false
+        }
         var device = deviceID
         let status = AudioUnitSetProperty(audioUnit, kAudioOutputUnitProperty_CurrentDevice, kAudioUnitScope_Global, 0, &device, UInt32(MemoryLayout<AudioDeviceID>.size))
-        if status != noErr { AppLog.append("microphone: could not select \(preferredUID) (\(status))") }
+        if status != noErr {
+            AppLog.append("microphone: could not select \(preferredUID ?? "the mac default") (\(status))")
+            return false
+        }
+        return true
+    }
+
+    struct ConnectedInput: Equatable {
+        let deviceID: AudioDeviceID
+        let uid: String
+    }
+
+    /// Which device a take records from: the chosen one when it is connected, else the default.
+    /// `chosenUIDIsMissing` is true when a device was chosen but is not among `connected`.
+    static func deviceToSelect(preferredUID: String?, connected: [ConnectedInput],
+                               defaultDeviceID: AudioDeviceID?) -> (deviceID: AudioDeviceID?, chosenUIDIsMissing: Bool) {
+        guard let preferredUID, !preferredUID.isEmpty else { return (defaultDeviceID, false) }
+        if let match = connected.first(where: { $0.uid == preferredUID }) { return (match.deviceID, false) }
+        return (defaultDeviceID, true)
     }
 
     // MARK: CoreAudio

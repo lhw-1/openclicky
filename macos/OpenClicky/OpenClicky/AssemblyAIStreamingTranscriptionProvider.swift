@@ -27,6 +27,29 @@ final class AssemblyAIStreamingTranscriptionProvider: BuddyTranscriptionProvider
     var isConfigured: Bool { true }
     var unavailableExplanation: String? { nil }
 
+    /// The language dictation was asked to hear (a bare code; nil = auto). Not sent: the streaming
+    /// model detects and code-switches by itself, and the one steering parameter AssemblyAI
+    /// documents (`language_codes`) is not confirmed for `u3-rt-pro` — an unknown parameter could
+    /// make every session refuse. It is checked against the languages that model hears, so a
+    /// language it cannot hear is at least written to the log.
+    let language: () -> String?
+
+    /// AssemblyAI's documented streaming languages (`language_codes`, read 2026-10-11).
+    static let streamingLanguageCodes: Set<String> = [
+        "af", "ar", "yue", "ca", "da", "nl", "en", "et", "fi", "fr", "gl", "de", "he", "hi", "it", "ja", "ko", "zh",
+        "mr", "no", "nn", "fa", "pt", "ro", "ru", "es", "sv", "tr", "ur", "vi", "xh", "zu",
+    ]
+
+    init(language: @escaping () -> String? = { nil }) {
+        self.language = language
+    }
+
+    /// True when `code` (bare) is a language the streaming model is documented to hear; nil = auto.
+    static func hears(languageCode code: String?) -> Bool {
+        guard let code, !code.isEmpty else { return true }
+        return streamingLanguageCodes.contains(code)
+    }
+
     /// Single long-lived URLSession shared across all streaming sessions.
     /// Creating and invalidating a URLSession per session corrupts the OS
     /// connection pool and causes "Socket is not connected" errors after
@@ -39,8 +62,17 @@ final class AssemblyAIStreamingTranscriptionProvider: BuddyTranscriptionProvider
         onFinalTranscriptReady: @escaping (String) -> Void,
         onError: @escaping (Error) -> Void
     ) async throws -> any BuddyStreamingTranscriptionSession {
+        if let requestedLanguage = language(), !Self.hears(languageCode: requestedLanguage) {
+            AppLog.append("transcription (assemblyai): \(requestedLanguage) is not a language its streaming model hears; it will guess")
+        }
         // Fetch a fresh temporary token from the proxy before each session
-        let temporaryToken = try await fetchTemporaryToken()
+        let temporaryToken: String
+        do {
+            temporaryToken = try await fetchTemporaryToken()
+        } catch {
+            AppLog.append("transcription (assemblyai): token request failed: \(error.localizedDescription)")
+            throw error
+        }
         // Log only that a token was obtained, never any part of its value — this reaches
         // ~/Library/Logs/OpenClicky/app.log, which is not a safe place for even a credential prefix.
         print("🎙️ AssemblyAI: fetched temporary token (\(temporaryToken.count) chars)")
@@ -409,10 +441,12 @@ private final class AssemblyAIStreamingTranscriptionSession: NSObject, BuddyStre
                 && !self.hasDeliveredFinalTranscript
                 && !latestTranscriptText.isEmpty {
                 print("[AssemblyAI] ⚠️ WebSocket error during active session, delivering partial transcript as fallback: \(error.localizedDescription)")
+                AppLog.append("transcription (assemblyai): socket error, delivering the partial transcript: \(error.localizedDescription)")
                 self.deliverFinalTranscriptIfNeeded(latestTranscriptText)
                 return
             }
             print("[AssemblyAI] ❌ Session failed with error: \(error.localizedDescription)")
+            AppLog.append("transcription (assemblyai): session failed: \(error.localizedDescription)")
 
             self.onError(error)
         }

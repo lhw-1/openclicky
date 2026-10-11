@@ -33,8 +33,17 @@ private final class FakeCapture: DictationCapturing {
     private var onPartial: ((String) -> Void)?
     private var onFinal: ((String) -> Void)?
 
+    /// The next start returns without opening a session (microphone denied), publishing this
+    /// message first when it is not nil — as the real manager does on a refused permission.
+    var nextStartFailsWith: String??
+
     func startPushToTalkFromKeyboardShortcut(currentDraftText: String, updateDraftText: @escaping (String) -> Void, submitDraftText: @escaping (String) -> Void) async {
         starts += 1
+        if let failure = nextStartFailsWith {
+            nextStartFailsWith = nil
+            if let failure { errors.send(failure) }
+            return
+        }
         isDictationInProgress = true
         activity.send(true)
         onPartial = updateDraftText
@@ -296,6 +305,35 @@ struct DictationTakeControllerTests {
         await h.waitUntil { h.controller.state == .idle }
         #expect(h.controller.state == .idle)
         #expect(h.orb.phase == .failed("didn't catch that"))
+    }
+
+    /// F-30: microphone denied and pressed again inside the permission cooldown — the start returned
+    /// with no session and no message, and the orb said "moving your words" until esc.
+    @Test @MainActor func aStartThatOpensNoSessionEndsTheTakeAndTheKeyWorksAgain() async throws {
+        let h = try Harness()
+        h.capture.nextStartFailsWith = .some(nil)
+        h.controller.handle(.dictationPressed)
+        await h.waitUntil(1) { h.controller.state == .listening || h.controller.state == .idle }
+        h.controller.handle(.dictationReleased(wasTap: false))
+        await h.waitUntil(3) { h.controller.state == .idle }
+        #expect(h.controller.state == .idle)
+        #expect(h.orb.phase == .failed("couldn't open the microphone"))
+        #expect(h.pasted.texts.isEmpty)
+
+        h.controller.handle(.dictationPressed)
+        await h.waitUntil { h.controller.state == .listening }
+        #expect(h.capture.starts == 2)
+        #expect(h.controller.state == .listening)
+    }
+
+    /// The manager's own reason (the permission sentence) is what the orb shows, not a generic one.
+    @Test @MainActor func aRefusedStartShowsTheManagersReason() async throws {
+        let h = try Harness()
+        h.capture.nextStartFailsWith = "microphone permission is required for push to talk."
+        h.controller.handle(.dictationPressed)
+        await h.waitUntil(3) { h.controller.state == .idle }
+        #expect(h.controller.state == .idle)
+        #expect(h.orb.phase == .failed("microphone permission is required for push to talk."))
     }
 
     @Test @MainActor func theWordsAreCopiedWhenTheAppChanged() async throws {

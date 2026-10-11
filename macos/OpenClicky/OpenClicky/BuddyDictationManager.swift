@@ -422,7 +422,7 @@ final class BuddyDictationManager: NSObject, ObservableObject {
         isPreparingToRecord = true
 
         guard await requestMicrophoneAndSpeechPermissionsWithoutDuplicatePrompts() else {
-            print("🎙️ BuddyDictationManager: permissions missing or denied")
+            AppLog.append("dictation: not started (\(transcriptionProvider.displayName)): \(lastErrorMessage ?? "permissions missing or denied")")
             isPreparingToRecord = false
             return
         }
@@ -485,7 +485,7 @@ final class BuddyDictationManager: NSObject, ObservableObject {
                 from: error,
                 fallback: "couldn't start voice input. try again."
             )
-            print("❌ BuddyDictationManager: failed to start recognition session (\(transcriptionProvider.displayName)): \(error)")
+            AppLog.append("dictation: failed to start recognition session (\(transcriptionProvider.displayName)): \(error)")
             resetSessionState()
         }
     }
@@ -600,7 +600,7 @@ final class BuddyDictationManager: NSObject, ObservableObject {
                 shouldSubmitFinalDraft: shouldAutomaticallySubmitFinalDraft
             )
         } else {
-            print("❌ Buddy dictation error (\(transcriptionProvider.displayName)): \(error)")
+            AppLog.append("dictation: recognition error (\(transcriptionProvider.displayName)): \(error)")
             lastErrorMessage = userFacingErrorMessage(
                 from: error,
                 fallback: "couldn't transcribe that. try again."
@@ -808,8 +808,7 @@ final class BuddyDictationManager: NSObject, ObservableObject {
         // so we trust the cached result for a short window.
         if let lastPermissionRequestCompletedAt,
            Date().timeIntervalSince(lastPermissionRequestCompletedAt) < 1.0 {
-            return AVCaptureDevice.authorizationStatus(for: .audio) != .denied
-                && AVCaptureDevice.authorizationStatus(for: .audio) != .restricted
+            return cachedPermissionsAllowRecording()
         }
 
         let permissionRequestTask = Task { @MainActor in
@@ -822,6 +821,27 @@ final class BuddyDictationManager: NSObject, ObservableObject {
         activePermissionRequestTask = nil
         lastPermissionRequestCompletedAt = Date()
         return hasPermissions
+    }
+
+    /// The cooldown's answer, without asking macOS again. A refusal says why, as the full request
+    /// does: a silent `false` left the dictation take waiting for a session that never opened
+    /// ("moving your words" on the orb, the key dead until esc).
+    private func cachedPermissionsAllowRecording() -> Bool {
+        let microphoneStatus = AVCaptureDevice.authorizationStatus(for: .audio)
+        if microphoneStatus == .denied || microphoneStatus == .restricted {
+            currentPermissionProblem = .microphoneAccessDenied
+            lastErrorMessage = "microphone permission is required for push to talk."
+            return false
+        }
+        if transcriptionProvider.requiresSpeechRecognitionPermission {
+            let speechStatus = SFSpeechRecognizer.authorizationStatus()
+            if speechStatus == .denied || speechStatus == .restricted {
+                currentPermissionProblem = .speechRecognitionDenied
+                lastErrorMessage = "speech recognition permission is required for push to talk."
+                return false
+            }
+        }
+        return true
     }
 
     private func requestMicrophonePermissionIfNeeded() async -> Bool {

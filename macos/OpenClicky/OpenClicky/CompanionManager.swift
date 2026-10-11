@@ -1116,9 +1116,11 @@ final class CompanionManager: ObservableObject {
         dictationSettings.preferredMicrophoneUIDDidChange = { [weak self] uid in
             self?.dictationTakeController.dictationManager.preferredMicrophoneUID = uid
             self?.buddyDictationManager.preferredMicrophoneUID = uid
+            self?.realtimeVoiceClient.preferredMicrophoneUID = uid
         }
         dictationTakeController.dictationManager.preferredMicrophoneUID = dictationSettings.preferredMicrophoneUID
         buddyDictationManager.preferredMicrophoneUID = dictationSettings.preferredMicrophoneUID
+        realtimeVoiceClient.preferredMicrophoneUID = dictationSettings.preferredMicrophoneUID
         AppUpdater.shared.start()
         clipboardHistoryMonitor.start()
         if !dictationSettings.hasCompletedDictationOnboarding {
