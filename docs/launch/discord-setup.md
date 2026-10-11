@@ -1,5 +1,7 @@
 # The OpenClicky Discord
 
+Live since 2026-10-11: https://discord.gg/zGGERnM5eq (never expires), also https://openclicky.flowsxr.com/discord.
+
 Prasanth creates the server (Discord → + → Create My Own → For a club or community) and pastes the
 text below. Then: Server Settings → Enable Community (gives #rules and an announcement channel type).
 
@@ -34,8 +36,6 @@ BUILDING
 > Welcome to OpenClicky. It is the Mac helper that points: hold ⌃⌥, ask out loud, and a pointer flies
 > to the answer on your screen. Stuck? Post in #help with your macOS version and what you asked.
 > Made something with it? #show-and-tell. Download: https://openclicky.flowsxr.com/download
-
-(Until openclicky.flowsxr.com is live, use https://openclicky.netlify.app/download.)
 
 ## Rules
 

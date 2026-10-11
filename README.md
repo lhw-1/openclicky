@@ -7,7 +7,7 @@ offline by default with Apple's on-device recogniser, eleven Indian languages wi
 when it is more than a question, hand the task to a Codex agent. MIT licensed.
 
 [**Download OpenClicky for macOS**](https://github.com/prasanthsasikumar/openclicky/releases/latest)
-(Apple Silicon and Intel, macOS 14.2+, notarized) · [How it works](docs/architecture.md) · [Contributing](CONTRIBUTING.md)
+(Apple Silicon and Intel, macOS 14.2+, notarized) · [Website](https://openclicky.flowsxr.com) · [Discord](https://discord.gg/zGGERnM5eq) · [How it works](docs/architecture.md) · [Contributing](CONTRIBUTING.md)
 
 <p align="center"><img src="docs/media/demo.gif" width="720" alt="Asking out loud where battery health is: the pointer flies to Battery in System Settings. Then holding fn and talking: the sentence is typed into TextEdit."></p>
 
