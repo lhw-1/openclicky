@@ -105,7 +105,7 @@ final class AssemblyAIStreamingTranscriptionProvider: BuddyTranscriptionProvider
         request.httpMethod = "POST"
         OpenClickyConfiguration.authorize(&request)
 
-        let (data, response) = try await URLSession.shared.data(for: request)
+        let (data, response) = try await BackendSignIn.send(request) { try await URLSession.shared.data(for: $0) }
 
         guard let httpResponse = response as? HTTPURLResponse,
               (200...299).contains(httpResponse.statusCode) else {

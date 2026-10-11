@@ -56,6 +56,37 @@ struct OpenClickyShellSettings: Codable {
     var accountEmail: String? = nil
 }
 
+extension OpenClickyShellSettings {
+    /// A field missing from the file takes its default: a short, hand-written shell.json is a
+    /// normal file (the synthesised decoder refused one without every field, and the app then
+    /// started from the defaults). A field of the wrong type still fails, so a mistake is reported
+    /// instead of being quietly replaced.
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        let defaults = OpenClickyShellSettings()
+        cliCommand = try container.decodeIfPresent([String].self, forKey: .cliCommand) ?? defaults.cliCommand
+        backendUrl = try container.decodeIfPresent(String.self, forKey: .backendUrl) ?? defaults.backendUrl
+        token = try container.decodeIfPresent(String.self, forKey: .token) ?? defaults.token
+        workspace = try container.decodeIfPresent(String.self, forKey: .workspace) ?? defaults.workspace
+        model = try container.decodeIfPresent(String.self, forKey: .model) ?? defaults.model
+        voiceSeconds = try container.decodeIfPresent(Int.self, forKey: .voiceSeconds) ?? defaults.voiceSeconds
+        transcriptionProvider = try container.decodeIfPresent(String.self, forKey: .transcriptionProvider)
+        language = try container.decodeIfPresent(String.self, forKey: .language)
+        registerAsLoginItem = try container.decodeIfPresent(Bool.self, forKey: .registerAsLoginItem)
+        writableRoots = try container.decodeIfPresent([String].self, forKey: .writableRoots)
+        composioMcpUrl = try container.decodeIfPresent(String.self, forKey: .composioMcpUrl)
+        composioApiKey = try container.decodeIfPresent(String.self, forKey: .composioApiKey)
+        cuaDriverBin = try container.decodeIfPresent(String.self, forKey: .cuaDriverBin)
+        appSkillsPath = try container.decodeIfPresent(String.self, forKey: .appSkillsPath)
+        openaiApiKey = try container.decodeIfPresent(String.self, forKey: .openaiApiKey)
+        anthropicApiKey = try container.decodeIfPresent(String.self, forKey: .anthropicApiKey)
+        sarvamKey = try container.decodeIfPresent(String.self, forKey: .sarvamKey)
+        refreshToken = try container.decodeIfPresent(String.self, forKey: .refreshToken)
+        tokenExpiresAt = try container.decodeIfPresent(Double.self, forKey: .tokenExpiresAt)
+        accountEmail = try container.decodeIfPresent(String.self, forKey: .accountEmail)
+    }
+}
+
 enum OpenClickyConfiguration {
     /// Where the app talks to unless shell.json says otherwise.
     static let hostedBackendURL = "https://api.openclicky.flowsxr.com"
@@ -121,13 +152,23 @@ enum OpenClickyConfiguration {
 
     /// File settings, then environment overrides (handy when launching from a terminal):
     /// OPENCLICKY_SHELL_CLI ("node /path/cli.js"), BACKEND_URL, OPENCLICKY_TOKEN, OPENCLICKY_WORKSPACE, OPENCLICKY_MODEL.
+    /// The overrides live only in memory: `update` starts from the file alone, so it never writes them.
     private static func load() -> OpenClickyShellSettings {
+        load(fileURL: settingsFileURL, environment: ProcessInfo.processInfo.environment)
+    }
+
+    static func load(fileURL: URL, environment: [String: String]) -> OpenClickyShellSettings {
         var loadedSettings = OpenClickyShellSettings()
-        if let data = try? Data(contentsOf: settingsFileURL),
-           let decoded = try? JSONDecoder().decode(OpenClickyShellSettings.self, from: data) {
-            loadedSettings = decoded
+        switch readSettingsFile(at: fileURL) {
+        case .readable(let fileSettings, _):
+            loadedSettings = fileSettings
+            if fileURL == settingsFileURL { settingsFileProblem = nil }
+        case .missing:
+            if fileURL == settingsFileURL { settingsFileProblem = nil }
+        case .unreadable(let reason):
+            // The defaults stand in for this launch; the file itself is left for the person to fix.
+            noteUnreadableSettingsFile(reason, fileURL: fileURL)
         }
-        let environment = ProcessInfo.processInfo.environment
         if let cli = environment["OPENCLICKY_SHELL_CLI"], !cli.isEmpty { loadedSettings.cliCommand = cli.split(separator: " ").map(String.init) }
         if let value = environment["BACKEND_URL"], !value.isEmpty { loadedSettings.backendUrl = value }
         if let value = environment["OPENCLICKY_TOKEN"], !value.isEmpty { loadedSettings.token = value }
@@ -135,6 +176,61 @@ enum OpenClickyConfiguration {
         if let value = environment["OPENCLICKY_MODEL"], !value.isEmpty { loadedSettings.model = value }
         if let value = environment["OPENCLICKY_TRANSCRIPTION_PROVIDER"], !value.isEmpty { loadedSettings.transcriptionProvider = value }
         return loadedSettings
+    }
+
+    /// What is in shell.json: nothing yet, settings (with the file's own JSON object, so a write
+    /// can keep what this build does not know), or a file that does not read, and why.
+    enum SettingsFileReading {
+        case missing
+        case readable(OpenClickyShellSettings, jsonObject: [String: Any])
+        case unreadable(String)
+    }
+
+    static func readSettingsFile(at fileURL: URL) -> SettingsFileReading {
+        guard FileManager.default.fileExists(atPath: fileURL.path) else { return .missing }
+        let data: Data
+        do {
+            data = try Data(contentsOf: fileURL)
+        } catch {
+            return .unreadable("it can't be opened (\(error.localizedDescription))")
+        }
+        // An empty file has nothing in it to lose.
+        if String(decoding: data, as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            return .readable(OpenClickyShellSettings(), jsonObject: [:])
+        }
+        guard let jsonObject = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] else {
+            return .unreadable("it isn't valid json")
+        }
+        do {
+            return .readable(try JSONDecoder().decode(OpenClickyShellSettings.self, from: data), jsonObject: jsonObject)
+        } catch DecodingError.typeMismatch(_, let context) {
+            return .unreadable("\"\(context.codingPath.map(\.stringValue).joined(separator: "."))\" has the wrong kind of value")
+        } catch {
+            return .unreadable("it doesn't read (\(error.localizedDescription))")
+        }
+    }
+
+    /// The sentence saying why shell.json is neither used nor written, while it does not read.
+    private(set) static var settingsFileProblem: String?
+    /// Posted on the main actor when shell.json stops reading; the object is the sentence.
+    static let settingsFileUnreadableNotification = Notification.Name("openClickySettingsFileUnreadable")
+
+    nonisolated static func unreadableSettingsFileSentence(reason: String) -> String {
+        "your settings file (~/.openclicky/shell.json) has a mistake in it: \(reason). openclicky won't change it until it's fixed."
+    }
+
+    /// Logs and shows the problem once per distinct problem (every refused write would repeat it).
+    private static func noteUnreadableSettingsFile(_ reason: String, fileURL: URL) {
+        AppLog.append("settings: \(fileURL.path) does not read, so nothing is written to it: \(reason)")
+        // Only the real settings file is the person's to hear about; tests use temporary files.
+        guard fileURL == settingsFileURL else { return }
+        let sentence = unreadableSettingsFileSentence(reason: reason)
+        guard settingsFileProblem != sentence else { return }
+        settingsFileProblem = sentence
+        Task { @MainActor in
+            NotificationCenter.default.post(name: settingsFileUnreadableNotification, object: sentence)
+            AccountProfileStore.shared.showNotice?(sentence)
+        }
     }
 
     static func ensureSettingsFileExists() {
@@ -158,17 +254,52 @@ enum OpenClickyConfiguration {
 
     /// Changes shell.json in place (sign-in writes the session here) and reloads the settings.
     static func update(_ change: (inout OpenClickyShellSettings) -> Void) {
-        var changedSettings = load()
-        change(&changedSettings)
-        let encoder = JSONEncoder()
-        encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
-        do {
-            let data = try encoder.encode(changedSettings)
-            try writeShellSettingsData(data, toFileAt: settingsFileURL)
-        } catch {
-            print("⚠️ Could not write \(settingsFileURL.path): \(error.localizedDescription)")
-        }
+        update(fileAt: settingsFileURL, change)
         reload()
+    }
+
+    /// Starts from the file alone (never the environment overrides) and writes back only the
+    /// fields the change touched, merged into the file's own JSON object: fields this build does
+    /// not know, and values the change left alone, stay exactly as they were written. A file that
+    /// exists but does not read is never written: starting from the defaults instead would throw
+    /// away every key in it. Returns whether the file was written.
+    @discardableResult
+    static func update(fileAt fileURL: URL, _ change: (inout OpenClickyShellSettings) -> Void) -> Bool {
+        var fileSettings = OpenClickyShellSettings()
+        var fileJSONObject: [String: Any] = [:]
+        switch readSettingsFile(at: fileURL) {
+        case .missing:
+            break
+        case .readable(let readSettings, let readJSONObject):
+            fileSettings = readSettings
+            fileJSONObject = readJSONObject
+        case .unreadable(let reason):
+            noteUnreadableSettingsFile(reason, fileURL: fileURL)
+            return false
+        }
+        var changedSettings = fileSettings
+        change(&changedSettings)
+        do {
+            let encodedBefore = try encodedJSONObject(of: fileSettings)
+            let encodedAfter = try encodedJSONObject(of: changedSettings)
+            for fieldName in Set(encodedBefore.keys).union(encodedAfter.keys) {
+                let valueBefore = encodedBefore[fieldName] as AnyObject?
+                let valueAfter = encodedAfter[fieldName] as AnyObject?
+                let fieldChanged = valueBefore.map { !$0.isEqual(valueAfter) } ?? (valueAfter != nil)
+                // An optional set back to nil is not encoded at all, so it leaves the file too.
+                if fieldChanged { fileJSONObject[fieldName] = encodedAfter[fieldName] }
+            }
+            let data = try JSONSerialization.data(withJSONObject: fileJSONObject, options: [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes])
+            try writeShellSettingsData(data, toFileAt: fileURL)
+            return true
+        } catch {
+            AppLog.append("settings: could not write \(fileURL.path): \(error.localizedDescription)")
+            return false
+        }
+    }
+
+    private static func encodedJSONObject(of shellSettings: OpenClickyShellSettings) throws -> [String: Any] {
+        (try JSONSerialization.jsonObject(with: JSONEncoder().encode(shellSettings)) as? [String: Any]) ?? [:]
     }
 
     /// shell.json holds the session token, the refresh token, and the user's own OpenAI/Anthropic

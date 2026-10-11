@@ -200,7 +200,7 @@ final class SkillLibraryStore: ObservableObject {
         urlRequest.httpBody = try JSONSerialization.data(withJSONObject: ["request": trimmed, "capabilities": capabilities])
 
         do {
-            let (data, response) = try await URLSession.shared.data(for: urlRequest)
+            let (data, response) = try await BackendSignIn.send(urlRequest) { try await URLSession.shared.data(for: $0) }
             let status = (response as? HTTPURLResponse)?.statusCode ?? 0
             let object = (try? JSONSerialization.jsonObject(with: data) as? [String: Any]) ?? [:]
             guard (200..<300).contains(status) else {

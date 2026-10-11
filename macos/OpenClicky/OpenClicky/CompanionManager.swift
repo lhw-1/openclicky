@@ -1564,12 +1564,9 @@ final class CompanionManager: ObservableObject {
                 AppLog.append("ask: failed: \((error as NSError).domain) \((error as NSError).code)")
                 dismissCursorCaption()
                 if Self.isSignInRejection(error) {
-                    // The backend refused the token. Try one refresh; if the sign-in is dead the
-                    // session signs out, and either way the person hears what to do.
-                    await OpenClickyAuthSession.shared.refreshIfNeeded(force: true)
-                    speakWithSystemVoice(OpenClickyConfiguration.isConfigured
-                        ? "please ask that again."
-                        : "your openclicky sign-in has expired. sign in again in settings, account.")
+                    // The backend refused the token. One refresh; a sign-in nothing can renew, or a
+                    // second 401 in a row, signs out. Either way the person hears what to do.
+                    speakWithSystemVoice(await OpenClickyAuthSession.shared.sentenceAfterBackendRejection(errorDescription: error.localizedDescription))
                 } else if Self.isAccountNotice(error) {
                     if let notice = Self.accountNoticeToSpeak(for: error, alreadySpoken: &spokenAccountNotices) {
                         speakWithSystemVoice(notice)

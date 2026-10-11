@@ -119,6 +119,7 @@ private struct SignedInAccountRows: View {
                             Button("resend link", action: resend)
                                 .buttonStyle(.plain).font(Paper.caption).foregroundStyle(Paper.accentFill).pointerCursor()
                         }
+                        GuestConfirmationCodeField(onConfirmed: { billing.refresh() })
                     }
                 }
                 Spacer()
@@ -154,6 +155,11 @@ private struct AccountStartRow: View {
             Text("polished dictation and spoken answers, on us — no keys to find.")
                 .font(Paper.caption).foregroundStyle(Paper.inkSecondary)
                 .fixedSize(horizontal: false, vertical: true)
+            // Signed out by a dead sign-in, not by the person: say why, where they look.
+            if let sessionExpiredNotice = authSession.sessionExpiredNotice {
+                Text(sessionExpiredNotice).font(Paper.caption).foregroundStyle(Paper.danger)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
             Button("set up or sign in with your email") { showsAccountSheet = true }
                 .buttonStyle(PaperPillButtonStyle(prominent: true))
         }

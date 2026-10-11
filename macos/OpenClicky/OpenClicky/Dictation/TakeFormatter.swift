@@ -158,6 +158,7 @@ enum TakeFormatter {
             return FormattedTake(text: cleaned, expandedShortcut: nil, formattingDegraded: false)
         } catch {
             AppLog.append("take formatter: \(polisher.displayName) failed: \(error.localizedDescription)")
+            PolishFailureNotice.note(error)
             local.formattingDegraded = true
             return local
         }
@@ -256,12 +257,28 @@ struct SarvamTakePolisher: TakePolisher {
     }
 }
 
+/// Why the backend's chat route did not polish a take. Its own type: these are OpenClicky's
+/// answers, and logging them as Sarvam's ("sarvam refused (401)") sent people to the wrong key.
+enum BackendPolishError: LocalizedError, Equatable {
+    case invalidBackendURL
+    case refused(status: Int, message: String)
+    case unreadable
+
+    var errorDescription: String? {
+        switch self {
+        case .invalidBackendURL: return "the openclicky backend address in settings isn't a valid url."
+        case .refused(let status, let message): return "openclicky refused the clean-up (\(status)): \(message)"
+        case .unreadable: return "openclicky's clean-up answer had no text in it."
+        }
+    }
+}
+
 /// Polishes through the OpenClicky backend's OpenAI-shaped chat route.
 struct BackendTakePolisher: TakePolisher {
     var displayName: String { "OpenClicky" }
     func polish(system: String, user: String) async throws -> String {
         guard let url = URL(string: "\(OpenClickyConfiguration.backendBaseURL)/v1/chat/completions") else {
-            throw SarvamSpeechError.unreachable("backend URL is invalid")
+            throw BackendPolishError.invalidBackendURL
         }
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
@@ -274,15 +291,17 @@ struct BackendTakePolisher: TakePolisher {
             "temperature": 0.2,
         ]
         request.httpBody = try JSONSerialization.data(withJSONObject: body)
-        let (data, response) = try await URLSession.shared.data(for: request)
+        // A refused sign-in is refreshed once and sent again (BackendSignIn); what is left here is
+        // the backend's answer, or the person's own provider key's.
+        let (data, response) = try await BackendSignIn.send(request) { try await URLSession.shared.data(for: $0) }
         guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode) else {
-            throw SarvamSpeechError.refused(status: (response as? HTTPURLResponse)?.statusCode ?? 0, message: String(decoding: data.prefix(200), as: UTF8.self))
+            throw BackendPolishError.refused(status: (response as? HTTPURLResponse)?.statusCode ?? 0, message: String(decoding: data.prefix(200), as: UTF8.self))
         }
         guard let answer = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any],
               let choices = answer["choices"] as? [[String: Any]],
               let message = choices.first?["message"] as? [String: Any],
               let content = message["content"] as? String else {
-            throw SarvamSpeechError.unreadable("there was no message in it")
+            throw BackendPolishError.unreadable
         }
         return content
     }

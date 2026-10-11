@@ -244,7 +244,7 @@ private final class OpenAIAudioTranscriptionSession: BuddyStreamingTranscription
         }
         request.httpBody = try JSONSerialization.data(withJSONObject: requestBody)
 
-        let (responseData, response) = try await urlSession.data(for: request)
+        let (responseData, response) = try await BackendSignIn.send(request) { [urlSession] in try await urlSession.data(for: $0) }
 
         guard let httpResponse = response as? HTTPURLResponse else {
             throw OpenAIAudioTranscriptionProviderError(

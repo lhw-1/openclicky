@@ -665,7 +665,7 @@ final class DictationTakeController: ObservableObject {
                 outputText = try await HeyClickyEditor.edit(selection: selection, instruction: raw, context: context, polisher: polisher)
             } catch {
                 guard isCurrent(thisTakeID) else { return }
-                failTake("couldn't finish your edit", takeID: thisTakeID)
+                failTake("couldn't finish your edit — \(error.localizedDescription)", takeID: thisTakeID)
                 return
             }
         } else {
