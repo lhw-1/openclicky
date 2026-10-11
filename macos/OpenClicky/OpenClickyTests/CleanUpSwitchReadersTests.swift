@@ -30,7 +30,7 @@ struct CleanUpSwitchReadersTests {
         for polishWithModel in [false, true] {
             for polishOfflineTakes in [false, true] {
                 let settings = makeSettings(polishWithModel: polishWithModel, polishOfflineTakes: polishOfflineTakes, engine: engine)
-                #expect(StylesPageView.cleanUpSwitchShowsOn(settings: settings) == DictationEngineResolver.wantsModelPolish(settings: settings),
+                #expect(WritingPageView.cleanUpSwitchShowsOn(settings: settings) == DictationEngineResolver.wantsModelPolish(settings: settings),
                         "polishWithModel \(polishWithModel), polishOfflineTakes \(polishOfflineTakes), \(engine)")
             }
         }
@@ -52,7 +52,7 @@ struct CleanUpSwitchReadersTests {
     @Test func anUpgraderWithTheOldSwitchOffSeesItOff() {
         let settings = makeSettings(polishWithModel: false, polishOfflineTakes: true, engine: .offline)
         #expect(!DictationEngineResolver.wantsModelPolish(settings: settings))
-        #expect(!StylesPageView.cleanUpSwitchShowsOn(settings: settings))
+        #expect(!WritingPageView.cleanUpSwitchShowsOn(settings: settings))
         #expect(WordsPageView.engineSentence(settings: settings, hasPolisher: true) == "your voice and your history stay on this mac.")
     }
 
