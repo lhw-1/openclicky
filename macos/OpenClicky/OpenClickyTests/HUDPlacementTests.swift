@@ -71,6 +71,25 @@ struct HUDPlacementTests {
         #expect(island.expansion == .compact)
     }
 
+    /// While the tour (or a permission card) is up, the pointer drifting onto the island, the
+    /// busy strip under a question, or a click must never open the panel over the setup.
+    @Test func setupKeepsThePanelClosed() async throws {
+        let island = model(.notch)
+        island.setTourCard(FirstRunTourCard(step: .talk, title: "t", detail: "d", secondaryTitle: "skip"))
+        island.setHovering(true)
+        #expect(island.expansion == .tour)
+        // The card gives way to the busy strip after the island's 0.4 s grace period.
+        island.setBusy(true)
+        try await Task.sleep(nanoseconds: 600_000_000)
+        #expect(island.expansion == .compact)
+        island.togglePinned()
+        island.setHovering(true)
+        try await Task.sleep(nanoseconds: 600_000_000)
+        #expect(island.expansion == .compact)
+        island.setBusy(false)
+        #expect(island.expansion == .tour)
+    }
+
     @Test func everyGoodbyeSaysHowToComeBackOrIsShort() {
         for farewell in Farewell.all {
             #expect(farewell.text.contains("openclicky") || farewell.text.contains("⌘ space"))

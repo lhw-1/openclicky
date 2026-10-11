@@ -136,6 +136,13 @@ final class NotchHUDModel: ObservableObject {
 
     /// The first-run tour's card, if the tour is on; set by `FirstRunTourController`.
     @Published var tourCard: FirstRunTourCard?
+
+    /// The permission cards or the tour are up: hovering or clicking the island must not open the
+    /// panel over them (the pointer drifts there while setting up), even while the busy strip shows.
+    var isSetupInProgress: Bool { tourCard != nil || permissionPrompt != nil }
+
+    /// The tour just finished: the island settles back into the notch slowly, once.
+    @Published private(set) var isSettlingGracefully = false
     var tourWidth: CGFloat { placement.isSideDrawer ? 360 : 512 }
     var tourHeight: CGFloat {
         // A side drawer is narrower, so the copy wraps onto more lines.
@@ -343,6 +350,7 @@ final class NotchHUDModel: ObservableObject {
     }
 
     func togglePinned() {
+        guard !isSetupInProgress else { return }
         isPinnedOpen.toggle()
         reconcile()
     }
@@ -393,6 +401,10 @@ final class NotchHUDModel: ObservableObject {
     /// under way (that is the step being tried), and comes back when it ends.
     func setTourCard(_ card: FirstRunTourCard?) {
         guard tourCard != card else { return }
+        if tourCard != nil && card == nil {
+            isSettlingGracefully = true
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1.8) { [weak self] in self?.isSettlingGracefully = false }
+        }
         let sizeChanged = tourCard?.status != card?.status || tourCard?.step != card?.step || tourCard?.microphoneName != card?.microphoneName || tourCard?.field != card?.field
         tourCard = card
         reconcile(immediately: true)
@@ -428,7 +440,7 @@ final class NotchHUDModel: ObservableObject {
         } else if permissionPrompt != nil {
             // Without permissions there is nothing else worth opening the island for.
             target = .permission
-        } else if isPinnedOpen {
+        } else if isPinnedOpen && !isSetupInProgress {
             target = .full
         } else if tourCard != nil && !isBusy {
             // Like the connect card: hovering it must not swap it for the panel.
@@ -437,7 +449,7 @@ final class NotchHUDModel: ObservableObject {
             // Hovering the connect card must not swap it for the full panel while the user is
             // reaching for its buttons; a click on the island still pins the full panel open.
             target = .connect
-        } else if isHovering {
+        } else if isHovering && !isSetupInProgress {
             target = .full
         } else {
             target = restingExpansion
@@ -449,7 +461,9 @@ final class NotchHUDModel: ObservableObject {
         // Grace period so the panel does not flicker when the pointer skims the edge.
         collapseTask = Task { [weak self] in
             try? await Task.sleep(nanoseconds: 400_000_000)
-            guard !Task.isCancelled, let self, !self.isHovering, !self.isPinnedOpen, !self.isComposerOpen else { return }
+            // Hovering or a pinned panel holds the island open, except during setup, where the
+            // pointer resting on the tour card must not keep the busy strip from showing.
+            guard !Task.isCancelled, let self, self.isSetupInProgress || (!self.isHovering && !self.isPinnedOpen), !self.isComposerOpen else { return }
             self.setExpansion(self.restingExpansion)
         }
     }
@@ -892,8 +906,9 @@ final class NotchHUDManager {
             fitHostingViewToWindow(instance)
             window.ignoresMouseEvents = instance.model.isInvisible
         } else {
-            // Shrink after the closing animation so the content is not clipped mid-spring.
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.45) { [weak self, weak instance] in
+            // Shrink after the closing animation so the content is not clipped mid-spring (the
+            // tour's slow settle into the notch takes longer).
+            DispatchQueue.main.asyncAfter(deadline: .now() + (instance.model.isSettlingGracefully ? 1.5 : 0.45)) { [weak self, weak instance] in
                 guard let self, let instance else { return }
                 instance.window.setFrame(instance.model.windowFrame, display: true)
                 self.fitHostingViewToWindow(instance)
@@ -1071,7 +1086,7 @@ struct NotchHUDView: View {
         .padding(.top, model.placement.isSideDrawer ? model.windowMargin : 0)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: islandAlignment)
         .contentShape(Rectangle())
-        .animation(.spring(response: 0.42, dampingFraction: 0.84), value: expansion)
+        .animation(model.isSettlingGracefully ? .spring(response: 1.3, dampingFraction: 0.92) : .spring(response: 0.42, dampingFraction: 0.84), value: expansion)
         .animation(.spring(response: 0.42, dampingFraction: 0.84), value: model.activeTab)
         .animation(.easeInOut(duration: 0.25), value: companionManager.isCursorDocked)
         .animation(.easeInOut(duration: 0.2), value: companionManager.voiceState)

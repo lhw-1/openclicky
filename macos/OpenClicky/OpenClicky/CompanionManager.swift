@@ -1007,9 +1007,23 @@ final class CompanionManager: ObservableObject {
     private func startPermissionPolling() {
         accessibilityCheckTimer = Timer.scheduledTimer(withTimeInterval: 1.5, repeats: true) { [weak self] _ in
             Task { @MainActor [weak self] in
-                self?.refreshAllPermissions()
+                guard let self else { return }
+                self.refreshAllPermissions()
+                self.checkScreenContentQuietlyOnce()
             }
         }
+    }
+
+    private var didCheckScreenContentQuietly = false
+
+    /// Screen Recording is on (often after the relaunch it needs) but Screen Content has not been
+    /// recorded as granted: try one capture before the island asks. With Screen Recording allowed
+    /// it simply works, and the card that would ask "pick a display" never shows.
+    private func checkScreenContentQuietlyOnce() {
+        guard !didCheckScreenContentQuietly, hasScreenRecordingPermission, !hasScreenContentPermission, !isRequestingScreenContent else { return }
+        didCheckScreenContentQuietly = true
+        AppLog.append("permissions: screen recording is on; checking screen content with one capture")
+        requestScreenContentPermission()
     }
 
     private func bindAudioPowerLevel() {
@@ -1558,7 +1572,10 @@ final class CompanionManager: ObservableObject {
                 var toolOutcomes: [String] = []
                 for call in toolCalls.prefix(2) {
                     switch MacAction.parse(toolName: call.name, arguments: call.arguments) {
-                    case .action(let action): toolOutcomes.append((await macActionRunner.perform(action)).spokenSentence)
+                    case .action(let action):
+                        let outcome = await macActionRunner.perform(action)
+                        if outcome.didSomething { lastSuccessfulQuickActionAt = Date() }
+                        toolOutcomes.append(outcome.spokenSentence)
                     case .badArguments(let outcome): toolOutcomes.append(outcome.spokenSentence)
                     case .notAFastAction: toolOutcomes.append(AccountLimitError.notOnPlan.message)
                     }
