@@ -50,6 +50,16 @@ extension SettingsCatalog {
                 title: "Anthropic (Claude)", detail: "Answers your questions about the screen.",
                 keywords: ["anthropic", "claude", "api key", "byok", "own key", "anthropicApiKey"],
                 view: AnyView(AnthropicKeyEditor())),
+            providerKeyItem("account.openRouterKey", title: "OpenRouter", detail: "One key for Claude, GPT, Gemini, Llama and more.",
+                            placeholder: "sk-or-…", keywords: ["openrouter", "router", "llama", "deepseek", "many models"], keyPath: \.openRouterApiKey),
+            providerKeyItem("account.geminiKey", title: "Google Gemini", detail: "From Google AI Studio.",
+                            placeholder: "AIza…", keywords: ["gemini", "google", "ai studio"], keyPath: \.geminiApiKey),
+            providerKeyItem("account.groqKey", title: "Groq", detail: "Very fast answers on open models.",
+                            placeholder: "gsk_…", keywords: ["groq", "llama", "fast"], keyPath: \.groqApiKey),
+            providerKeyItem("account.mistralKey", title: "Mistral", detail: "Mistral’s own models.",
+                            placeholder: "Mistral key", keywords: ["mistral", "le chat", "pixtral"], keyPath: \.mistralApiKey),
+            providerKeyItem("account.xaiKey", title: "xAI (Grok)", detail: "Grok, from xAI.",
+                            placeholder: "xai-…", keywords: ["xai", "grok", "x.ai"], keyPath: \.xaiApiKey),
             SettingsItem(
                 id: "account.sarvamKey", page: .account, section: "Your keys",
                 title: "Sarvam", detail: "For the Sarvam engine.",
@@ -250,6 +260,50 @@ private struct BackendEngineUsageRow: View {
 }
 
 // MARK: - your keys
+
+extension SettingsCatalog {
+    /// A row for one more provider's key, kept in shell.json.
+    func providerKeyItem(_ id: String, title: String, detail: String, placeholder: String, keywords: [String],
+                         keyPath: WritableKeyPath<OpenClickyShellSettings, String?>) -> SettingsItem {
+        SettingsItem(
+            id: id, page: .account, section: "Your keys", title: title, detail: detail,
+            keywords: keywords + ["api key", "byok", "own key", "provider"],
+            view: AnyView(ProviderKeyEditor(title: title, detail: detail, placeholder: placeholder, keyPath: keyPath)))
+    }
+}
+
+/// One provider's key: field and Save. A saved key can answer questions (ProviderRouter).
+private struct ProviderKeyEditor: View {
+    let title: String
+    let detail: String
+    let placeholder: String
+    let keyPath: WritableKeyPath<OpenClickyShellSettings, String?>
+    @State private var key = ""
+    @State private var status: String?
+
+    var body: some View {
+        SettingsRow(title: title, detail: status ?? detail) {
+            HStack(spacing: 8) {
+                SecureField("", text: $key, prompt: Text(placeholder))
+                    .labelsHidden()
+                    .textFieldStyle(.roundedBorder)
+                    .frame(width: 180)
+                    .onSubmit(saveKey)
+                    .accessibilityLabel("\(title) key")
+                Button("Save", action: saveKey)
+            }
+        }
+        .onAppear { key = OpenClickyConfiguration.settings[keyPath: keyPath] ?? "" }
+    }
+
+    private func saveKey() {
+        let trimmed = key.trimmingCharacters(in: .whitespacesAndNewlines)
+        OpenClickyConfiguration.update { $0[keyPath: keyPath] = trimmed.isEmpty ? nil : trimmed }
+        NotificationCenter.default.post(name: OpenClickyConfiguration.credentialsChangedNotification, object: nil)
+        ShellSettingsRevision.shared.noteChanged()
+        status = trimmed.isEmpty ? "Key removed." : "✓ Saved. It can answer your questions now."
+    }
+}
 
 private struct OwnOpenAIKeyEditor: View {
     @State private var openaiKey = OpenClickyConfiguration.settings.openaiApiKey ?? ""

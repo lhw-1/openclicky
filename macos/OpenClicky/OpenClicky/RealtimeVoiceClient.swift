@@ -391,7 +391,7 @@ final class RealtimeVoiceClient: NSObject, ObservableObject {
             (secretData, secretResponse) = try await urlSession.data(for: secretRequest)
         case .unavailable(let sentence):
             throw ProviderRouteUnavailable(capability: .realtime, sentence: sentence)
-        case .backend, .anthropicDirect:
+        case .backend, .anthropicDirect, .answerProvider:
             // backendBaseURL is user-configurable (shell.json or an environment override), not a
             // compile-time literal, so a malformed value must throw instead of crashing the app.
             guard let secretRequestURL = URL(string: "\(OpenClickyConfiguration.backendBaseURL)/agent/realtime/session") else {

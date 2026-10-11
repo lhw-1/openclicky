@@ -68,6 +68,9 @@ class ClaudeAPI {
             request = DirectProviderRequests.anthropicMessages(key: anthropicKey)
         case .unavailable(let sentence):
             throw ProviderRouteUnavailable(capability: .claude, sentence: sentence)
+        case .answerProvider(let source):
+            // analyzeImageStreaming hands these to an AnswerProvider before building a request.
+            throw ProviderRouteUnavailable(capability: .claude, sentence: "\(source.displayName) answers through its own provider")
         case .backend, .openAIDirect:
             request = URLRequest(url: apiURL)
             request.httpMethod = "POST"
@@ -143,6 +146,27 @@ class ClaudeAPI {
         onTextChunk: @MainActor @Sendable (String) -> Void
     ) async throws -> (text: String, toolCalls: [ClaudeToolCall], duration: TimeInterval) {
         let startTime = Date()
+
+        // Another source answers (an OpenAI-compatible key, Gemini, a Claude Code or Codex plan):
+        // the same question goes to its AnswerProvider, and its text streams back the same way.
+        if case .answerProvider(let source) = ProviderRouter.current(for: .claude) {
+            let provider = try AnswerProviderFactory.make(for: source, credentials: ProviderRouter.currentCredentials(),
+                                                          modelOverrides: OpenClickyConfiguration.settings.answerModels ?? [:])
+            let answerRequest = AnswerRequest(
+                images: images.map { AnswerRequest.Image(data: $0.data, label: $0.label, mediaType: detectImageMediaType(for: $0.data)) },
+                systemPrompt: systemPrompt,
+                history: conversationHistory.map { AnswerRequest.Turn(user: $0.userPlaceholder, assistant: $0.assistantResponse) },
+                userPrompt: userPrompt,
+                tools: tools.compactMap(Self.answerTool(fromAnthropicTool:)))
+            // The main queue keeps the pieces in order; each one is the whole answer so far, like below.
+            let accumulated = AnswerTextAccumulator()
+            let result = try await provider.answer(answerRequest) { piece in
+                let soFar = accumulated.append(piece)
+                DispatchQueue.main.async { MainActor.assumeIsolated { onTextChunk(soFar) } }
+            }
+            AppLog.append("answer: \(source.displayName) answered (\(result.text.count) chars, \(result.toolCalls.count) tool calls)")
+            return (text: result.text, toolCalls: result.toolCalls, duration: Date().timeIntervalSince(startTime))
+        }
 
         var request = try makeAPIRequest()
 
@@ -338,6 +362,28 @@ class ClaudeAPI {
 
         let duration = Date().timeIntervalSince(startTime)
         return (text: text, duration: duration)
+    }
+}
+
+/// The answer so far, appended to from a provider's callback on whatever thread it streams on.
+nonisolated final class AnswerTextAccumulator: @unchecked Sendable {
+    private let lock = NSLock()
+    private var text = ""
+
+    func append(_ piece: String) -> String {
+        lock.lock(); defer { lock.unlock() }
+        text += piece
+        return text
+    }
+}
+
+extension ClaudeAPI {
+    /// An Anthropic tool definition (name, description, input_schema) as an AnswerRequest tool.
+    nonisolated static func answerTool(fromAnthropicTool tool: [String: Any]) -> AnswerRequest.Tool? {
+        guard let name = tool["name"] as? String else { return nil }
+        let schema = tool["input_schema"] as? [String: Any] ?? ["type": "object", "properties": [String: Any]()]
+        guard let schemaJSON = try? JSONSerialization.data(withJSONObject: schema) else { return nil }
+        return AnswerRequest.Tool(name: name, description: tool["description"] as? String ?? "", inputSchemaJSON: schemaJSON)
     }
 }
 

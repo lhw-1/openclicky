@@ -296,7 +296,8 @@ final class FirstRunTourController: ObservableObject {
     /// The tour's last note before "all set", on a free account: it has limited credits, and an
     /// AI subscription the person already pays for can be used instead by adding its key.
     private var needsFreeAccountNote: Bool {
-        OpenClickyConfiguration.hasAccountToken && !OpenClickyConfiguration.usesOwnKeys
+        // Questions are answered on OpenClicky's credits (no key or plan of their own answers).
+        ProviderRouter.route(for: .claude, credentials: ProviderRouter.currentCredentials()) == .backend
     }
 
     /// No key and no account (the guest start did not work): the account card asks for an email

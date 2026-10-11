@@ -39,6 +39,11 @@ extension SettingsCatalog {
                     initialValue: companionManager.isCursorDocked,
                     set: { [companionManager] in companionManager.setCursorDocked($0) }))),
             SettingsItem(
+                id: "clicky.answerSource", page: .clicky, section: "Voice",
+                title: "Answers come from", detail: "Automatic uses your own keys first, then plans you switched on, then the free credits.",
+                keywords: ["provider", "model", "openai", "anthropic", "claude", "openrouter", "gemini", "groq", "mistral", "grok", "codex", "subscription", "plan", "answers"],
+                view: AnyView(AnswerSourceRow())),
+            SettingsItem(
                 id: "clicky.language", page: .clicky, section: "Voice",
                 title: "Language", detail: "Clicky speaks and listens in this.",
                 keywords: ["language", "english", "hindi", "tamil", "speak", "reply"],
@@ -181,6 +186,44 @@ private struct PointerPresenceOptions: View {
         .opacity(isPointerShown ? 1 : 0.45)
         .onReceive(companionManager.$pointerPresence) { presence = $0 }
         .onReceive(companionManager.$isClickyCursorEnabled) { isPointerShown = $0 }
+    }
+}
+
+/// Who answers questions: automatic, or one source that is set up. Shows who is answering now.
+private struct AnswerSourceRow: View {
+    @ObservedObject private var shellSettingsRevision = ShellSettingsRevision.shared
+
+    var body: some View {
+        let _ = shellSettingsRevision.revision
+        let credentials = ProviderRouter.currentCredentials()
+        let available = credentials.answerSourcesInOrder
+        let picked = OpenClickyConfiguration.settings.answerSource.flatMap(AnswerSource.init(rawValue:))
+        SettingsRow(title: "Answers come from", detail: "Now: \(nowAnswering(credentials))") {
+            Picker("", selection: Binding(
+                get: { picked.map(\.rawValue) ?? "auto" },
+                set: { choice in
+                    OpenClickyConfiguration.update { $0.answerSource = choice == "auto" ? nil : choice }
+                    ShellSettingsRevision.shared.noteChanged()
+                }
+            )) {
+                Text("Automatic").tag("auto")
+                if !available.isEmpty { Divider() }
+                ForEach(available) { source in Text(source.displayName).tag(source.rawValue) }
+                // A pick that is no longer set up stays visible, so the menu does not jump.
+                if let picked, !available.contains(picked) { Text("\(picked.displayName) (not set up)").tag(picked.rawValue) }
+            }
+            .labelsHidden().fixedSize()
+        }
+    }
+
+    private func nowAnswering(_ credentials: ProviderCredentials) -> String {
+        switch ProviderRouter.route(for: .claude, credentials: credentials) {
+        case .anthropicDirect: return AnswerSource.anthropic.displayName
+        case .backend: return AnswerSource.openClickyAccount.displayName
+        case .answerProvider(let source): return source.displayName
+        case .openAIDirect: return AnswerSource.openAI.displayName
+        case .unavailable: return "nothing set up yet"
+        }
     }
 }
 

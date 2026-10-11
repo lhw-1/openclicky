@@ -35,6 +35,9 @@ nonisolated enum ProviderCapability: String, CaseIterable, Sendable {
 nonisolated enum ProviderRoute: Equatable, Sendable {
     case openAIDirect
     case anthropicDirect
+    /// Questions answered by another source (AnswerProvider.swift): an OpenAI-compatible key,
+    /// Gemini, or a Claude Code / Codex plan. Only ever the route for `.claude`.
+    case answerProvider(AnswerSource)
     /// The OpenClicky backend, on the account's token (no own keys sent).
     case backend
     /// No key for this and no account: the sentence says what is missing.
@@ -44,6 +47,7 @@ nonisolated enum ProviderRoute: Equatable, Sendable {
         switch self {
         case .openAIDirect: return "openai, own key"
         case .anthropicDirect: return "anthropic, own key"
+        case .answerProvider(let source): return source.displayName
         case .backend: return "openclicky backend, account"
         case .unavailable: return "unavailable"
         }
@@ -60,8 +64,21 @@ nonisolated struct ProviderCredentials: Equatable, Sendable {
     var openAIKey: String?
     var anthropicKey: String?
     var accountToken: String?
+    /// The other keys that can answer questions, and the plans the person switched on.
+    var openRouterKey: String?
+    var geminiKey: String?
+    var groqKey: String?
+    var mistralKey: String?
+    var xaiKey: String?
+    var claudeCodePlanOn = false
+    var codexPlanOn = false
+    /// Who should answer, when the person picked one (nil: automatic).
+    var preferredAnswerSource: AnswerSource?
 
-    init(openAIKey: String?, anthropicKey: String?, accountToken: String?) {
+    init(openAIKey: String?, anthropicKey: String?, accountToken: String?,
+         openRouterKey: String? = nil, geminiKey: String? = nil, groqKey: String? = nil,
+         mistralKey: String? = nil, xaiKey: String? = nil,
+         claudeCodePlanOn: Bool = false, codexPlanOn: Bool = false, preferredAnswerSource: AnswerSource? = nil) {
         func cleaned(_ value: String?) -> String? {
             let trimmed = (value ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
             return trimmed.isEmpty ? nil : trimmed
@@ -69,19 +86,61 @@ nonisolated struct ProviderCredentials: Equatable, Sendable {
         self.openAIKey = cleaned(openAIKey)
         self.anthropicKey = cleaned(anthropicKey)
         self.accountToken = cleaned(accountToken)
+        self.openRouterKey = cleaned(openRouterKey)
+        self.geminiKey = cleaned(geminiKey)
+        self.groqKey = cleaned(groqKey)
+        self.mistralKey = cleaned(mistralKey)
+        self.xaiKey = cleaned(xaiKey)
+        self.claudeCodePlanOn = claudeCodePlanOn
+        self.codexPlanOn = codexPlanOn
+        self.preferredAnswerSource = preferredAnswerSource
     }
 
     init(settings: OpenClickyShellSettings) {
-        self.init(openAIKey: settings.openaiApiKey, anthropicKey: settings.anthropicApiKey, accountToken: settings.token)
+        self.init(openAIKey: settings.openaiApiKey, anthropicKey: settings.anthropicApiKey, accountToken: settings.token,
+                  openRouterKey: settings.openRouterApiKey, geminiKey: settings.geminiApiKey, groqKey: settings.groqApiKey,
+                  mistralKey: settings.mistralApiKey, xaiKey: settings.xaiApiKey,
+                  claudeCodePlanOn: settings.useClaudeCodePlan == true, codexPlanOn: settings.useCodexPlan == true,
+                  preferredAnswerSource: settings.answerSource.flatMap(AnswerSource.init(rawValue:)))
+    }
+
+    /// The key for an API source, nil for the plans and the account.
+    func key(for source: AnswerSource) -> String? {
+        switch source {
+        case .anthropic: return anthropicKey
+        case .openAI: return openAIKey
+        case .openRouter: return openRouterKey
+        case .gemini: return geminiKey
+        case .groq: return groqKey
+        case .mistral: return mistralKey
+        case .xai: return xaiKey
+        case .claudeCodePlan, .codexPlan, .openClickyAccount: return nil
+        }
+    }
+
+    /// Whether `source` can answer with what is set up: its key, its plan switched on, or an account.
+    func canAnswer(with source: AnswerSource) -> Bool {
+        switch source {
+        case .claudeCodePlan: return claudeCodePlanOn
+        case .codexPlan: return codexPlanOn
+        case .openClickyAccount: return accountToken != nil
+        default: return key(for: source) != nil
+        }
+    }
+
+    /// The sources that can answer, in the order "automatic" tries them: own keys (Anthropic first,
+    /// then OpenRouter, which reaches the most models), then the plans switched on, then the account.
+    var answerSourcesInOrder: [AnswerSource] {
+        let order: [AnswerSource] = [.anthropic, .openRouter, .openAI, .gemini, .xai, .mistral, .groq, .claudeCodePlan, .codexPlan, .openClickyAccount]
+        return order.filter(canAnswer(with:))
     }
 }
 
 nonisolated enum ProviderRouter {
     /// No key and no account: the free account is the way in for most people, so it comes first.
     static let needsOpenAIKeySentence = "i can do that once you add your email for a free account, in settings, account. your own openai key works too."
-    static let needsAnthropicKeySentence = "i can answer that once you add your email for a free account, in settings, account. your own anthropic key works too."
+    static let needsAnthropicKeySentence = "i can answer that once you add your email for a free account, in settings, account. a key from openai, anthropic, openrouter, gemini and others works too."
     /// The backend's own-key path answers `byok_missing_anthropic_key` here; this is that, said plainly.
-    static let claudeNeedsAnthropicKeyTooSentence = "the claude lanes need your anthropic key too: add anthropicApiKey to shell.json. your openai key covers the rest."
     static let assemblyAINeedsAccountSentence = "assemblyai runs on openclicky's own key, so it needs an openclicky account. pick openai or offline dictation instead."
 
     /// The route for `capability`: own key → that vendor; no key but an account → the backend;
@@ -89,7 +148,15 @@ nonisolated enum ProviderRouter {
     static func route(for capability: ProviderCapability, credentials: ProviderCredentials) -> ProviderRoute {
         switch capability {
         case .claude:
-            if credentials.anthropicKey != nil { return .anthropicDirect }
+            // The person's pick when it can answer, else the first that can in the automatic order.
+            let source = credentials.preferredAnswerSource.flatMap { credentials.canAnswer(with: $0) ? $0 : nil }
+                ?? credentials.answerSourcesInOrder.first
+            switch source {
+            case .anthropic: return .anthropicDirect
+            case .openClickyAccount: return .backend
+            case .some(let other): return .answerProvider(other)
+            case .none: return .unavailable(needsAnthropicKeySentence)
+            }
         case .openAIChat, .speech, .transcription, .realtime, .skillDrafting:
             if credentials.openAIKey != nil { return .openAIDirect }
         case .assemblyAIStreaming:
@@ -98,7 +165,7 @@ nonisolated enum ProviderRouter {
         if credentials.accountToken != nil { return .backend }
         switch capability {
         case .claude:
-            return .unavailable(credentials.openAIKey != nil ? claudeNeedsAnthropicKeyTooSentence : needsAnthropicKeySentence)
+            return .unavailable(needsAnthropicKeySentence)
         case .assemblyAIStreaming:
             return .unavailable(assemblyAINeedsAccountSentence)
         case .openAIChat, .speech, .transcription, .realtime, .skillDrafting:

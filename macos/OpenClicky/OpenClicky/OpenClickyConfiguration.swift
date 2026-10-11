@@ -389,7 +389,8 @@ enum OpenClickyConfiguration {
 
     nonisolated static func isConfigured(_ shellSettings: OpenClickyShellSettings) -> Bool {
         let credentials = ProviderCredentials(settings: shellSettings)
-        return credentials.accountToken != nil || credentials.openAIKey != nil || credentials.anthropicKey != nil
+        // An account, an OpenAI key (it also covers speech and dictation), or anything that can answer.
+        return credentials.accountToken != nil || credentials.openAIKey != nil || !credentials.answerSourcesInOrder.isEmpty
     }
 
     /// Where cua-driver is, mirroring the CLI's own precedence (`resolveCuaDriverBin` in
