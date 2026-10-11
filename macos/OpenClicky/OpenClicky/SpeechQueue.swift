@@ -2,9 +2,10 @@
 //  SpeechQueue.swift
 //  OpenClicky
 //
-//  Speaks an answer piece by piece while the rest is still being written. Each piece's audio is
-//  requested the moment the piece is enqueued, so the next piece is usually ready by the time the
-//  current one finishes; playback always follows the order of the text. The fetch and play steps
+//  Speaks an answer piece by piece while the rest is still being written. A piece's audio is
+//  requested up to two pieces ahead of the one playing, so the next piece is usually ready by the
+//  time the current one finishes, and an interrupted answer has bought at most two pieces nobody
+//  hears; playback always follows the order of the text. The fetch and play steps
 //  are injected, so the ordering, the first-audio signal and the failure hand-off are tested
 //  without the network or a speaker.
 //
@@ -24,8 +25,15 @@ final class SpeechQueue {
     private let playAudio: (Data) async throws -> Void
 
     private var pieceTexts: [String] = []
+    /// The fetches started so far, in piece order (a prefix of `pieceTexts`).
     private var pieceFetches: [Task<Data, Error>] = []
+    /// The piece `run` is waiting for or playing; fetches reach `piecesFetchedAhead` beyond it.
+    private var currentPieceIndex = 0
+    private static let piecesFetchedAhead = 2
     private var isFinished = false
+    /// Set by `cancel()`: nothing more is played, even when the current piece ends normally
+    /// (a stopped player finishes its piece as if it had played to the end).
+    private var isCancelled = false
     /// After a failure, later pieces are only collected (for the caller's fallback), never fetched.
     private var hasFailed = false
     /// Resumed when a piece is enqueued or the queue is finished, so `run` can stop waiting.
@@ -39,16 +47,7 @@ final class SpeechQueue {
     func enqueue(_ pieceText: String) {
         guard !isFinished else { return }
         pieceTexts.append(pieceText)
-        if hasFailed { wakeRunLoop(); return }
-        let fetchAudio = self.fetchAudio
-        // At most two requests at once (ElevenLabs caps concurrent requests on smaller plans): a
-        // piece waits for the fetch two places ahead of it before starting its own.
-        let fetchTwoPlacesAhead = pieceFetches.count >= 2 ? pieceFetches[pieceFetches.count - 2] : nil
-        pieceFetches.append(Task {
-            _ = try? await fetchTwoPlacesAhead?.value
-            try Task.checkCancellation()
-            return try await fetchAudio(pieceText)
-        })
+        startFetchesWithinReach()
         wakeRunLoop()
     }
 
@@ -61,16 +60,24 @@ final class SpeechQueue {
     /// Plays every piece in order until `finish()` and the last piece are done. `onFirstAudio` runs
     /// once, right before the first piece starts playing.
     func run(onFirstAudio: () -> Void) async throws {
+        // However playback ends (done, failed, interrupted), no fetch is left running.
+        defer { cancelPendingFetches() }
         var nextPieceIndex = 0
         while true {
-            try Task.checkCancellation()
-            if nextPieceIndex < pieceFetches.count {
+            try checkNotCancelled()
+            if nextPieceIndex < pieceTexts.count {
+                currentPieceIndex = nextPieceIndex
+                startFetchesWithinReach()
                 do {
                     let audioData = try await pieceFetches[nextPieceIndex].value
-                    try Task.checkCancellation()
+                    try checkNotCancelled()
                     if nextPieceIndex == 0 { onFirstAudio() }
                     try await playAudio(audioData)
                 } catch is CancellationError {
+                    throw CancellationError()
+                } catch where isCancelled || Task.isCancelled {
+                    // A fetch cancelled by `cancel()` fails with URLError.cancelled, not a
+                    // CancellationError: that is an interruption, not a voice failure to fall back from.
                     throw CancellationError()
                 } catch {
                     // Wait for the rest of the answer, then hand back everything not yet spoken.
@@ -90,11 +97,35 @@ final class SpeechQueue {
         }
     }
 
-    /// Stops fetching: used when the person speaks again or the answer is abandoned.
+    /// Stops fetching and playing: used when the person speaks again or the answer is abandoned.
     func cancel() {
         isFinished = true
+        isCancelled = true
         cancelPendingFetches()
         wakeRunLoop()
+    }
+
+    private func checkNotCancelled() throws {
+        if isCancelled { throw CancellationError() }
+        try Task.checkCancellation()
+    }
+
+    /// Starts the fetches for every enqueued piece up to `piecesFetchedAhead` beyond the current one.
+    private func startFetchesWithinReach() {
+        guard !hasFailed, !isCancelled else { return }
+        let lastPieceIndexWithinReach = min(pieceTexts.count - 1, currentPieceIndex + Self.piecesFetchedAhead)
+        while pieceFetches.count <= lastPieceIndexWithinReach {
+            let pieceText = pieceTexts[pieceFetches.count]
+            let fetchAudio = self.fetchAudio
+            // At most two requests at once (ElevenLabs caps concurrent requests on smaller plans): a
+            // piece waits for the fetch two places ahead of it before starting its own.
+            let fetchTwoPlacesAhead = pieceFetches.count >= 2 ? pieceFetches[pieceFetches.count - 2] : nil
+            pieceFetches.append(Task {
+                _ = try? await fetchTwoPlacesAhead?.value
+                try Task.checkCancellation()
+                return try await fetchAudio(pieceText)
+            })
+        }
     }
 
     private func cancelPendingFetches() {
@@ -120,6 +151,8 @@ final class StreamingAnswerSpeaker {
     private var hasVoiceStarted = false
     private var hasHandledPointTag = false
     private var enqueuedPieceCount = 0
+    /// A new question interrupted this answer: its voice must not start and its pointer must not fly.
+    private(set) var isCancelled = false
 
     init(speechQueue: SpeechQueue, onVoiceStarts: @escaping () -> Void, onPointTag: @escaping (String) -> Void) {
         self.speechQueue = speechQueue
@@ -152,6 +185,7 @@ final class StreamingAnswerSpeaker {
     }
 
     func cancel() {
+        isCancelled = true
         speechQueue.cancel()
     }
 
@@ -161,13 +195,14 @@ final class StreamingAnswerSpeaker {
     }
 
     private func voiceDidStart() {
+        guard !isCancelled else { return }
         hasVoiceStarted = true
         onVoiceStarts()
         handlePointTagIfKnown()
     }
 
     private func handlePointTagIfKnown() {
-        guard !hasHandledPointTag, let pointTag = chunker.pointTag else { return }
+        guard !isCancelled, !hasHandledPointTag, let pointTag = chunker.pointTag else { return }
         hasHandledPointTag = true
         onPointTag(pointTag)
     }

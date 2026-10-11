@@ -455,6 +455,7 @@ final class CompanionManager: ObservableObject {
             speakWithSystemVoice(AccountLimitError.notOnPlan.message)
             return
         }
+        stopActiveAnswer()
         currentResponseTask?.cancel()
         openClickyAgentClient.cancel()
         elevenLabsTTSClient.stopPlayback()
@@ -573,6 +574,21 @@ final class CompanionManager: ObservableObject {
     /// The currently running AI response task, if any. Cancelled when the user
     /// speaks again so a new response can begin immediately.
     private var currentResponseTask: Task<Void, Never>?
+
+    /// The ask lane's answer being spoken, kept so a new question stops it outright. Stopping only
+    /// the player ends the current piece "normally", and the queue went on to the next piece (and
+    /// kept fetching every remaining piece from /tts).
+    private var activeAnswerSpeaker: StreamingAnswerSpeaker?
+    private var activeAnswerPlayback: Task<Void, Error>?
+
+    /// Stops the spoken answer, its remaining /tts fetches, and its pointer — before the player is
+    /// stopped, so the queue cannot move on to the next piece.
+    private func stopActiveAnswer() {
+        activeAnswerSpeaker?.cancel()
+        activeAnswerPlayback?.cancel()
+        activeAnswerSpeaker = nil
+        activeAnswerPlayback = nil
+    }
 
     private var shortcutTransitionCancellable: AnyCancellable?
     private var voiceStateCancellable: AnyCancellable?
@@ -834,6 +850,7 @@ final class CompanionManager: ObservableObject {
         overlayWindowManager.hideOverlay()
         transientHideTask?.cancel()
 
+        stopActiveAnswer()
         currentResponseTask?.cancel()
         currentResponseTask = nil
         shortcutTransitionCancellable?.cancel()
@@ -1158,6 +1175,7 @@ final class CompanionManager: ObservableObject {
             overlayWindowManager.showOverlay(onScreens: NSScreen.screens, companionManager: self)
             isOverlayVisible = true
         }
+        stopActiveAnswer()
         currentResponseTask?.cancel()
         openClickyAgentClient.cancel()
         elevenLabsTTSClient.stopPlayback()
@@ -1243,6 +1261,7 @@ final class CompanionManager: ObservableObject {
             NotificationCenter.default.post(name: .clickyDismissPanel, object: nil)
 
             // Cancel any in-progress response, agent run, and TTS from a previous utterance
+            stopActiveAnswer()
             currentResponseTask?.cancel()
             openClickyAgentClient.cancel()
             elevenLabsTTSClient.stopPlayback()
@@ -1364,6 +1383,7 @@ final class CompanionManager: ObservableObject {
     /// Claude's response may include a [POINT:x,y:label] tag which triggers
     /// the buddy to fly to that element on screen.
     private func sendTranscriptToClaudeWithScreenshot(transcript: String) {
+        stopActiveAnswer()
         currentResponseTask?.cancel()
         elevenLabsTTSClient.stopPlayback()
 
@@ -1373,9 +1393,14 @@ final class CompanionManager: ObservableObject {
 
             do {
                 // Capture all connected screens so the AI has full context (an account sends at most two)
-                let screenCaptures = Self.screensForAsk(
-                    try await CompanionScreenCaptureUtility.captureAllScreensAsJPEG(),
-                    capabilities: AccountCapabilities.current())
+                let allScreenCaptures: [CompanionScreenCapture]
+                do {
+                    allScreenCaptures = try await CompanionScreenCaptureUtility.captureAllScreensAsJPEG()
+                } catch {
+                    // Told apart from a backend failure, so the person is sent to the right place.
+                    throw AskScreenCaptureError(underlyingError: error)
+                }
+                let screenCaptures = Self.screensForAsk(allScreenCaptures, capabilities: AccountCapabilities.current())
 
                 guard !Task.isCancelled else { return }
 
@@ -1428,6 +1453,8 @@ final class CompanionManager: ObservableObject {
                     onPointTag: { [weak self] pointTag in self?.pointAtAnswerTag(pointTag, screenCaptures: screenCaptures) }
                 )
                 let answerPlayback = Task { @MainActor in try await answerSpeaker.play() }
+                activeAnswerSpeaker = answerSpeaker
+                activeAnswerPlayback = answerPlayback
                 let askStartedAt = Date()
                 AppLog.append("ask: sending to claude (\(screenCaptures.count) screen(s))")
 
@@ -1475,11 +1502,21 @@ final class CompanionManager: ObservableObject {
                     print("🎯 Element pointing: \(parseResult.elementLabel ?? "no element")")
                 }
 
-                // Save this exchange to conversation history
-                conversationHistory.append((
-                    userTranscript: transcript,
-                    assistantResponse: spokenText
-                ))
+                if spokenText.isEmpty {
+                    // Nothing to say (an empty answer, or a bare tag): the queue never starts the
+                    // voice, so "thinking…" would stay up in silence. An empty turn is not history.
+                    AppLog.append("ask: empty answer (\(parseResult.coordinate == nil ? "no point" : "point only"))")
+                    dismissCursorCaption()
+                    if parseResult.coordinate == nil {
+                        speakWithSystemVoice(Self.emptyAnswerSentence)
+                    }
+                } else {
+                    // Save this exchange to conversation history
+                    conversationHistory.append((
+                        userTranscript: transcript,
+                        assistantResponse: spokenText
+                    ))
+                }
 
                 // Keep only the last 10 exchanges to avoid unbounded context growth
                 if conversationHistory.count > 10 {
@@ -1509,12 +1546,16 @@ final class CompanionManager: ObservableObject {
                     print("⚠️ TTS via backend failed (\(nsError.localizedDescription)); using the system voice")
                     AppLog.append("ask: voice failed (\(nsError.code)); using the system voice")
                     if !Task.isCancelled {
+                        // The success path dismisses "thinking…" when the voice starts; the system
+                        // voice starts here, so the caption goes now.
+                        dismissCursorCaption()
                         speakWithSystemVoice(failure.unspokenText.joined(separator: " "))
                         answerSpeaker.voiceFellBack()
                     }
                 }
-            } catch is CancellationError {
-                // User spoke again — response was interrupted
+            } catch where Self.isCancellation(error) || Task.isCancelled {
+                // User spoke again — response was interrupted. Cancelling the task that reads the
+                // answer stream ends it with URLError.cancelled, not a CancellationError.
             } catch {
                 AppLog.append("ask: failed: \((error as NSError).domain) \((error as NSError).code)")
                 dismissCursorCaption()
@@ -1532,7 +1573,8 @@ final class CompanionManager: ObservableObject {
                 } else {
                     ClickyAnalytics.trackResponseError(error: error.localizedDescription)
                     print("⚠️ Companion response error: \(error)")
-                    speakCreditsErrorFallback()
+                    speakWithSystemVoice(Self.askFailureSentence(
+                        for: error, screenRecordingAllowed: WindowPositionManager.hasScreenRecordingPermission()))
                 }
             }
 
@@ -1541,6 +1583,50 @@ final class CompanionManager: ObservableObject {
                 scheduleTransientHideIfNeeded()
             }
         }
+    }
+
+    /// The screenshot for a question could not be taken (Screen Recording off, or ScreenCaptureKit
+    /// failing), as opposed to the backend failing.
+    struct AskScreenCaptureError: Error {
+        let underlyingError: Error
+    }
+
+    static let emptyAnswerSentence = "i didn't get an answer — please ask again."
+
+    /// An interrupted request: Swift's CancellationError, or URLSession's own (-999) when the task
+    /// reading the answer stream was cancelled by a new question.
+    nonisolated static func isCancellation(_ error: Error) -> Bool {
+        if error is CancellationError { return true }
+        if let urlError = error as? URLError, urlError.code == .cancelled { return true }
+        let nsError = error as NSError
+        return nsError.domain == NSURLErrorDomain && nsError.code == NSURLErrorCancelled
+    }
+
+    /// What the companion says when a question fails for a reason that is not the account's
+    /// (sign-in and limits have their own sentences). The token sentence is kept for the backend
+    /// refusing the token; a capture failure or a dropped connection says what actually happened.
+    static func askFailureSentence(for error: Error, screenRecordingAllowed: Bool) -> String {
+        if error is AskScreenCaptureError {
+            return screenRecordingAllowed
+                ? "i couldn't see your screen just now — please ask again."
+                : "screen recording is off for openclicky — turn it on in system settings, privacy and security, screen recording."
+        }
+        if let urlError = error as? URLError {
+            switch urlError.code {
+            case .notConnectedToInternet, .networkConnectionLost, .timedOut, .cannotFindHost, .cannotConnectToHost, .dnsLookupFailed:
+                return "i couldn't reach openclicky — check your internet and ask again."
+            default:
+                break
+            }
+        }
+        let nsError = error as NSError
+        if nsError.domain == "ClaudeAPI" && (nsError.code == 401 || nsError.code == 403) {
+            return "something went wrong talking to the openclicky backend. check the backend and your token in the settings file."
+        }
+        if nsError.domain == "ClaudeAPI" && nsError.code == ClaudeAPI.midStreamErrorCode {
+            return "the answer stopped partway — please ask again."
+        }
+        return "something went wrong getting your answer — please ask again."
     }
 
     // MARK: - Realtime push-to-talk
@@ -1558,6 +1644,7 @@ final class CompanionManager: ObservableObject {
                 isOverlayVisible = true
             }
             NotificationCenter.default.post(name: .clickyDismissPanel, object: nil)
+            stopActiveAnswer()
             currentResponseTask?.cancel()
             openClickyAgentClient.cancel()
             elevenLabsTTSClient.stopPlayback()
@@ -1777,14 +1864,11 @@ final class CompanionManager: ObservableObject {
         if !isCursorDocked { scheduleTransientHideIfNeeded() }
     }
 
-    /// Speaks a hardcoded error message using macOS system TTS when API
-    /// credits run out. Uses NSSpeechSynthesizer so it works even when
-    /// ElevenLabs is down.
+    /// Speaks a hardcoded error message with the system voice when the agent lane fails. It uses
+    /// the synthesizer every new question stops: a separate NSSpeechSynthesizer used to keep
+    /// talking over the next question.
     private func speakCreditsErrorFallback() {
-        let utterance = "Something went wrong talking to the OpenClicky backend. Check the backend and your token in the settings file."
-        let synthesizer = NSSpeechSynthesizer()
-        synthesizer.startSpeaking(utterance)
-        voiceState = .responding
+        speakWithSystemVoice("something went wrong talking to the openclicky backend. check the backend and your token in the settings file.")
     }
 
     // MARK: - Point Tag Parsing

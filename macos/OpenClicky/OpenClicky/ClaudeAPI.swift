@@ -220,6 +220,17 @@ class ClaudeAPI {
                 continue
             }
 
+            // Anthropic reports a failure after the 200 (overloaded, a dropped upstream) as an
+            // `error` event; ignored, it ended the answer in silence as if it were complete.
+            if let streamFailure = Self.streamFailure(fromEvent: eventPayload) {
+                AppLog.append("claude: stream error after \(accumulatedResponseText.count) chars: \(streamFailure.localizedDescription)")
+                throw streamFailure
+            }
+            // A cut-off answer is still spoken as it is; the log says why it ended early.
+            if Self.stopReason(fromEvent: eventPayload) == "max_tokens" {
+                AppLog.append("claude: answer cut off at max_tokens (\(accumulatedResponseText.count) chars)")
+            }
+
             // We care about content_block_delta events that contain text chunks
             if eventType == "content_block_delta",
                let delta = eventPayload["delta"] as? [String: Any],
@@ -323,6 +334,27 @@ struct ClaudeToolCall: Equatable {
 }
 
 extension ClaudeAPI {
+    /// The failure an Anthropic `error` event reports ({"type":"error","error":{"type":…,"message":…}}),
+    /// as a ClaudeAPI error with `midStreamErrorCode`; nil for every other event.
+    static func streamFailure(fromEvent eventPayload: [String: Any]) -> NSError? {
+        guard eventPayload["type"] as? String == "error" else { return nil }
+        let streamError = eventPayload["error"] as? [String: Any]
+        let errorType = streamError?["type"] as? String ?? "unknown"
+        let errorMessage = streamError?["message"] as? String ?? ""
+        return NSError(
+            domain: "ClaudeAPI",
+            code: midStreamErrorCode,
+            userInfo: [NSLocalizedDescriptionKey: "Stream error (\(errorType)): \(errorMessage)"]
+        )
+    }
+
+    /// The `stop_reason` a `message_delta` event carries ("end_turn", "max_tokens", "tool_use"…).
+    static func stopReason(fromEvent eventPayload: [String: Any]) -> String? {
+        guard eventPayload["type"] as? String == "message_delta",
+              let delta = eventPayload["delta"] as? [String: Any] else { return nil }
+        return delta["stop_reason"] as? String
+    }
+
     /// Tool calls from an Anthropic SSE stream: `content_block_start` names the tool, `input_json_delta`
     /// pieces build its input, `content_block_stop` closes it. Input that is not valid JSON is dropped.
     static func parseToolCalls(fromSSELines lines: [String]) -> [ClaudeToolCall] {
