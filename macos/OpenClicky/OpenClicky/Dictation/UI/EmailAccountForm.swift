@@ -147,3 +147,50 @@ struct EmailAccountFormContent: View {
         }
     }
 }
+
+/// A guest's "type the code from the email" field: the 6-digit code confirms the address (the
+/// link still works; on a backend without /auth/confirm this field hides itself).
+struct GuestConfirmationCodeField: View {
+    /// Called once the email is confirmed (or already was), so the row can reload the account.
+    let onConfirmed: () -> Void
+    @ObservedObject private var auth = OpenClickyAuthSession.shared
+    @State private var code = ""
+    @State private var errorText: String?
+    @State private var isChecking = false
+    @State private var work = AccountWorkSlot()
+
+    var body: some View {
+        if auth.confirmByCodeSupported {
+            VStack(alignment: .leading, spacing: 6) {
+                HStack(spacing: 8) {
+                    TextField("code from the email", text: $code)
+                        .textFieldStyle(.roundedBorder).textContentType(.oneTimeCode).frame(width: 150)
+                        .onSubmit(confirm)
+                    Button(isChecking ? "checking…" : "confirm", action: confirm)
+                        .buttonStyle(PaperPillButtonStyle()).pointerCursor()
+                        .disabled(isChecking || !EmailAccountForm.canSubmitCode(code))
+                }
+                if let errorText {
+                    Text(errorText).font(Paper.caption).foregroundStyle(Paper.danger).fixedSize(horizontal: false, vertical: true)
+                }
+            }
+            .onDisappear { work.cancel() }
+        }
+    }
+
+    private func confirm() {
+        guard EmailAccountForm.canSubmitCode(code), !work.isRunning else { return }
+        let digits = code
+        isChecking = true
+        errorText = nil
+        work.start {
+            let message = await auth.confirmEmail(code: digits)
+            isChecking = false
+            errorText = message
+            if message == nil && auth.confirmByCodeSupported {
+                code = ""
+                onConfirmed()
+            }
+        }
+    }
+}

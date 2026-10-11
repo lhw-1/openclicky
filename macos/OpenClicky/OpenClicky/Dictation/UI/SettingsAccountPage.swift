@@ -119,6 +119,7 @@ private struct SignedInAccountRows: View {
                             Button("resend link", action: resend)
                                 .buttonStyle(.plain).font(Paper.caption).foregroundStyle(Paper.accentFill).pointerCursor()
                         }
+                        GuestConfirmationCodeField(onConfirmed: { billing.refresh() })
                     }
                 }
                 Spacer()
