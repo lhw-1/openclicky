@@ -1133,6 +1133,10 @@ final class CompanionManager: ObservableObject {
     /// The island's welcome: meet the pointer, then dictate, ask, hand over a task.
     let firstRunTour = FirstRunTourController()
 
+    /// True when the last question ended in a failure sentence instead of an answer, so the tour
+    /// does not take "something went wrong", said aloud, for asking Clicky working.
+    @Published private(set) var lastQuestionFailed = false
+
     /// When a quick action (open an app, make a folder…) last did what was asked; the tour's
     /// "hand me a task" step watches it.
     @Published private(set) var lastSuccessfulQuickActionAt: Date?
@@ -1289,6 +1293,7 @@ final class CompanionManager: ObservableObject {
             // Don't register push-to-talk while the onboarding video is playing
             guard !showOnboardingVideo else { return }
             AppLog.append("ask: ⌃⌥ pressed, listening")
+            lastQuestionFailed = false
             // A new press owns the outcome from here: whatever the last release was waiting for is over.
             askOutcome = .listening
             askLiveWordsShownSincePress = false
@@ -1553,6 +1558,7 @@ final class CompanionManager: ObservableObject {
                     AppLog.append("ask: empty answer (\(parseResult.coordinate == nil ? "no point" : "point only"))")
                     dismissCursorCaption()
                     if parseResult.coordinate == nil {
+                        lastQuestionFailed = true
                         speakWithSystemVoice(Self.emptyAnswerSentence)
                     }
                 } else {
@@ -1603,8 +1609,13 @@ final class CompanionManager: ObservableObject {
                 // answer stream ends it with URLError.cancelled, not a CancellationError.
             } catch {
                 AppLog.append("ask: failed: \((error as NSError).domain) \((error as NSError).code)")
+                lastQuestionFailed = true
                 dismissCursorCaption()
-                if Self.isSignInRejection(error) {
+                if let unavailable = error as? ProviderRouteUnavailable {
+                    // Not an outage: nothing is set up to answer yet. Said in text beside the
+                    // pointer, not in the system voice, which reads a setup note like an alarm.
+                    showAskCaption(unavailable.sentence, holdSeconds: 8)
+                } else if Self.isSignInRejection(error) {
                     // The backend refused the token. One refresh; a sign-in nothing can renew, or a
                     // second 401 in a row, signs out. Either way the person hears what to do.
                     speakWithSystemVoice(await OpenClickyAuthSession.shared.sentenceAfterBackendRejection(errorDescription: error.localizedDescription))
@@ -1679,6 +1690,7 @@ final class CompanionManager: ObservableObject {
         switch transition {
         case .pressed:
             guard !showOnboardingVideo, !isDictatingToFrontApp else { return }
+            lastQuestionFailed = false
             dismissCursorCaption()
             transientHideTask?.cancel()
             transientHideTask = nil
@@ -1705,6 +1717,7 @@ final class CompanionManager: ObservableObject {
                     print("⚠️ Realtime unavailable (\(error.localizedDescription))")
                     AppLog.append("realtime unavailable: \(error.localizedDescription)")
                     self.voiceState = .idle
+                    self.lastQuestionFailed = true
                     self.speakWithSystemVoice("Realtime voice is unavailable right now.")
                     // Why, on screen: "check the backend" sent people looking at the network
                     // when the answer was a rejected key.

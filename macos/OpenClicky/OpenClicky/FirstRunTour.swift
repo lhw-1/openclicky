@@ -4,19 +4,21 @@
 //
 //  The first-run tour, told entirely from the island. Once the permission cards are done the
 //  pointer flies out of the notch to the mouse and introduces itself; then one card at a time
-//  shows the keys (animated, pressed and held) for each thing OpenClicky does — dictate, ask, hand
-//  over a task — and moves on only when it has seen that thing work: a take with words, a spoken
-//  answer, an agent task or quick action. A step that needs what the person does not have yet (an
-//  account or key for asking) says so and offers the way there, or a skip. The step is kept in
+//  shows the keys (animated, pressed and held) for each thing OpenClicky does (dictate, ask, hand
+//  over a task) and moves on only when it has seen that thing work: a take with words, a spoken
+//  answer, an agent task or quick action. Speech recognition is asked for before the first take,
+//  and someone with no key and no account gets a free account from an email field on the island
+//  before asking. A step that still cannot run says why and offers a skip. The step is kept in
 //  UserDefaults, so the Screen Recording relaunch picks the tour up where it was.
 //
 
 import AppKit
 import Combine
+import Speech
 import SwiftUI
 
 enum FirstRunTourStep: String {
-    case meet, dictate, talk, act, done
+    case meet, dictate, account, talk, act, done
 
     /// The three practice steps get a progress dash each.
     var practiceIndex: Int? {
@@ -24,13 +26,15 @@ enum FirstRunTourStep: String {
         case .dictate: return 0
         case .talk: return 1
         case .act: return 2
-        case .meet, .done: return nil
+        case .meet, .account, .done: return nil
         }
     }
 }
 
 /// What the island's tour card shows.
 struct FirstRunTourCard: Equatable {
+    enum FieldKind: Equatable { case email, code }
+
     var step: FirstRunTourStep
     var title: String
     var detail: String
@@ -44,6 +48,8 @@ struct FirstRunTourCard: Equatable {
     /// drawn louder once that microphone seems to hear nothing.
     var microphoneName: String?
     var microphoneNeedsAttention = false
+    /// The account step's field on the island: an email, then a code if the email has an account.
+    var field: FieldKind?
     var primaryTitle: String?
     var secondaryTitle: String
 }
@@ -51,6 +57,8 @@ struct FirstRunTourCard: Equatable {
 @MainActor
 final class FirstRunTourController: ObservableObject {
     @Published private(set) var card: FirstRunTourCard?
+    /// What is typed in the account step's field.
+    @Published var fieldText = ""
 
     private static let stepKey = "openclicky.firstRunTour.step"
     private static let doneKey = "openclicky.firstRunTour.done"
@@ -153,6 +161,12 @@ final class FirstRunTourController: ObservableObject {
             .dropFirst()
             .sink { [weak self] _ in DispatchQueue.main.async { self?.publish() } }
             .store(in: &cancellables)
+        OpenClickyAuthSession.shared.$emailFlow
+            .removeDuplicates()
+            .sink { [weak self] flow in DispatchQueue.main.async { self?.emailFlowChanged(flow) } }
+            .store(in: &cancellables)
+        // Whether new accounts are taken decides if the account step is offered at all.
+        Task { await OpenClickyAuthSession.shared.refreshAccountsOpen() }
     }
 
     private func takeFinished(_ take: TakeRecord) {
@@ -176,6 +190,16 @@ final class FirstRunTourController: ObservableObject {
     /// A take ended with nothing usable: most often the wrong microphone.
     private func couldNotHear() {
         guard let companionManager else { return }
+        // The first press opened macOS's speech recognition question; the take under it was never
+        // going to hear anything, and the microphone is not to blame.
+        if speechWasUndeterminedAtTakeStart {
+            speechWasUndeterminedAtTakeStart = false
+            status = speechNeedsAllowing ? nil : "speech recognition is on. hold \(companionManager.dictationSettings.dictationKey.keycapLabel) and try again."
+            statusIsGood = false
+            offersMicrophoneChange = false
+            publish()
+            return
+        }
         let name = MicrophoneMenu.deviceName(settings: companionManager.dictationSettings)
         status = "i couldn’t hear you through \(name). choose the microphone you’re using."
         statusIsGood = false
@@ -189,6 +213,12 @@ final class FirstRunTourController: ObservableObject {
             preferredUID: companionManager?.dictationSettings.preferredMicrophoneUID)
     }
 
+    /// The offline engine needs Speech Recognition, which macOS asks for on first use.
+    private var speechNeedsAllowing: Bool {
+        companionManager?.dictationSettings.engine == .offline && SFSpeechRecognizer.authorizationStatus() == .notDetermined
+    }
+    private var speechWasUndeterminedAtTakeStart = false
+
     private var isWatchingForSilence = false
     private var loudestLevelThisTake: CGFloat = 0
     private var silenceCheckWorkItem: DispatchWorkItem?
@@ -199,6 +229,7 @@ final class FirstRunTourController: ObservableObject {
     private func takeStateChanged(_ takeState: DictationTakeController.TakeState) {
         guard step == .dictate else { return }
         if takeState == .listening {
+            speechWasUndeterminedAtTakeStart = speechNeedsAllowing
             isWatchingForSilence = true
             loudestLevelThisTake = 0
             silenceCheckWorkItem?.cancel()
@@ -213,7 +244,7 @@ final class FirstRunTourController: ObservableObject {
 
     private func checkForSilence() {
         guard step == .dictate, isWatchingForSilence, loudestLevelThisTake < Self.voiceLevel,
-              let companionManager else { return }
+              !speechWasUndeterminedAtTakeStart, let companionManager else { return }
         let name = MicrophoneMenu.deviceName(settings: companionManager.dictationSettings)
         status = "i can’t hear anything through \(name). choose the microphone you’re using."
         statusIsGood = false
@@ -224,8 +255,45 @@ final class FirstRunTourController: ObservableObject {
     private func voiceStateChanged(_ voiceState: CompanionVoiceState) {
         defer { previousVoiceState = voiceState }
         // An answer was spoken and finished: that is asking Clicky, working.
-        if step == .talk && previousVoiceState == .responding && voiceState == .idle {
+        if step == .talk && previousVoiceState == .responding && voiceState == .idle && companionManager?.lastQuestionFailed != true {
             succeed(with: "✓ that’s asking clicky. it can point at things too.")
+        }
+    }
+
+    private func emailFlowChanged(_ flow: OpenClickyAuthSession.EmailFlowState) {
+        guard step == .account else { return }
+        switch flow {
+        case .signedIn:
+            ShellSettingsRevision.shared.noteChanged()
+            fieldText = ""
+            succeed(with: "✓ you’re in. answers are on, free.")
+        case .needsCode(let email):
+            fieldText = ""
+            status = "that email has an account. type the 6-digit code i sent to \(email)."
+            statusIsGood = false
+            publish()
+            focusField()
+        case .sending, .checkingCode:
+            status = "one moment…"
+            statusIsGood = false
+            publish()
+        case .failed(let message):
+            status = message
+            statusIsGood = false
+            publish()
+        case .idle:
+            break
+        }
+    }
+
+    /// No key and no account, and the backend takes new accounts: the account step comes first.
+    private var needsAccountStep: Bool {
+        !OpenClickyConfiguration.isConfigured && OpenClickyAuthSession.shared.accountsOpen != false
+    }
+
+    private func focusField() {
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) { [weak self] in
+            self?.companionManager?.notchHUDManager.focusTourField()
         }
     }
 
@@ -254,7 +322,8 @@ final class FirstRunTourController: ObservableObject {
     private func advance() {
         switch step {
         case .meet: go(to: .dictate)
-        case .dictate: go(to: .talk)
+        case .dictate: go(to: needsAccountStep ? .account : .talk)
+        case .account: go(to: .talk)
         case .talk: go(to: .act)
         case .act: go(to: .done)
         case .done, .none: finish()
@@ -271,6 +340,11 @@ final class FirstRunTourController: ObservableObject {
         if newStep == .meet {
             companionManager?.hasCompletedOnboarding = true
             companionManager?.introducePointerForTour()
+        }
+        if newStep == .account {
+            fieldText = ""
+            OpenClickyAuthSession.shared.forgetSettledFlow()
+            focusField()
         }
         publish()
     }
@@ -293,7 +367,11 @@ final class FirstRunTourController: ObservableObject {
         case .meet:
             go(to: .dictate)
         case .dictate:
-            if needsFnFreed {
+            if speechNeedsAllowing {
+                SFSpeechRecognizer.requestAuthorization { _ in
+                    DispatchQueue.main.async { [weak self] in self?.publish() }
+                }
+            } else if needsFnFreed {
                 FnKeyGuard.freeFn()
                 publish()
             } else if suggestsBuiltInMicrophone {
@@ -306,8 +384,15 @@ final class FirstRunTourController: ObservableObject {
                 offersMicrophoneChange = false
                 publish()
             }
+        case .account:
+            submitField()
         case .talk, .act:
-            if !OpenClickyConfiguration.isConfigured { companionManager.showSettings(.account) }
+            guard !OpenClickyConfiguration.isConfigured else { return }
+            if OpenClickyAuthSession.shared.accountsOpen != false {
+                go(to: .account)
+            } else {
+                companionManager.showSettings(.account)
+            }
         case .done:
             companionManager.showSettings(.general)
             finish()
@@ -319,7 +404,29 @@ final class FirstRunTourController: ObservableObject {
         switch step {
         case .meet: finish()
         case .done: finish()
-        case .dictate, .talk, .act: advance()
+        case .dictate, .account, .talk, .act: advance()
+        }
+    }
+
+    /// The account step's field: an email starts a free account (or asks for a code when that
+    /// email has one); a code finishes signing in.
+    func submitField() {
+        let auth = OpenClickyAuthSession.shared
+        let typed = fieldText.trimmingCharacters(in: .whitespacesAndNewlines)
+        if case .needsCode = auth.emailFlow {
+            guard EmailAccountForm.canSubmitCode(typed) else {
+                status = "the code is the 6 digits in the email."
+                publish()
+                return
+            }
+            Task { await auth.submitCode(typed) }
+        } else {
+            guard EmailAccountForm.canSubmitEmail(typed) else {
+                status = "that doesn’t look like an email yet."
+                publish()
+                return
+            }
+            Task { await auth.start(email: typed) }
         }
     }
 
@@ -362,29 +469,43 @@ final class FirstRunTourController: ObservableObject {
                 detail: "your pointer’s new sidekick. i’ll show you three things. it takes about a minute.",
                 symbol: "hand.wave.fill",
                 primaryTitle: "let’s go", secondaryTitle: "skip tour")
+        case .dictate where speechNeedsAllowing:
+            return FirstRunTourCard(
+                step: .dictate, title: "first, let me use speech recognition",
+                detail: "macOS asks once. it lets me turn your voice into words, right here on this mac.",
+                symbol: "waveform", status: status, statusIsGood: statusIsGood,
+                primaryTitle: "allow", secondaryTitle: "skip")
         case .dictate:
             let fnNote = needsFnFreed ? "macOS opens emoji on fn. let me switch that off first." : nil
             return FirstRunTourCard(
                 step: .dictate, title: "hold \(key) and say something",
-                detail: "try “hello openclicky, this is my first take”, then let go. if macOS asks to allow speech recognition, click allow.",
+                detail: "try “hello openclicky, this is my first take”, then let go.",
                 keys: [key], status: status ?? fnNote, statusIsGood: statusIsGood,
                 microphoneName: companionManager.map { MicrophoneMenu.deviceName(settings: $0.dictationSettings) },
                 microphoneNeedsAttention: offersMicrophoneChange,
                 primaryTitle: needsFnFreed ? "free fn" : (suggestsBuiltInMicrophone ? "use built-in mic" : nil), secondaryTitle: "skip")
+        case .account:
+            let needsCode: Bool = { if case .needsCode = OpenClickyAuthSession.shared.emailFlow { return true } else { return false } }()
+            return FirstRunTourCard(
+                step: .account, title: "want answers too?",
+                detail: "type your email for a free openclicky account. no password, no key. dictation stays free either way.",
+                symbol: "envelope.fill", status: status, statusIsGood: statusIsGood,
+                field: needsCode ? .code : .email,
+                primaryTitle: needsCode ? "confirm" : "start", secondaryTitle: "skip")
         case .talk:
             return FirstRunTourCard(
-                step: .talk, title: canAsk ? "now ask me something" : "asking me needs a key or an account",
+                step: .talk, title: canAsk ? "now ask me something" : "asking me needs a free account",
                 detail: canAsk
                     ? "hold control + option and ask “what’s on my screen?” i answer out loud and point."
-                    : "dictation works on its own. for questions, add your own key or a free account.",
+                    : "dictation works on its own. for questions, set up a free account with just your email.",
                 keys: ["⌃", "⌥"], status: status, statusIsGood: statusIsGood,
                 primaryTitle: canAsk ? nil : "set up", secondaryTitle: "skip")
         case .act:
             return FirstRunTourCard(
-                step: .act, title: canAsk ? "hand me a task" : "tasks need a key or an account too",
+                step: .act, title: canAsk ? "hand me a task" : "tasks need a free account too",
                 detail: canAsk
                     ? "hold control + option and say “make a folder on my desktop called hello clicky”."
-                    : "with a key or a free account i can open apps, make folders and run agents for you.",
+                    : "with a free account i can open apps, make folders and run agents for you.",
                 keys: ["⌃", "⌥"], status: status, statusIsGood: statusIsGood,
                 primaryTitle: canAsk ? nil : "set up", secondaryTitle: "skip")
         case .done:
@@ -436,6 +557,19 @@ struct FirstRunTourCardView: View {
                     .lineSpacing(1)
                     .lineLimit(3)
                     .fixedSize(horizontal: false, vertical: true)
+                if let field = card.field {
+                    NotchComposerTextField(
+                        text: $controller.fieldText,
+                        placeholder: field == .email ? "you@example.com" : "6-digit code",
+                        onSubmit: { controller.submitField() },
+                        onEscape: {}
+                    )
+                    .frame(height: 22)
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 4)
+                    .background(RoundedRectangle(cornerRadius: 8, style: .continuous).fill(DS.HUD.surfaceRaised))
+                    .padding(.top, 4)
+                }
                 if let status = card.status {
                     Text(status)
                         .font(.system(size: 12, weight: .medium))
