@@ -52,6 +52,89 @@ struct SpokenChunkerTests {
         #expect(chunker.finish() == ["it costs 3.5 dollars"])
         #expect(chunker.pointTag == nil)
     }
+
+    // F-01: every reply language the voice page offers gets its first sentence out early, with
+    // that language's own sentence end.
+    @Test(arguments: [
+        ("hi", ["[POINT:none] यह", " एक परीक्षण वाक्य है। ", "दूसरा वाक्य है। ", "तीसरा वाक्य।"], "यह एक परीक्षण वाक्य है।"),
+        ("mr", ["हे पहिले मराठी वाक्य आहे। ", "दुसरे वाक्य आहे।"], "हे पहिले मराठी वाक्य आहे।"),
+        ("bn", ["এটি প্রথম বাংলা বাক্য। ", "দ্বিতীয় বাক্য।"], "এটি প্রথম বাংলা বাক্য।"),
+        ("ja", ["これは最初の文です。これは二番目の", "文です。三番目の", "文。"], "これは最初の文です。これは二番目の文です。"),
+        ("zh", ["这是第一句话。这是第二句话。", "第三句。"], "这是第一句话。这是第二句话。"),
+        ("zh-bang", ["这真是太好了！你要再试一次吗？", "好。"], "这真是太好了！你要再试一次吗？"),
+        ("ta", ["இது முதல் வாக்கியம். ", "இரண்டாவது வாக்கியம்."], "இது முதல் வாக்கியம்."),
+        ("ko", ["이것은 첫 번째 문장입니다. ", "두 번째 문장입니다."], "이것은 첫 번째 문장입니다."),
+        ("en", ["that's your sign-in code. ", "it works."], "that's your sign-in code."),
+    ])
+    func theFirstSentenceIsReadyInEveryReplyLanguage(language: String, deltas: [String], firstPiece: String) {
+        var chunker = SpokenChunker()
+        var accumulated = ""
+        var piecesWhileStreaming: [String] = []
+        for delta in deltas.dropLast() {
+            accumulated += delta
+            piecesWhileStreaming += chunker.feed(accumulated: accumulated)
+        }
+        #expect(piecesWhileStreaming.first == firstPiece, "\(language)")
+    }
+
+    @Test func aNewLineEndsASentence() {
+        var chunker = SpokenChunker()
+        #expect(chunker.feed(accumulated: "here is what to do first\nthen the next") == ["here is what to do first"])
+    }
+
+    // F-02: the voice must not say one word ("Dr.", "1.", "e.g."), stop, then go on.
+    @Test func abbreviationsAndListNumbersDoNotEndTheFirstPiece() {
+        var doctor = SpokenChunker()
+        #expect(doctor.feed(accumulated: "[POINT:10,20:x] Dr. ") == [])
+        #expect(doctor.feed(accumulated: "[POINT:10,20:x] Dr. Smith is here. He said hi.") == ["Dr. Smith is here."])
+
+        var numbered = SpokenChunker()
+        #expect(numbered.feed(accumulated: "1. Open the menu.\n") == ["1. Open the menu."])
+        _ = numbered.feed(accumulated: "1. Open the menu.\n2. Click save.\n")
+        #expect(numbered.finish() == ["2. Click save."])
+
+        var forExample = SpokenChunker()
+        #expect(forExample.feed(accumulated: "e.g. ") == [])
+        #expect(forExample.feed(accumulated: "e.g. this one. And more.") == ["e.g. this one."])
+
+        var tooShort = SpokenChunker()
+        #expect(tooShort.feed(accumulated: "Yes. ") == [])
+        #expect(tooShort.feed(accumulated: "Yes. That is the save button. more") == ["Yes. That is the save button."])
+    }
+
+    @Test func aYearEndingASentenceIsStillASentenceEnd() {
+        var chunker = SpokenChunker()
+        #expect(chunker.feed(accumulated: "that came out in 1990. after") == ["that came out in 1990."])
+    }
+
+    // F-40: the backend speaks at most 400 characters of a piece (JavaScript length, UTF-16), so no
+    // piece may be longer than about 350, whatever the language or punctuation.
+    @Test(arguments: [
+        ("english, no sentence end", String(repeating: "word ", count: 400)),
+        ("english, one long sentence", String(repeating: "and then this, ", count: 140) + "end. "),
+        ("hindi with dandas", String(repeating: "यह एक बहुत लंबा हिंदी वाक्य है जो चलता रहता है। ", count: 40)),
+        ("hindi without dandas", String(repeating: "यह एक बहुत लंबा हिंदी वाक्य है ", count: 70)),
+        ("chinese without punctuation", String(repeating: "这是一个很长的句子没有标点符号", count: 140)),
+        ("japanese with full stops", String(repeating: "これはとても長い日本語の文章です。", count: 120)),
+    ])
+    func noPieceIsLongerThanTheVoiceSpeaks(name: String, answer: String) {
+        var chunker = SpokenChunker()
+        var pieces: [String] = []
+        var accumulated = ""
+        // Streamed in small deltas, the way the answer arrives.
+        var remaining = Substring(answer)
+        while !remaining.isEmpty {
+            accumulated += remaining.prefix(7)
+            remaining = remaining.dropFirst(7)
+            pieces += chunker.feed(accumulated: accumulated)
+        }
+        pieces += chunker.finish()
+        #expect(pieces.allSatisfy { $0.utf16.count <= 350 }, "\(name): \(pieces.map { $0.utf16.count })")
+        #expect(pieces.count > 1, "\(name)")
+        // Nothing is lost or reordered: the pieces are the answer, in order.
+        let spokenLetters = pieces.joined().filter { !$0.isWhitespace }
+        #expect(spokenLetters == answer.filter { !$0.isWhitespace }, "\(name)")
+    }
 }
 
 @MainActor
