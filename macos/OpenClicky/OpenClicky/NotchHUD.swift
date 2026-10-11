@@ -139,7 +139,7 @@ final class NotchHUDModel: ObservableObject {
     var tourWidth: CGFloat { placement.isSideDrawer ? 360 : 512 }
     var tourHeight: CGFloat {
         // A side drawer is narrower, so the copy wraps onto more lines.
-        let statusRoom: CGFloat = tourCard?.status == nil ? 0 : (tourCard?.offersMicrophoneChange == true ? 56 : 38)
+        let statusRoom: CGFloat = (tourCard?.status == nil ? 0 : 38) + (tourCard?.microphoneName == nil ? 0 : 20)
         return cardTopInset + (placement.isSideDrawer ? 168 : 116) + statusRoom
     }
 
@@ -393,7 +393,7 @@ final class NotchHUDModel: ObservableObject {
     /// under way (that is the step being tried), and comes back when it ends.
     func setTourCard(_ card: FirstRunTourCard?) {
         guard tourCard != card else { return }
-        let sizeChanged = tourCard?.status != card?.status || tourCard?.step != card?.step || tourCard?.offersMicrophoneChange != card?.offersMicrophoneChange
+        let sizeChanged = tourCard?.status != card?.status || tourCard?.step != card?.step || tourCard?.microphoneName != card?.microphoneName
         tourCard = card
         reconcile(immediately: true)
         if sizeChanged && expansion == .tour { onLayoutChanged?() }
