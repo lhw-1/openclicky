@@ -265,16 +265,25 @@ private struct SpeechVoiceRows: View {
 
     /// Who the cloud voice is now and what it costs.
     private var cloudVoiceSentence: String {
-        switch ProviderRouter.route(for: .speech, credentials: ProviderRouter.currentCredentials()) {
+        let route = ProviderRouter.route(for: .speech, credentials: ProviderRouter.currentCredentials())
+        if case .openAIDirect = route { return "OpenAI, on your own key." }
+        // Same order as ElevenLabsTTSClient.fetchAudio: a Sarvam key comes before the account.
+        if ElevenLabsTTSClient.sarvamVoice() != nil { return "Sarvam, on your own key." }
+        switch route {
         case .openAIDirect:
             return "OpenAI, on your own key."
         case .unavailable:
-            return "nobody yet. The cloud voice needs a free account or an OpenAI key; this Mac’s voice works now."
+            return "nobody yet. The cloud voice needs a free account, or an OpenAI or Sarvam key; this Mac’s voice works now."
         case .backend, .anthropicDirect, .answerProvider:
             guard let summary = billing.summary, summary.isMetered, !summary.byok else { return "ElevenLabs, through OpenClicky." }
             if summary.isSwitchedOff { return "ElevenLabs, on the free credits, which are used up for now. This Mac’s voice works meanwhile." }
-            let left = max(0, 100 - Int((summary.fractionUsed * 100).rounded()))
-            return "ElevenLabs, on the free credits. \(left)% of this month’s allowance is left."
+            // The voice has its own allowance in spoken characters, apart from the money one: it
+            // can run out while most of the money is left.
+            if summary.isUnconfirmed { return "ElevenLabs, on the starter voice allowance. Add your email under Account to keep it." }
+            guard summary.ttsCharsLimit > 0 else { return "ElevenLabs, on the free credits." }
+            let left = max(0, 100 - Int((Double(summary.ttsCharsMonth) / Double(summary.ttsCharsLimit) * 100).rounded()))
+            if left == 0 { return "ElevenLabs, on the free credits. This month’s voice allowance is used, so this Mac speaks until it comes back." }
+            return "ElevenLabs, on the free credits. \(left)% of this month’s voice allowance is left."
         }
     }
 }

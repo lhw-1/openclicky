@@ -287,7 +287,7 @@ private enum KeyProvider: String, CaseIterable, Identifiable {
         case .groq: return "Very fast answers on open models."
         case .mistral: return "Mistral’s own models."
         case .xai: return "Grok, from xAI."
-        case .sarvam: return "The Sarvam dictation engine, for Indian languages."
+        case .sarvam: return "Speaks answers in a natural voice (Bulbul), and the Sarvam dictation engine for Indian languages."
         }
     }
 
@@ -445,8 +445,9 @@ private struct ProviderKeysList: View {
                                                        modelOverrides: OpenClickyConfiguration.settings.answerModels ?? [:]).sentence
             } else {
                 do {
-                    _ = try await SarvamSpeechClient(key: key).complete(system: "Reply with the single word: ok", user: "ping", maxTokens: 5)
-                    sentence = "✓ Works."
+                    // Speech is what the key is mostly for now, so the check makes Bulbul say a word.
+                    _ = try await SarvamSpeechClient(key: key).speech(text: "ok", languageCode: "en-IN")
+                    sentence = "✓ Works. It speaks your answers."
                 } catch {
                     sentence = error.localizedDescription
                 }

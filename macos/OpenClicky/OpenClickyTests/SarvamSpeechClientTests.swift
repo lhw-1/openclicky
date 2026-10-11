@@ -25,6 +25,39 @@ struct SarvamSpeechClientTests {
         #expect(body.hasSuffix("\r\n--B--\r\n"))
     }
 
+    @Test func theSpeechRequestAsksBulbulInTheReplyLanguage() throws {
+        let request = SarvamSpeechClient.speechRequest(text: "hello", languageCode: "hi-IN", key: "k", host: SarvamSpeechClient.host)
+        #expect(request.url?.absoluteString == "https://api.sarvam.ai/text-to-speech")
+        #expect(request.value(forHTTPHeaderField: "api-subscription-key") == "k")
+        let body = try #require(try JSONSerialization.jsonObject(with: request.httpBody ?? Data()) as? [String: Any])
+        #expect(body["model"] as? String == "bulbul:v3")
+        #expect(body["target_language_code"] as? String == "hi-IN")
+        #expect(body["text"] as? String == "hello")
+    }
+
+    @Test func speechDecodesTheFirstAudioAndRefusesAnEmptyAnswer() throws {
+        let wav = Data("RIFF....WAVE".utf8)
+        let answer = try JSONSerialization.data(withJSONObject: ["request_id": "r", "audios": [wav.base64EncodedString()]])
+        #expect(try SarvamSpeechClient.decodeSpeech(answer) == wav)
+        let empty = try JSONSerialization.data(withJSONObject: ["audios": [String]()])
+        #expect(throws: SarvamSpeechError.self) { try SarvamSpeechClient.decodeSpeech(empty) }
+    }
+
+    @Test func bulbulSpeaksIndianLanguagesOnly() {
+        #expect(SarvamSpeechClient.speechLanguageCode(forReplyLanguage: "en") == "en-IN")
+        #expect(SarvamSpeechClient.speechLanguageCode(forReplyLanguage: "ta") == "ta-IN")
+        #expect(SarvamSpeechClient.speechLanguageCode(forReplyLanguage: "fr") == nil)
+    }
+
+    @MainActor @Test func aSarvamKeySpeaksAnswersInALanguageBulbulKnows() {
+        var settings = OpenClickyShellSettings()
+        #expect(ElevenLabsTTSClient.sarvamVoice(settings: settings, replyLanguageCode: "en") == nil)
+        settings.sarvamKey = "  sk_test\n"
+        #expect(ElevenLabsTTSClient.sarvamVoice(settings: settings, replyLanguageCode: "en")?.languageCode == "en-IN")
+        #expect(ElevenLabsTTSClient.sarvamVoice(settings: settings, replyLanguageCode: "en")?.client.key == "sk_test")
+        #expect(ElevenLabsTTSClient.sarvamVoice(settings: settings, replyLanguageCode: "de") == nil)
+    }
+
     @Test func autoDetectIsSentAsUnknown() {
         #expect(SarvamSpeechClient.languageCode(for: .auto) == "unknown")
         #expect(SarvamSpeechClient.languageCode(for: DictationLanguage.named("hi-IN")) == "hi-IN")

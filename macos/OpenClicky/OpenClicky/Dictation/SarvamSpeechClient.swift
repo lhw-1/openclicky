@@ -3,7 +3,8 @@
 //  OpenClicky
 //
 //  Sarvam's speech and chat APIs with the user's own key: Saaras hears a take (REST, one WAV), the
-//  streaming socket hears it as it is spoken, and a chat completion polishes the words. Written
+//  streaming socket hears it as it is spoken, a chat completion polishes the words, and Bulbul
+//  speaks answers. Written
 //  from docs.sarvam.ai as read on 2026-10-06; the REST transcription shape is the one Saathi has
 //  already run against a real key. Request building is pure so it can be tested without a network.
 //
@@ -274,6 +275,52 @@ struct SarvamSpeechClient: Sendable {
         ]
         request.httpBody = try? JSONSerialization.data(withJSONObject: body)
         return request
+    }
+
+    // MARK: voice
+
+    /// Sarvam's speech model; bulbul:v2 was retired ("has been deprecated. Please use 'bulbul:v3'",
+    /// 2026-10-12). Answers come back as base64 WAV.
+    static let speechModel = "bulbul:v3"
+
+    /// The languages Bulbul speaks, by the reply language's two-letter code. Anything else is left
+    /// to the next voice in line.
+    static let speechLanguageCodes: [String: String] = [
+        "en": "en-IN", "hi": "hi-IN", "bn": "bn-IN", "gu": "gu-IN", "kn": "kn-IN", "ml": "ml-IN",
+        "mr": "mr-IN", "od": "od-IN", "or": "od-IN", "pa": "pa-IN", "ta": "ta-IN", "te": "te-IN",
+    ]
+
+    static func speechLanguageCode(forReplyLanguage replyLanguageCode: String) -> String? {
+        speechLanguageCodes[replyLanguageCode.lowercased()]
+    }
+
+    /// `text` spoken by Bulbul, as WAV bytes an AVAudioPlayer can play.
+    func speech(text: String, languageCode: String) async throws -> Data {
+        guard !key.isEmpty else { throw SarvamSpeechError.noKey }
+        let data = try await send(Self.speechRequest(text: text, languageCode: languageCode, key: key, host: host))
+        return try Self.decodeSpeech(data)
+    }
+
+    static func speechRequest(text: String, languageCode: String, key: String, host: URL) -> URLRequest {
+        var request = URLRequest(url: host.appendingPathComponent("text-to-speech"))
+        request.httpMethod = "POST"
+        request.timeoutInterval = 20
+        request.setValue(key, forHTTPHeaderField: "api-subscription-key")
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        let body: [String: Any] = ["text": text, "target_language_code": languageCode, "model": speechModel]
+        request.httpBody = try? JSONSerialization.data(withJSONObject: body)
+        return request
+    }
+
+    /// The first audio in a text-to-speech answer (one is returned per text sent).
+    static func decodeSpeech(_ data: Data) throws -> Data {
+        guard let answer = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any],
+              let audios = answer["audios"] as? [String],
+              let first = audios.first,
+              let audio = Data(base64Encoded: first), !audio.isEmpty else {
+            throw SarvamSpeechError.unreadable("there was no audio in it")
+        }
+        return audio
     }
 
     // MARK: plumbing

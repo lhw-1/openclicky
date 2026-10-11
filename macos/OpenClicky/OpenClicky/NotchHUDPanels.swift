@@ -2,7 +2,7 @@
 //  NotchHUDPanels.swift
 //  OpenClicky
 //
-//  The full notch app: tab bar + home / agents / settings, the agent thread store that feeds the
+//  The full notch app: tab bar + home / agents (the gear opens the Settings window), the agent thread store that feeds the
 //  agents tab, and the floating result card (top-right) with "Follow up with agent". Drawn with
 //  the refinement sheet's HUD tokens (`DS.HUD`).
 //
@@ -31,8 +31,6 @@ struct NotchFullPanelView: View {
                     NotchHomeView(companionManager: companionManager, model: model)
                 case .agents:
                     NotchAgentsView(companionManager: companionManager, threadStore: threadStore)
-                case .settings:
-                    NotchSettingsView(companionManager: companionManager, settings: companionManager.dictationSettings)
                 }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
@@ -79,8 +77,11 @@ struct NotchTabBar: View {
                 if model.activeTab == .agents {
                     bandIconButton(systemImage: "arrow.clockwise", help: "refresh agents", isSelected: false) { threadStore.refresh(force: true) }
                 }
-                bandIconButton(systemImage: "gearshape.fill", help: "settings", isSelected: model.activeTab == .settings) {
-                    model.select(model.activeTab == .settings ? .home : .settings)
+                // Settings live in the window only: an island page of switches was a second, smaller
+                // settings that stayed open behind the pointer.
+                bandIconButton(systemImage: "gearshape.fill", help: "settings", isSelected: false) {
+                    model.dismiss()
+                    companionManager.showSettings()
                 }
                 bandIconButton(systemImage: "power", help: "quit openclicky", isSelected: false) {
                     companionManager.quitWithFarewell()
@@ -238,9 +239,9 @@ enum NotchVoiceDestination {
 
 // MARK: - Home
 
-/// Home answers three questions top to bottom: what the pointer is doing (and the button that
-/// docks or releases it), how to call Clicky (the four shortcuts), and what it can use (skills and
-/// integrations in one tile row). 512 × 232 pt including the menu-bar band.
+/// Home answers two questions: what the pointer is doing (and the button that docks or releases
+/// it), and how to call Clicky (the four shortcuts). The compact layout (`isCompactLayout`, small
+/// or zoomed displays) draws both tighter: no hint line, no heading, shorter rows.
 struct NotchHomeView: View {
     @ObservedObject var companionManager: CompanionManager
     @ObservedObject var model: NotchHUDModel
@@ -259,8 +260,6 @@ struct NotchHomeView: View {
                     shortcutsOrWarning
                 }
             }
-
-            NotchSkillsAndIntegrationsRow(store: companionManager.skillLibraryStore)
         }
         .padding(.horizontal, DS.HUD.bodySidePadding)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
@@ -271,7 +270,7 @@ struct NotchHomeView: View {
         if let engineWarning = NotchEngineWarning(engine: companionManager.dictationSettings.engine) {
             NotchEngineWarningView(warning: engineWarning, companionManager: companionManager)
         } else {
-            NotchShortcutList(companionManager: companionManager, settings: companionManager.dictationSettings)
+            NotchShortcutList(companionManager: companionManager, settings: companionManager.dictationSettings, isCompact: model.isCompactLayout)
         }
     }
 }
@@ -284,7 +283,7 @@ struct NotchPointerCard: View {
 
     var body: some View {
         let isDocked = companionManager.isCursorDocked
-        VStack(alignment: .leading, spacing: 10) {
+        VStack(alignment: .leading, spacing: model.isCompactLayout ? 8 : 10) {
             HStack(spacing: 8) {
                 NotchPointerMark(isDimmed: isDocked)
                 Text(pointerStateText)
@@ -328,16 +327,16 @@ struct NotchPointerCard: View {
                 .accessibilityLabel("what can you do?")
             }
 
-            if let hintText {
+            if let hintText, !model.isCompactLayout {
                 Text(hintText)
                     .font(.system(size: 11))
                     .foregroundColor(DS.HUD.text3)
                     .lineLimit(1)
             }
         }
-        .padding(12)
+        .padding(model.isCompactLayout ? 10 : 12)
         // Without a hint line the status and button sit in the middle rather than leave a gap below.
-        .frame(height: 104, alignment: hintText == nil ? .center : .top)
+        .frame(height: model.isCompactLayout ? 80 : 104, alignment: hintText == nil || model.isCompactLayout ? .center : .top)
         .background(RoundedRectangle(cornerRadius: DS.HUD.cardRadius, style: .continuous).fill(DS.HUD.surface))
     }
 
@@ -366,12 +365,16 @@ struct NotchPointerCard: View {
 struct NotchShortcutList: View {
     @ObservedObject var companionManager: CompanionManager
     @ObservedObject var settings: DictationSettings
+    /// The compact island: no heading, and 18 pt rows instead of 22.
+    var isCompact = false
 
     var body: some View {
         let dictationKey = settings.dictationKey.keycapLabel
-        VStack(alignment: .leading, spacing: 2) {
-            NotchSectionHeader(title: "CALL CLICKY")
-                .frame(height: 16, alignment: .top)
+        VStack(alignment: .leading, spacing: isCompact ? 1 : 2) {
+            if !isCompact {
+                NotchSectionHeader(title: "CALL CLICKY")
+                    .frame(height: 16, alignment: .top)
+            }
             shortcutRow(title: "talk", keys: ["⌃", "⌥"], gesture: "hold", isLive: false)
             shortcutRow(title: "type", keys: ["⌃"], gesture: "tap ×2", isLive: false)
             shortcutRow(title: "dictate", keys: [dictationKey], gesture: "hold", isLive: false)
@@ -394,7 +397,7 @@ struct NotchShortcutList: View {
                     .foregroundColor(DS.HUD.text3)
             }
         }
-        .frame(height: 22)
+        .frame(height: isCompact ? 18 : 22)
         .accessibilityElement(children: .combine)
     }
 }
@@ -475,267 +478,6 @@ struct NotchEngineWarningView: View {
         }
         .padding(.top, 2)
         .frame(maxWidth: .infinity, alignment: .leading)
-    }
-}
-
-// MARK: - Skills & integrations (Home)
-
-/// One tile row for everything Clicky can use: the two integrations (Composio, Computer Use), a
-/// divider, one 40 pt tile per library skill (click toggles it; a switched-off skill is struck
-/// through), and "+". With no skills yet the "+" is a wide "teach a skill" tile with an example,
-/// so the row never ends in a lone tile. "+" swaps the row for the field that drafts a new
-/// SKILL.md through the backend and activates it. App-teaching skills are automatic and have no
-/// tile ("app know-how is built in").
-struct NotchSkillsAndIntegrationsRow: View {
-    @ObservedObject var store: SkillLibraryStore
-    @State private var isComposing = false
-    @State private var request = ""
-    /// The skill tile under the mouse: the header line then says what it does and how to use it.
-    @State private var hoveredSkillID: String?
-    @FocusState private var isRequestFieldFocused: Bool
-
-    private let tileSize = DS.HUD.tileSize
-    private let exampleSkillRequest = "summarise any page i’m on"
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            if let hoveredSkill = store.librarySkills.first(where: { $0.id == hoveredSkillID }) {
-                skillExplanation(hoveredSkill)
-            } else {
-                header
-            }
-
-            HStack(spacing: 8) {
-                if OpenClickyConfiguration.connectorsEnabled {
-                    integrationTile(
-                        letters: "C", tint: DS.HUD.composio, letterColor: DS.HUD.text, title: "composio",
-                        isConfigured: OpenClickyConfiguration.activeComposioMcpUrl != nil, settingName: "COMPOSIO_MCP_URL"
-                    )
-                }
-                integrationTile(
-                    letters: "CU", tint: DS.HUD.computerUse, letterColor: .black, title: "computer use",
-                    isConfigured: OpenClickyConfiguration.resolvedCuaDriverBin != nil, settingName: "CUA_DRIVER_BIN"
-                )
-                Rectangle()
-                    .fill(DS.HUD.surfaceRaisedSoft)
-                    .frame(width: 1)
-                    .padding(.vertical, 6)
-                    .padding(.horizontal, 4)
-
-                if isComposing || store.isCreating {
-                    composer
-                } else if store.librarySkills.isEmpty {
-                    teachASkillTile
-                } else {
-                    ScrollView(.horizontal, showsIndicators: false) {
-                        HStack(spacing: 8) {
-                            ForEach(store.librarySkills, id: \.id) { skill in
-                                skillTile(skill)
-                            }
-                            addSkillTile
-                        }
-                    }
-                }
-            }
-            .frame(height: tileSize)
-        }
-    }
-
-    private var header: some View {
-        HStack {
-            NotchSectionHeader(title: "SKILLS & INTEGRATIONS")
-            Spacer()
-            if let error = store.lastError {
-                Text(error)
-                    .font(.system(size: 11))
-                    .foregroundColor(DS.HUD.pointer)
-                    .lineLimit(1)
-                    .truncationMode(.tail)
-                    .help(error)
-            } else {
-                Text("app know-how is built in")
-                    .font(.system(size: 11))
-                    .foregroundColor(DS.HUD.text3)
-            }
-        }
-    }
-
-    /// What a hovered skill tile is and how to use it, in the header's place: its name, how to
-    /// call on it (or that it is off), then its description, cut to the line.
-    private func skillExplanation(_ skill: SkillFile) -> some View {
-        let isActive = store.activeIds.contains(skill.id)
-        let howToUse: String
-        if !isActive {
-            howToUse = "off · click to turn on"
-        } else if skill.isForTalk {
-            howToUse = "hold ⌃ ⌥ and ask"
-        } else {
-            howToUse = "used when the agent works"
-        }
-        return (Text(skill.name.lowercased()).font(.system(size: 11, weight: .semibold)).foregroundColor(DS.HUD.text)
-            + Text("  \(howToUse)").font(.system(size: 11, weight: .medium)).foregroundColor(isActive ? DS.HUD.live : DS.HUD.waiting)
-            + Text("  \(skill.description)").font(.system(size: 11)).foregroundColor(DS.HUD.text3))
-            .lineLimit(1)
-            .truncationMode(.tail)
-            .frame(height: 14, alignment: .leading)
-            .frame(maxWidth: .infinity, alignment: .leading)
-    }
-
-    /// An integration lights up in its colour once configured; until then it is dimmed and a click
-    /// reveals shell.json, where its setting goes.
-    private func integrationTile(letters: String, tint: Color, letterColor: Color, title: String, isConfigured: Bool, settingName: String) -> some View {
-        Button(action: { if !isConfigured { OpenClickyConfiguration.revealSettingsFile() } }) {
-            Text(letters)
-                .font(.system(size: 12, weight: .bold))
-                .foregroundColor(isConfigured ? letterColor : DS.HUD.textOff)
-                .frame(width: tileSize, height: tileSize)
-                .background(RoundedRectangle(cornerRadius: DS.HUD.tileRadius, style: .continuous).fill(isConfigured ? tint : Color(hex: "#141414")))
-                .overlay(
-                    RoundedRectangle(cornerRadius: DS.HUD.tileRadius, style: .continuous)
-                        .strokeBorder(isConfigured ? Color.clear : DS.HUD.surfaceRaised, lineWidth: 1)
-                )
-        }
-        .buttonStyle(.plain)
-        .pointerCursor(isEnabled: !isConfigured)
-        .help(isConfigured ? "\(title) connected" : "\(title) is not set up. click to set \(settingName) in shell.json")
-        .accessibilityLabel(isConfigured ? "\(title), connected" : "\(title), not set up")
-    }
-
-    private var teachASkillTile: some View {
-        Button(action: startComposing) {
-            HStack(spacing: 10) {
-                Text("+").font(.system(size: 18)).foregroundColor(DS.HUD.text2)
-                Text("teach a skill").font(.system(size: 13, weight: .medium)).foregroundColor(DS.HUD.text)
-                Text("“\(exampleSkillRequest)”")
-                    .font(.system(size: 12))
-                    .foregroundColor(DS.HUD.text3)
-                    .lineLimit(1)
-                    .truncationMode(.tail)
-                Spacer(minLength: 0)
-            }
-            .padding(.horizontal, 12)
-            .frame(maxWidth: .infinity)
-            .frame(height: tileSize)
-            .background(dashedTileOutline)
-            .contentShape(RoundedRectangle(cornerRadius: DS.HUD.tileRadius, style: .continuous))
-        }
-        .buttonStyle(.plain)
-        .pointerCursor()
-        .help("teach clicky a skill: say what it should do, and it writes the skill")
-        .contextMenu { openSkillsFolderMenuItem }
-    }
-
-    private var addSkillTile: some View {
-        Button(action: startComposing) {
-            Text("+")
-                .font(.system(size: 18))
-                .foregroundColor(DS.HUD.text2)
-                .frame(width: tileSize, height: tileSize)
-                .background(dashedTileOutline)
-                .contentShape(RoundedRectangle(cornerRadius: DS.HUD.tileRadius, style: .continuous))
-        }
-        .buttonStyle(.plain)
-        .pointerCursor()
-        .help("teach a skill, or open the skills folder from the tile's menu")
-        .accessibilityLabel("teach a skill")
-        .contextMenu { openSkillsFolderMenuItem }
-    }
-
-    private var dashedTileOutline: some View {
-        RoundedRectangle(cornerRadius: DS.HUD.tileRadius, style: .continuous)
-            .strokeBorder(DS.HUD.dashedLine, style: StrokeStyle(lineWidth: 1, dash: [4, 3]))
-    }
-
-    private var openSkillsFolderMenuItem: some View {
-        Button("open skills folder") { NSWorkspace.shared.open(store.userSkillsDirectory) }
-    }
-
-    private func skillTile(_ skill: SkillFile) -> some View {
-        let isActive = store.activeIds.contains(skill.id)
-        return Button(action: { store.setActive(skill.id, !isActive) }) {
-            Text(String(skill.name.prefix(3)).lowercased())
-                .font(.system(size: 11, weight: .semibold))
-                .strikethrough(!isActive, color: DS.HUD.textOff)
-                .foregroundColor(isActive ? DS.HUD.text : DS.HUD.textOff)
-                .frame(width: tileSize, height: tileSize)
-                .background(RoundedRectangle(cornerRadius: DS.HUD.tileRadius, style: .continuous).fill(isActive ? DS.HUD.surfaceRaised : Color(hex: "#141414")))
-                .overlay(
-                    RoundedRectangle(cornerRadius: DS.HUD.tileRadius, style: .continuous)
-                        .strokeBorder(isActive ? Color.clear : DS.HUD.surfaceRaised, lineWidth: 1)
-                )
-        }
-        .buttonStyle(.plain)
-        .pointerCursor()
-        .onHoverInPanel { isHovering in
-            if isHovering {
-                hoveredSkillID = skill.id
-            } else if hoveredSkillID == skill.id {
-                hoveredSkillID = nil
-            }
-        }
-        .accessibilityLabel("\(skill.name), \(isActive ? "on" : "off")")
-        .contextMenu {
-            Button(isActive ? "turn off" : "turn on") { store.setActive(skill.id, !isActive) }
-            Button("show in finder") { NSWorkspace.shared.activateFileViewerSelecting([store.libraryDirectory.appendingPathComponent(skill.id, isDirectory: true)]) }
-            Divider()
-            Button("remove from library", role: .destructive) { store.removeSkill(skill.id) }
-        }
-    }
-
-    private var composer: some View {
-        HStack(spacing: 6) {
-            Text("+").font(.system(size: 15)).foregroundColor(DS.HUD.text2)
-            TextField(exampleSkillRequest, text: $request)
-                .textFieldStyle(.plain)
-                .font(.system(size: 13))
-                .foregroundColor(DS.HUD.text)
-                .focused($isRequestFieldFocused)
-                .onSubmit(create)
-                .onExitCommand { isComposing = false }
-                .disabled(store.isCreating)
-            if store.isCreating {
-                ProgressView().controlSize(.mini)
-            } else {
-                Button(action: { isComposing = false; request = "" }) {
-                    Image(systemName: "xmark")
-                        .font(.system(size: 9, weight: .bold))
-                        .foregroundColor(DS.HUD.text3)
-                        .frame(width: DS.HUD.minimumHitSize, height: DS.HUD.minimumHitSize)
-                        .contentShape(Rectangle())
-                }
-                .buttonStyle(.plain)
-                .pointerCursor()
-                .help("cancel")
-            }
-        }
-        .padding(.horizontal, 12)
-        .frame(maxWidth: .infinity)
-        .frame(height: tileSize)
-        .background(RoundedRectangle(cornerRadius: DS.HUD.tileRadius, style: .continuous).fill(DS.HUD.surface))
-    }
-
-    private func startComposing() {
-        // A free account cannot teach skills yet: say so up front instead of failing after typing.
-        if let hint = AccountCapabilities.current().skillTeachingUnavailableHint {
-            store.lastError = hint
-            return
-        }
-        isComposing = true
-        isRequestFieldFocused = true
-    }
-
-    private func create() {
-        let text = request.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !text.isEmpty, !store.isCreating else { return }
-        Task { @MainActor in
-            do {
-                _ = try await store.createSkill(request: text)
-                request = ""
-                isComposing = false
-            } catch {
-                // The store publishes `lastError`; the composer stays open so the user can retry.
-            }
-        }
     }
 }
 
@@ -1021,152 +763,6 @@ struct AgentRowView: View {
         .accessibilityElement(children: .combine)
         .accessibilityLabel("\(Self.title(for: thread)), \(status.word)")
         .accessibilityHint(isSelected ? "selected: the composer continues this thread" : "select to continue this thread")
-    }
-}
-
-// MARK: - Settings
-
-/// The Settings tab: quick controls only. Four switches (the orb, agent mode, dock the pointer,
-/// show the pointer), where the island lives, and two actions: open the Settings window (⌘,) and
-/// quit. Everything else lives in the Settings window. Controls are hand-drawn because the island
-/// never becomes key, and system controls grey out in a panel that isn't.
-struct NotchSettingsView: View {
-    @ObservedObject var companionManager: CompanionManager
-    @ObservedObject var settings: DictationSettings
-
-    /// Two tiles a row under the notch; one in a side drawer, which is too narrow for two.
-    private var tileColumns: [GridItem] {
-        let column = GridItem(.flexible(), spacing: 10)
-        return companionManager.hudPlacement.isSideDrawer ? [column] : [column, column]
-    }
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            LazyVGrid(columns: tileColumns, alignment: .leading, spacing: 10) {
-                switchTile(title: "the orb", detail: "pill at the bottom", isOn: Binding(
-                    get: { settings.orbVisible },
-                    set: { settings.orbVisible = $0 }
-                ))
-                switchTile(title: "agent mode", detail: "work goes to codex", isOn: Binding(
-                    get: { companionManager.isAgentModeEnabled },
-                    set: { companionManager.setAgentModeEnabled($0) }
-                ))
-                switchTile(title: "dock the pointer", detail: companionManager.hudPlacement.isSideDrawer ? "waits in the drawer" : "waits under the notch", isOn: Binding(
-                    get: { companionManager.isCursorDocked },
-                    set: { companionManager.setCursorDocked($0) }
-                ))
-                switchTile(title: "show the pointer", detail: companionManager.isClickyCursorEnabled ? companionManager.pointerPresence.label : "only while you talk", isOn: Binding(
-                    get: { companionManager.isClickyCursorEnabled },
-                    set: { companionManager.setClickyCursorEnabled($0) }
-                ))
-            }
-
-            NotchMicrophoneRow(settings: settings)
-
-            VStack(alignment: .leading, spacing: 10) {
-                Text("where openclicky lives").font(.system(size: 13, weight: .semibold)).foregroundColor(DS.HUD.text)
-                HStack(spacing: 6) {
-                    ForEach(HUDPlacement.allCases) { placement in
-                        let isSelected = companionManager.hudPlacement == placement
-                        Button(action: { companionManager.setHUDPlacement(placement) }) {
-                            Text(placement.title)
-                                .font(.system(size: 12, weight: isSelected ? .semibold : .regular))
-                                .foregroundColor(isSelected ? .black : DS.HUD.text)
-                                .frame(maxWidth: .infinity)
-                                .frame(height: 28)
-                                .background(RoundedRectangle(cornerRadius: 9, style: .continuous).fill(isSelected ? DS.HUD.text : DS.HUD.surfaceRaised))
-                                .contentShape(Rectangle())
-                        }
-                        .buttonStyle(.plain)
-                        .pointerCursor()
-                        .accessibilityLabel(placement.title)
-                        .accessibilityAddTraits(isSelected ? .isSelected : [])
-                    }
-                }
-            }
-            .padding(.horizontal, 12)
-            .padding(.vertical, 10)
-            .background(RoundedRectangle(cornerRadius: 12, style: .continuous).fill(DS.HUD.surface))
-
-            HStack(spacing: 10) {
-                Button(action: { companionManager.showSettings() }) {
-                    HStack(spacing: 8) {
-                        Text("open settings…").font(.system(size: 13, weight: .semibold)).foregroundColor(.black)
-                        Text("⌘,").font(.system(size: 13)).foregroundColor(.black.opacity(0.45))
-                    }
-                    .frame(maxWidth: .infinity)
-                    .frame(height: 36)
-                    .background(RoundedRectangle(cornerRadius: 12, style: .continuous).fill(DS.HUD.text))
-                    .contentShape(Rectangle())
-                }
-                .buttonStyle(.plain)
-                .pointerCursor()
-                Button(action: { companionManager.quitWithFarewell() }) {
-                    HStack(spacing: 6) {
-                        Image(systemName: "power").font(.system(size: 12, weight: .semibold))
-                        Text("quit").font(.system(size: 13))
-                    }
-                    .foregroundColor(DS.HUD.text)
-                    .padding(.horizontal, 16)
-                    .frame(height: 36)
-                    .background(RoundedRectangle(cornerRadius: 12, style: .continuous).fill(DS.HUD.surfaceRaised))
-                    .contentShape(Rectangle())
-                }
-                .buttonStyle(.plain)
-                .pointerCursor()
-                .accessibilityLabel("quit openclicky")
-            }
-        }
-        .padding(.horizontal, DS.HUD.bodySidePadding)
-        .padding(.bottom, 16)
-    }
-
-    private func switchTile(title: String, detail: String, isOn: Binding<Bool>) -> some View {
-        HStack {
-            VStack(alignment: .leading, spacing: 1) {
-                Text(title).font(.system(size: 13, weight: .semibold)).foregroundColor(DS.HUD.text)
-                Text(detail).font(.system(size: 11)).foregroundColor(DS.HUD.text3).lineLimit(1)
-            }
-            Spacer(minLength: 4)
-            Toggle("", isOn: isOn)
-                .toggleStyle(HUDSwitchToggleStyle())
-                .labelsHidden()
-                .pointerCursor()
-                .accessibilityLabel(title)
-        }
-        .padding(.horizontal, 12)
-        .frame(maxWidth: .infinity)
-        .frame(height: 48)
-        .background(RoundedRectangle(cornerRadius: 12, style: .continuous).fill(DS.HUD.surface))
-    }
-}
-
-/// Which microphone hears you, on the island: the wrong one picked by default is the first thing
-/// a new user hits, and it should not take a trip through Settings. A tap opens a real menu at the
-/// pointer (system pop-ups grey out in the island, which never becomes key).
-struct NotchMicrophoneRow: View {
-    @ObservedObject var settings: DictationSettings
-
-    var body: some View {
-        Button(action: { MicrophoneMenu.present(settings: settings) }) {
-            HStack(spacing: 10) {
-                Image(systemName: "mic.fill").font(.system(size: 12, weight: .semibold)).foregroundColor(DS.HUD.text2)
-                VStack(alignment: .leading, spacing: 1) {
-                    Text("microphone").font(.system(size: 13, weight: .semibold)).foregroundColor(DS.HUD.text)
-                    Text(MicrophoneMenu.currentName(settings: settings)).font(.system(size: 11)).foregroundColor(DS.HUD.text3).lineLimit(1)
-                }
-                Spacer(minLength: 8)
-                Text("change").font(.system(size: 12)).foregroundColor(DS.HUD.text2)
-                Image(systemName: "chevron.up.chevron.down").font(.system(size: 10, weight: .semibold)).foregroundColor(DS.HUD.text3)
-            }
-            .padding(.horizontal, 12)
-            .frame(height: 48)
-            .background(RoundedRectangle(cornerRadius: 12, style: .continuous).fill(DS.HUD.surface))
-            .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-        .pointerCursor()
-        .accessibilityLabel("microphone: \(MicrophoneMenu.currentName(settings: settings)). change")
     }
 }
 
