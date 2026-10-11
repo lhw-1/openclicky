@@ -12,7 +12,10 @@ import Foundation
 
 @MainActor
 final class ElevenLabsTTSClient {
-    private let proxyURL: URL
+    /// The /tts URL, read for every request so a backend changed in shell.json while the app runs
+    /// is used by the next answer (it was fixed when the client was built).
+    private let currentProxyURL: () -> String
+    var proxyURL: URL { Self.resolvedProxyURL(fromProxyURL: currentProxyURL()) }
     private let session: URLSession
 
     /// The audio player for the current TTS playback. Kept alive so the
@@ -28,8 +31,12 @@ final class ElevenLabsTTSClient {
         URL(string: proxyURL) ?? URL(string: "\(OpenClickyConfiguration.hostedBackendURL)/tts")!
     }
 
-    init(proxyURL: String) {
-        self.proxyURL = Self.resolvedProxyURL(fromProxyURL: proxyURL)
+    convenience init(proxyURL: String) {
+        self.init(currentProxyURL: { proxyURL })
+    }
+
+    init(currentProxyURL: @escaping () -> String) {
+        self.currentProxyURL = currentProxyURL
 
         let configuration = URLSessionConfiguration.default
         configuration.timeoutIntervalForRequest = 30

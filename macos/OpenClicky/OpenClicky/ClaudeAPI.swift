@@ -10,8 +10,14 @@ class ClaudeAPI {
     private static let tlsWarmupLock = NSLock()
     private static var hasStartedTLSWarmup = false
 
-    private let apiURL: URL
+    /// The /chat URL, read for every request so a backend changed in shell.json while the app runs
+    /// is used by the next question (it was fixed when the client was built).
+    private let currentProxyURL: () -> String
+    var apiURL: URL { Self.resolvedAPIURL(fromProxyURL: currentProxyURL()) }
     var model: String
+
+    /// The NSError code (domain "ClaudeAPI") for an `error` event inside a stream that had started.
+    static let midStreamErrorCode = -1002
     private let session: URLSession
 
     /// `proxyURL` is built from the user-configurable backend URL (shell.json or an environment
@@ -24,8 +30,12 @@ class ClaudeAPI {
         URL(string: proxyURL) ?? URL(string: "\(OpenClickyConfiguration.hostedBackendURL)/chat")!
     }
 
-    init(proxyURL: String, model: String = "claude-sonnet-4-6") {
-        self.apiURL = Self.resolvedAPIURL(fromProxyURL: proxyURL)
+    convenience init(proxyURL: String, model: String = "claude-sonnet-4-6") {
+        self.init(currentProxyURL: { proxyURL }, model: model)
+    }
+
+    init(currentProxyURL: @escaping () -> String, model: String = "claude-sonnet-4-6") {
+        self.currentProxyURL = currentProxyURL
         self.model = model
 
         // Use .default instead of .ephemeral so TLS session tickets are cached.

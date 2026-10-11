@@ -76,10 +76,6 @@ final class CompanionManager: ObservableObject {
     // Response text is now displayed inline on the cursor overlay via
     // streamingResponseText, so no separate response overlay manager is needed.
 
-    /// Base URL for the OpenClicky backend (the key-holding proxy). All API requests route
-    /// through this so keys never ship in the app binary. Configured in ~/.openclicky/shell.json.
-    private static var workerBaseURL: String { OpenClickyConfiguration.backendBaseURL }
-
     /// Runs the `openclicky` CLI for the agent lane (gate + Codex thread).
     private let openClickyAgentClient = OpenClickyAgentClient()
 
@@ -557,12 +553,14 @@ final class CompanionManager: ObservableObject {
         isOverlayVisible = true
     }
 
+    // Both read the backend URL per request: built once from it, they kept asking the old
+    // backend after shell.json changed while everything else followed the new one.
     private lazy var claudeAPI: ClaudeAPI = {
-        return ClaudeAPI(proxyURL: "\(Self.workerBaseURL)/chat", model: selectedModel)
+        return ClaudeAPI(currentProxyURL: { "\(OpenClickyConfiguration.backendBaseURL)/chat" }, model: selectedModel)
     }()
 
     private lazy var elevenLabsTTSClient: ElevenLabsTTSClient = {
-        return ElevenLabsTTSClient(proxyURL: "\(Self.workerBaseURL)/tts")
+        return ElevenLabsTTSClient(currentProxyURL: { "\(OpenClickyConfiguration.backendBaseURL)/tts" })
     }()
 
     /// Conversation history so Claude remembers prior exchanges within a session.

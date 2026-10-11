@@ -34,4 +34,18 @@ struct BackendProxyURLFallbackTests {
         let url = ElevenLabsTTSClient.resolvedProxyURL(fromProxyURL: "")
         #expect(url.absoluteString == "\(OpenClickyConfiguration.hostedBackendURL)/tts")
     }
+
+    // F-31: the backend URL is read per request, so an edit to shell.json reaches the next question.
+    @MainActor @Test func theClientsReadTheBackendURLForEveryRequest() {
+        var currentBackend = "https://first.example"
+        let claudeAPI = ClaudeAPI(currentProxyURL: { "\(currentBackend)/chat" })
+        #expect(claudeAPI.apiURL.absoluteString == "https://first.example/chat")
+        currentBackend = "https://second.example"
+        #expect(claudeAPI.apiURL.absoluteString == "https://second.example/chat")
+
+        let ttsClient = ElevenLabsTTSClient(currentProxyURL: { "\(currentBackend)/tts" })
+        #expect(ttsClient.proxyURL.absoluteString == "https://second.example/tts")
+        currentBackend = "https://third.example"
+        #expect(ttsClient.proxyURL.absoluteString == "https://third.example/tts")
+    }
 }
