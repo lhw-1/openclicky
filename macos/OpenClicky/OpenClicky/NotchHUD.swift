@@ -307,6 +307,15 @@ final class NotchHUDModel: ObservableObject {
         reconcile()
     }
 
+    /// Clicky is speaking: the strip is a stop button, and hovering must not swap it for the panel.
+    private(set) var isSpeaking = false
+
+    func setSpeaking(_ speaking: Bool) {
+        guard isSpeaking != speaking else { return }
+        isSpeaking = speaking
+        reconcile()
+    }
+
     func setBusy(_ busy: Bool) {
         isBusy = busy
         reconcile()
@@ -449,7 +458,7 @@ final class NotchHUDModel: ObservableObject {
             // Hovering the connect card must not swap it for the full panel while the user is
             // reaching for its buttons; a click on the island still pins the full panel open.
             target = .connect
-        } else if isHovering && !isSetupInProgress {
+        } else if isHovering && !isSetupInProgress && !isSpeaking {
             target = .full
         } else {
             target = restingExpansion
@@ -463,7 +472,7 @@ final class NotchHUDModel: ObservableObject {
             try? await Task.sleep(nanoseconds: 400_000_000)
             // Hovering or a pinned panel holds the island open, except during setup, where the
             // pointer resting on the tour card must not keep the busy strip from showing.
-            guard !Task.isCancelled, let self, self.isSetupInProgress || (!self.isHovering && !self.isPinnedOpen), !self.isComposerOpen else { return }
+            guard !Task.isCancelled, let self, self.isSetupInProgress || (self.isSpeaking && !self.isPinnedOpen) || (!self.isHovering && !self.isPinnedOpen), !self.isComposerOpen else { return }
             self.setExpansion(self.restingExpansion)
         }
     }
@@ -534,6 +543,7 @@ final class NotchHUDManager {
     private weak var companionManager: CompanionManager?
     private var isShown = false
     private var isBusy = false
+    private var isSpeaking = false
     private var hasCompactDetailLine = false
     private var screenChangeObserver: NSObjectProtocol?
     private var clickOutsideMonitor: Any?
@@ -796,6 +806,7 @@ final class NotchHUDManager {
             model.placement = placement
             model.hostsDockedCursor = Self.primaryScreen.map(Self.screenID(of:)) == screenID
             model.setBusy(isBusy)
+            model.setSpeaking(isSpeaking)
             model.setCompactDetailLine(hasCompactDetailLine)
             model.setCursorDocked(companionManager.isCursorDocked)
             model.setConnectPrompt(connectPrompt)
@@ -834,6 +845,15 @@ final class NotchHUDManager {
                 guard let self else { return }
                 self.isBusy = busy
                 self.instances.forEach { $0.model.setBusy(busy) }
+            }
+            .store(in: &busyCancellables)
+        companionManager.$voiceState
+            .map { $0 == .responding }
+            .removeDuplicates()
+            .sink { [weak self] speaking in
+                guard let self else { return }
+                self.isSpeaking = speaking
+                self.instances.forEach { $0.model.setSpeaking(speaking) }
             }
             .store(in: &busyCancellables)
         companionManager.$voiceState
@@ -1011,7 +1031,10 @@ struct NotchHUDView: View {
                 // Collapsed, the black is the notch itself.
                 islandBackground
                     .frame(width: model.width + topCornerFlare * 2, height: expansion == .collapsed ? notchHeight : model.height)
-                    .onTapGesture { if expansion != .connect && expansion != .permission && expansion != .composer && expansion != .tour { model.togglePinned() } }
+                    .onTapGesture {
+                        if expansion == .compact && model.isSpeaking { companionManager.stopSpeaking(); return }
+                        if expansion != .connect && expansion != .permission && expansion != .composer && expansion != .tour { model.togglePinned() }
+                    }
             }
 
             // Only the active layer lives in the hierarchy: hidden layers with fixed frames would
@@ -1159,6 +1182,13 @@ struct NotchCompactStatusView: View {
                     .foregroundColor(DS.HUD.text2)
                     .lineLimit(1)
                     .truncationMode(.middle)
+                if isSpeaking {
+                    // The whole strip stops the voice on a click; this says so.
+                    Image(systemName: "stop.circle.fill")
+                        .font(.system(size: 15))
+                        .foregroundColor(DS.HUD.text)
+                        .accessibilityLabel("stop speaking")
+                }
             }
             .frame(height: DS.HUD.stripHeight)
 
@@ -1177,7 +1207,19 @@ struct NotchCompactStatusView: View {
             Spacer(minLength: 0)
         }
         .padding(.horizontal, 14)
+        .overlay {
+            // Only while speaking, so a click on the busy strip otherwise still opens the panel.
+            if isSpeaking {
+                Color.clear
+                    .contentShape(Rectangle())
+                    .onTapGesture { companionManager.stopSpeaking() }
+                    .pointerCursor()
+                    .help("click to stop speaking")
+            }
+        }
     }
+
+    private var isSpeaking: Bool { companionManager.voiceState == .responding }
 
     /// The strip's caption line, or nil for a strip with only its status. The HUD manager asks the
     /// same question to size the island, so it is static and takes the published values.
@@ -1200,7 +1242,8 @@ struct NotchCompactStatusView: View {
         case .processing:
             if isDictating { return "typing it in" }
             return companionManager.agentActivityText == nil ? "looking at your screen" : "working"
-        case .responding: return "speaking"
+        case .responding:
+            return companionManager.answeringSourceName.map { "speaking · \($0)" } ?? "speaking"
         }
     }
 }

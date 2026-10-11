@@ -85,6 +85,23 @@ struct ProviderRouteTests {
         #expect(ProviderRouter.route(for: .openAIChat, credentials: geminiOnly) == .unavailable(ProviderRouter.needsOpenAIKeySentence))
     }
 
+    /// The island names who is answering: the source behind each route that can answer.
+    @Test func eachAnsweringRouteNamesItsSource() {
+        #expect(ProviderRoute.anthropicDirect.answeringSource?.shortName == "Claude")
+        #expect(ProviderRoute.answerProvider(.claudeCodePlan).answeringSource?.shortName == "Claude Code")
+        #expect(ProviderRoute.backend.answeringSource?.shortName == "free credits")
+        #expect(ProviderRoute.unavailable("no").answeringSource == nil)
+        #expect(ProviderRoute.openAIDirect.answeringSource == nil)
+    }
+
+    /// The Agents tab says the tool is missing instead of env's "No such file or directory".
+    @Test func aMissingAgentToolIsToldApartFromOneThatRuns() {
+        #expect(OpenClickyAgentError.toolResolves("sh", path: "/nowhere:/bin"))
+        #expect(OpenClickyAgentError.toolResolves("/bin/sh", path: nil))
+        #expect(!OpenClickyAgentError.toolResolves("openclicky-not-a-real-tool", path: "/bin:/usr/bin"))
+        #expect(!OpenClickyAgentError.toolResolves("openclicky", path: ""))
+    }
+
     /// Quick actions reach the other providers: an Anthropic tool becomes an AnswerRequest tool
     /// with its schema intact; one without a name is dropped.
     @Test func anthropicToolsBecomeAnswerTools() throws {

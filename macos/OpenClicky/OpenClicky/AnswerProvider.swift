@@ -21,6 +21,22 @@ nonisolated enum AnswerSource: String, CaseIterable, Identifiable, Sendable {
 
     var id: String { rawValue }
 
+    /// The few words the island shows next to "speaking".
+    var shortName: String {
+        switch self {
+        case .anthropic: return "Claude"
+        case .openAI: return "OpenAI"
+        case .openRouter: return "OpenRouter"
+        case .gemini: return "Gemini"
+        case .groq: return "Groq"
+        case .mistral: return "Mistral"
+        case .xai: return "Grok"
+        case .claudeCodePlan: return "Claude Code"
+        case .codexPlan: return "Codex"
+        case .openClickyAccount: return "free credits"
+        }
+    }
+
     var displayName: String {
         switch self {
         case .anthropic: return "Claude (Anthropic key)"
