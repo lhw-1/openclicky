@@ -108,6 +108,7 @@ private struct OrbLookPicker: View {
                     .buttonStyle(.plain)
                     .accessibilityLabel("\(look.rawValue) style")
                     .accessibilityAddTraits(isSelected ? .isSelected : [])
+                    .pointerCursor()
                 }
             }
         }
@@ -125,6 +126,7 @@ private struct OrbThemePicker: View {
             ForEach(OrbTheme.allCases) { theme in Text(theme.rawValue.capitalized).tag(theme) }
         }
         .labelsHidden().fixedSize()
+        .pointerCursor()
     }
 }
 
@@ -138,6 +140,7 @@ private struct OrbSizePicker: View {
         }
         .pickerStyle(.segmented)
         .labelsHidden().fixedSize()
+        .pointerCursor()
     }
 }
 
@@ -151,6 +154,7 @@ private struct OrbDragRow: View {
             HStack(spacing: 10) {
                 if settings.orbPosition != nil {
                     Button("Move to Bottom") { settings.orbPosition = nil }
+                        .pointerCursor()
                 }
                 SettingsToggle(settings: settings, keyPath: \.orbIsDraggable)
             }

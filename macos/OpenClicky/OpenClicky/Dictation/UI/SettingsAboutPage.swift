@@ -33,6 +33,7 @@ extension SettingsCatalog {
                 keywords: ["github", "source", "license", "mit", "code"],
                 view: AnyView(SettingsRow(title: "Source code", detail: "Issues and pull requests welcome.") {
                     Button("GitHub ↗") { openExternalLink("https://github.com/prasanthsasikumar/openclicky") }
+                        .pointerCursor()
                 })),
             SettingsItem(
                 id: "about.reportBug", page: .about, section: "Help",
@@ -41,7 +42,9 @@ extension SettingsCatalog {
                 view: AnyView(SettingsRow(title: "Report a bug", detail: "Attach the log — it lists what each take did, not what you said.") {
                     HStack(spacing: 8) {
                         Button("Show Log") { NSWorkspace.shared.activateFileViewerSelecting([AppLog.fileURL]) }
+                            .pointerCursor()
                         Button("Open Issues ↗") { openExternalLink("https://github.com/prasanthsasikumar/openclicky/issues") }
+                            .pointerCursor()
                     }
                 })),
         ]
@@ -92,6 +95,7 @@ private struct CheckNowRow: View {
         SettingsRow(title: "Check now", detail: nil) {
             Button("Check Now") { updater.checkNow() }
                 .disabled(!updater.isConfigured)
+                .pointerCursor(isEnabled: updater.isConfigured)
         }
     }
 }

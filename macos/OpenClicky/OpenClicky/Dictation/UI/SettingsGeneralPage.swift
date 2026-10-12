@@ -41,6 +41,7 @@ extension SettingsCatalog {
                 keywords: ["onboarding", "setup", "replay", "tour", "first run"],
                 view: AnyView(SettingsRow(title: "Welcome tour", detail: "Clicky shows you dictating, asking and handing over a task, from the island.") {
                     Button("Replay…") { companionManager.firstRunTour.replay() }
+                        .pointerCursor()
                 })),
             SettingsItem(
                 id: "general.reduceMotion", page: .general, section: "Motion",
@@ -117,6 +118,7 @@ private struct AppearanceTile: View {
         .buttonStyle(.plain)
         .accessibilityLabel(label)
         .accessibilityAddTraits(isSelected ? .isSelected : [])
+        .pointerCursor()
     }
 }
 
@@ -161,6 +163,7 @@ private struct HUDPlacementRow: View {
             }
             .labelsHidden()
             .fixedSize()
+            .pointerCursor()
         }
         .onReceive(companionManager.$hudPlacement) { placement = $0 }
     }

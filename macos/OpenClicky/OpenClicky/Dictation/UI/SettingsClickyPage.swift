@@ -86,6 +86,7 @@ extension SettingsCatalog {
                 keywords: ["realtime", "voice", "fast", "hands-free", "always listening", "openai", "key"],
                 view: AnyView(SettingsRow(title: "Fast voice and hands-free", detail: "Needs your own OpenAI key. A free account uses the standard voice.") {
                     Button("Add Key…") { companionManager.showSettings(.account) }
+                        .pointerCursor()
                 })))
         }
         items += [
@@ -186,6 +187,7 @@ private struct PointerPresenceOptions: View {
                 .accessibilityLabel(title(for: option))
                 .accessibilityHint(detail(for: option))
                 .accessibilityAddTraits(presence == option ? .isSelected : [])
+                .pointerCursor()
             }
         }
         .padding(.vertical, 4)
@@ -220,6 +222,7 @@ private struct AnswerSourceRow: View {
                 if let picked, !available.contains(picked) { Text("\(picked.displayName) (not set up)").tag(picked.rawValue) }
             }
             .labelsHidden().fixedSize()
+            .pointerCursor()
         }
     }
 
@@ -265,6 +268,7 @@ private struct SpeechVoiceRows: View {
                     ForEach(offered) { Text($0.title).tag($0) }
                 }
                 .labelsHidden().fixedSize()
+                .pointerCursor()
             }
             .onAppear { billing.refresh() }
             // Also while the automatic download runs, so it can be watched or cancelled.
@@ -325,20 +329,20 @@ private struct KokoroRows: View {
         switch kokoro.state {
         case .notInstalled:
             SettingsRow(title: "Kokoro", detail: "An open voice model that runs on this Mac, free and offline. \(KokoroVoice.downloadSizeText) to download.") {
-                Button("Download") { kokoro.download() }.fixedSize()
+                Button("Download") { kokoro.download() }.fixedSize().pointerCursor()
             }
         case .downloading(let fraction):
             SettingsRow(title: "Downloading Kokoro", detail: "\(Int((fraction * 100).rounded()))% of \(KokoroVoice.downloadSizeText). Answers keep the current voice until it’s ready.") {
                 HStack(spacing: 8) {
                     ProgressView(value: fraction).frame(width: 120)
-                    Button("Cancel") { kokoro.cancelDownload() }.fixedSize()
+                    Button("Cancel") { kokoro.cancelDownload() }.fixedSize().pointerCursor()
                 }
             }
         case .unpacking:
             SettingsRow(title: "Unpacking Kokoro", detail: "Almost there.") { ProgressView().controlSize(.small) }
         case .failed(let message):
             SettingsRow(title: "Kokoro", detail: message) {
-                Button("Try Again") { kokoro.download() }.fixedSize()
+                Button("Try Again") { kokoro.download() }.fixedSize().pointerCursor()
             }
         case .installed:
             let speakers = KokoroVoice.speakers.filter { $0.languageCode == ReplyLanguage.currentCode }
@@ -357,7 +361,8 @@ private struct KokoroRows: View {
                     }
                     .labelsHidden()
                     .frame(maxWidth: 200)
-                    Button("Preview") { VoicePreview.shared.play(.kokoro) }.fixedSize()
+                    .pointerCursor()
+                    Button("Preview") { VoicePreview.shared.play(.kokoro) }.fixedSize().pointerCursor()
                 }
             }
             SettingsRow(title: "Kokoro download", detail: "About 400 MB in Application Support.") {
@@ -369,6 +374,7 @@ private struct KokoroRows: View {
                     }
                 }
                 .fixedSize()
+                .pointerCursor()
             }
         }
     }
@@ -395,7 +401,8 @@ private struct MacVoiceRow: View {
                     }
                     .labelsHidden()
                     .frame(maxWidth: 220)
-                    Button("Preview") { VoicePreview.shared.play(.mac) }.fixedSize()
+                    .pointerCursor()
+                    Button("Preview") { VoicePreview.shared.play(.mac) }.fixedSize().pointerCursor()
                 }
             }
             SettingsRow(title: "Better voices", detail: "Premium and Enhanced voices are small models macOS downloads once, then they run offline. Get Voices opens Read & Speak (Spoken Content on older macOS): System voice, Manage Voices.") {
@@ -403,6 +410,7 @@ private struct MacVoiceRow: View {
                     openExternalLink("x-apple.systempreferences:com.apple.Accessibility-Settings.extension?SpokenContent")
                 }
                 .fixedSize()
+                .pointerCursor()
             }
         }
         // A voice downloaded in System Settings shows up when the window comes back.
@@ -443,6 +451,7 @@ private struct ReplyLanguageRow: View {
                 ForEach(ReplyLanguage.choices) { choice in Text(choice.name).tag(choice.code) }
             }
             .labelsHidden().fixedSize()
+            .pointerCursor()
         }
     }
 }
@@ -465,6 +474,7 @@ private struct ClaudeModelRow: View {
             .pickerStyle(.segmented)
             .labelsHidden()
             .fixedSize()
+            .pointerCursor()
         }
         .onReceive(companionManager.$selectedModel) { model = $0 }
     }
@@ -479,7 +489,9 @@ private struct AgentWorkspaceRow: View {
         SettingsRow(title: "Workspace", detail: OpenClickyConfiguration.workspacePath.replacingOccurrences(of: NSHomeDirectory(), with: "~")) {
             HStack(spacing: 8) {
                 Button("Show in Finder") { NSWorkspace.shared.open(URL(fileURLWithPath: OpenClickyConfiguration.workspacePath)) }
+                    .pointerCursor()
                 Button("Change…", action: chooseFolder)
+                    .pointerCursor()
             }
         }
     }

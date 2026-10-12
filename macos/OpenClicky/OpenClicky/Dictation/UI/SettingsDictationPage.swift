@@ -222,6 +222,7 @@ private struct InactivityTimeoutPicker: View {
             Text("1 minute").tag(1); Text("3 minutes").tag(3); Text("5 minutes").tag(5); Text("10 minutes").tag(10); Text("Never").tag(0)
         }
         .labelsHidden().fixedSize()
+        .pointerCursor()
     }
 }
 
@@ -238,6 +239,7 @@ private struct MicrophoneInputRow: View {
                 ForEach(devices) { device in Text(device.name).tag(device.uid) }
             }
             .labelsHidden().frame(maxWidth: 260)
+            .pointerCursor()
         }
         .onAppear { devices = MicrophoneDevices.available() }
     }
@@ -259,6 +261,7 @@ private struct MicrophoneTestRow: View {
             HStack(spacing: 12) {
                 if isTesting { OrbLevelBars(level: testLevel, color: SettingsLook.success).frame(width: 40, height: 16) }
                 Button(isTesting ? "Stop" : "Speak to Test") { isTesting ? stopTest() : startTest() }
+                    .pointerCursor()
             }
         }
         .onDisappear(perform: stopTest)
@@ -311,6 +314,7 @@ private struct MovedToStylesNote: View {
             Button("Styles") { companionManager.showDictationWindow(section: .writing) }
                 .buttonStyle(.link)
                 .accessibilityHint("opens Styles")
+                .pointerCursor()
             Text(settingsHighlighted(", next to the rules the model reads.", query: searchQuery))
         }
         .font(SettingsLook.caption).foregroundStyle(.secondary)

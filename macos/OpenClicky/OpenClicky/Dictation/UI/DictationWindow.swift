@@ -340,6 +340,7 @@ private struct SidebarFooter: View {
             }
             .buttonStyle(.plain)
             .help("Account")
+            .pointerCursor()
         }
     }
 

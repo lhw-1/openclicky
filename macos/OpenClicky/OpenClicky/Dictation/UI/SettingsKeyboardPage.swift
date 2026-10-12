@@ -52,6 +52,7 @@ extension SettingsCatalog {
                 isRelevant: { dictationKeyIsFn && FnKeyState.shared.isFree },
                 view: AnyView(SettingsRow(title: "fn is free for dictation", detail: "macOS’s own fn action is off (Keyboard settings → Press 🌐 key to: Do Nothing).") {
                     Button("Give fn Back to macOS") { fnKeyState.giveBack() }
+                        .pointerCursor()
                 })),
             SettingsItem(
                 id: "keyboard.edit", page: .keyboard, section: "Dictation",
@@ -94,6 +95,7 @@ extension SettingsCatalog {
                 keywords: ["paste", "again", "re-insert", "last"],
                 view: AnyView(SettingsRow(title: "Paste last take", detail: "Put your last take at the cursor again.") {
                     Button("Paste Now") { companionManager.dictationTakeController.pasteLast() }
+                        .pointerCursor()
                 })),
         ]
     }
@@ -149,6 +151,7 @@ private struct FnKeyWarningRow: View {
             }
             Spacer(minLength: 12)
             Button("Set fn to Do Nothing") { fnKeyState.free() }
+                .pointerCursor()
         }
         .padding(.vertical, 4)
         .onAppear { fnKeyState.refresh() }
@@ -173,6 +176,7 @@ private struct DictationKeyPicker: View {
             ForEach(DictationHotkey.allCases) { key in Text(key.settingsTitle).tag(key) }
         }
         .labelsHidden().fixedSize()
+        .pointerCursor()
     }
 }
 

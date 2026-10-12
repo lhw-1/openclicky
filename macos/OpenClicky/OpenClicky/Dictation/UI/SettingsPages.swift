@@ -115,7 +115,8 @@ enum SettingsLook {
     }
 }
 
-/// A native switch, small like System Settings' own.
+/// A native switch, small like System Settings' own. It carries the pointer cursor itself, so every
+/// switch in the window shows it without each row having to remember.
 struct SettingsSwitch: View {
     @Binding var isOn: Bool
 
@@ -125,6 +126,7 @@ struct SettingsSwitch: View {
             .controlSize(.small)
             .labelsHidden()
             .tint(SettingsLook.accent)
+            .pointerCursor()
     }
 }
 

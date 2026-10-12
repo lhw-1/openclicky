@@ -465,9 +465,9 @@ private struct OrbTranscriptBox: View {
             HStack {
                 Text(reason).font(.system(size: 10)).foregroundStyle(.secondary).lineLimit(1)
                 Spacer()
-                if let onPaste { Button("paste", action: onPaste).controlSize(.small) }
-                Button("copy", action: onCopy).controlSize(.small)
-                Button(action: onClose) { Image(systemName: "xmark") }.controlSize(.small)
+                if let onPaste { Button("paste", action: onPaste).controlSize(.small).pointerCursor() }
+                Button("copy", action: onCopy).controlSize(.small).pointerCursor()
+                Button(action: onClose) { Image(systemName: "xmark") }.controlSize(.small).pointerCursor()
             }
         }
         .padding(12)

@@ -258,7 +258,7 @@ struct WritingPageView: View {
         return SettingsRow(
             title: "Clean up my words with AI",
             detail: "Adds punctuation and fixes numbers. " + whereWordsAreTidied + ", so they appear when you let go. Off: words type straight in as you speak." + needsModelNote) {
-            SettingsSwitch(isOn: cleanUpIsOn).pointerCursor()
+            SettingsSwitch(isOn: cleanUpIsOn)
         }
     }
 
@@ -668,13 +668,13 @@ private struct WritingStyleEditorSheet: View {
                 }
                 Section {
                     SettingsRow(title: "Sentence case", detail: "Capital letters and full stops.") {
-                        SettingsSwitch(isOn: $draft.sentenceCase).pointerCursor()
+                        SettingsSwitch(isOn: $draft.sentenceCase)
                     }
                     SettingsRow(title: "Remove fillers", detail: "Um, uh, and friends.") {
-                        SettingsSwitch(isOn: $draft.removeFillers).pointerCursor()
+                        SettingsSwitch(isOn: $draft.removeFillers)
                     }
                     SettingsRow(title: "Clean up with AI", detail: "For this style, when “Clean up my words with AI” is on.") {
-                        SettingsSwitch(isOn: $draft.polishWithModel).pointerCursor()
+                        SettingsSwitch(isOn: $draft.polishWithModel)
                     }
                 }
                 Section {

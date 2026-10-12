@@ -34,6 +34,7 @@ extension SettingsCatalog {
                 keywords: ["sarvam", "billing", "engine", "dashboard"],
                 view: AnyView(SettingsRow(title: "Sarvam", detail: "Billed by Sarvam to your key.") {
                     Button("Dashboard ↗") { openExternalLink("https://dashboard.sarvam.ai") }
+                        .pointerCursor()
                 })),
             SettingsItem(
                 id: "account.usage.backend", page: .account, section: "Plan & usage",
@@ -112,7 +113,7 @@ private struct AccountProfileRow: View {
                         HStack(spacing: 6) {
                             Text(resendNote ?? "Unconfirmed — check your inbox for the code.")
                                 .font(SettingsLook.caption).foregroundStyle(.secondary)
-                            Button("Resend", action: resend).buttonStyle(.link).font(SettingsLook.caption)
+                            Button("Resend", action: resend).buttonStyle(.link).font(SettingsLook.caption).pointerCursor()
                         }
                         GuestConfirmationCodeField(onConfirmed: { billing.refresh() })
                     }
@@ -139,10 +140,12 @@ private struct AccountProfileRow: View {
                     authSession.signOut()
                     ShellSettingsRevision.shared.noteChanged()
                 }
+                .pointerCursor()
             } else {
                 Button(authSession.isGuestWithoutEmail ? "Add Email…" : "Sign In…") { showsAccountSheet = true }
                     .buttonStyle(.borderedProminent)
                     .tint(SettingsLook.accent)
+                    .pointerCursor()
             }
         }
         .padding(.vertical, 6)
@@ -403,7 +406,9 @@ private struct ProviderKeysList: View {
                 Button(checking.contains(provider) ? "Testing…" : "Test") { test(provider) }
                     .disabled(checking.contains(provider))
                     .help(provider.speechVoice == nil ? "Ask it what colour a red square is" : "Have it say a word")
+                    .pointerCursor(isEnabled: !checking.contains(provider))
                 Button("Remove") { pendingRemoval = provider }
+                    .pointerCursor()
             }
         }
     }
@@ -417,6 +422,7 @@ private struct ProviderKeysList: View {
                 .labelsHidden()
                 .fixedSize()
                 .onChange(of: newProvider) { _, _ in addStatus = nil }
+                .pointerCursor()
                 SecureField("", text: $newKey, prompt: Text(newProvider.placeholder))
                     .labelsHidden()
                     .textFieldStyle(.roundedBorder)
@@ -426,6 +432,7 @@ private struct ProviderKeysList: View {
                 Button("Add", action: add)
                     .fixedSize()
                     .disabled(newKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                    .pointerCursor(isEnabled: !(newKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty))
             }
             .layoutPriority(1)
         }
@@ -503,9 +510,11 @@ private struct PlanSubscriptionRow: View {
                     Button(isChecking ? "Testing…" : "Test", action: test)
                         .disabled(isChecking)
                         .help("Ask it what colour a red square is")
+                        .pointerCursor(isEnabled: !isChecking)
                 }
                 if status == .notInstalled {
                     Button("Get It ↗") { openExternalLink(plan == .claudeCodePlan ? "https://claude.com/product/claude-code" : "https://developers.openai.com/codex/cli") }
+                        .pointerCursor()
                 }
                 SettingsSwitch(isOn: Binding(get: { isOn }, set: { newValue in
                     isOn = newValue
@@ -559,6 +568,7 @@ private struct BackendDetailsRow: View {
             SettingsRow(title: "Host", detail: OpenClickyConfiguration.backendHostDescription) {
                 Button("Show shell.json") { OpenClickyConfiguration.revealSettingsFile() }
                     .help(OpenClickyConfiguration.backendBaseURL)
+                    .pointerCursor()
             }
         case .token:
             SettingsRow(title: "Session token", detail: "Written when you sign in.") {

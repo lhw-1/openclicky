@@ -76,6 +76,7 @@ extension SettingsCatalog {
                 keywords: ["sqlite", "database", "file", "folder", "takes"],
                 view: AnyView(SettingsRow(title: "History", detail: path(TakeStore.defaultFileURL)) {
                     Button("Show in Finder") { NSWorkspace.shared.activateFileViewerSelecting([TakeStore.defaultFileURL]) }
+                        .pointerCursor()
                 })),
             SettingsItem(
                 id: "privacy.whereSpace", page: .privacy, section: "Where things live",
@@ -83,6 +84,7 @@ extension SettingsCatalog {
                 keywords: ["json", "file", "folder", "shortcuts"],
                 view: AnyView(SettingsRow(title: "Styles, dictionary, snippets", detail: path(DictationSpaceStore.defaultDirectoryURL)) {
                     Button("Show in Finder") { NSWorkspace.shared.open(DictationSpaceStore.defaultDirectoryURL) }
+                        .pointerCursor()
                 })),
             SettingsItem(
                 id: "privacy.whereKeys", page: .privacy, section: "Where things live",
@@ -90,6 +92,7 @@ extension SettingsCatalog {
                 keywords: ["shell.json", "token", "file", "key"],
                 view: AnyView(SettingsRow(title: "Keys and account", detail: "~/.openclicky/shell.json") {
                     Button("Show in Finder") { OpenClickyConfiguration.revealSettingsFile() }
+                        .pointerCursor()
                 })),
             SettingsItem(
                 id: "privacy.summary", page: .privacy, section: "Where things live",
@@ -182,6 +185,7 @@ private struct PermissionRow: View {
                 Button("Allow…") { permission.request() }
                     .buttonStyle(.borderedProminent)
                     .tint(SettingsLook.accent)
+                    .pointerCursor()
             }
         }
         .onReceive(pollTimer) { _ in isGranted = permission.isGranted }
@@ -212,6 +216,7 @@ private struct DeleteTakesRow: View {
         SettingsRow(title: "Delete all takes", detail: "Your dictionary and snippets stay.") {
             Button("Delete History…", role: .destructive) { isConfirmingDelete = true }
                 .foregroundStyle(SettingsLook.danger)
+                .pointerCursor()
         }
         .confirmationDialog("Delete every take on this Mac?", isPresented: $isConfirmingDelete) {
             Button("Delete All History", role: .destructive) {
@@ -235,6 +240,7 @@ private struct PrivacySummaryNote: View {
                 Text("The full privacy policy is in the project’s")
                 Button("README") { openExternalLink("https://github.com/prasanthsasikumar/openclicky#readme") }
                     .buttonStyle(.link)
+                    .pointerCursor()
                 Text(".")
             }
         }
