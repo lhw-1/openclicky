@@ -57,17 +57,9 @@ final class CompanionManager: ObservableObject {
     /// same coordinates twice in a row (the location alone would not change).
     @Published var detectedElementPointToken: Int = 0
 
-    // MARK: - Onboarding Video State (shared across all screen overlays)
-
-    @Published var onboardingVideoPlayer: AVPlayer?
-    @Published var showOnboardingVideo: Bool = false
-    @Published var onboardingVideoOpacity: Double = 0.0
-    private var onboardingVideoEndObserver: NSObjectProtocol?
-    private var onboardingDemoTimeObserver: Any?
-
     // MARK: - Onboarding Prompt Bubble
 
-    /// Text streamed character-by-character on the cursor after the onboarding video ends.
+    /// Text streamed character-by-character on the cursor after the onboarding demo.
     @Published var cursorCaptionText: String = ""
     @Published var cursorCaptionOpacity: Double = 0.0
     @Published var isCursorCaptionVisible: Bool = false
@@ -238,8 +230,7 @@ final class CompanionManager: ObservableObject {
                 AppLog.append("talk: you said: \(text.prefix(300))")
             case .assistant:
                 AppLog.append("talk: openclicky said: \(text.prefix(300))")
-                self.conversationHistory.append((userTranscript: self.lastTranscript ?? "", assistantResponse: text))
-                if self.conversationHistory.count > 10 { self.conversationHistory.removeFirst(self.conversationHistory.count - 10) }
+                self.rememberExchange(userTranscript: self.lastTranscript ?? "", assistantResponse: text)
                 print("🔊 (realtime) \(text)")
             }
         }
@@ -373,9 +364,7 @@ final class CompanionManager: ObservableObject {
         guard voiceState == .idle else { return }
         isDockingInProgress = true
         if !isOverlayVisible {
-            overlayWindowManager.hasShownOverlayBefore = true
-            overlayWindowManager.showOverlay(onScreens: NSScreen.screens, companionManager: self)
-            isOverlayVisible = true
+            showOverlayOnAllScreens()
         }
         transientHideTask?.cancel()
         transientHideTask = nil
@@ -414,9 +403,7 @@ final class CompanionManager: ObservableObject {
         notchHUDManager.clearCaption()
         // Re-create the overlay with the buddy starting at the notch; it flies to the mouse.
         cursorLaunchOriginScreenLocation = notchHUDManager.dockPoint
-        overlayWindowManager.hasShownOverlayBefore = true
-        overlayWindowManager.showOverlay(onScreens: NSScreen.screens, companionManager: self)
-        isOverlayVisible = true
+        showOverlayOnAllScreens()
         print("🎯 Cursor released from the notch")
     }
 
@@ -595,9 +582,7 @@ final class CompanionManager: ObservableObject {
         guard isCursorDocked, !isOverlayVisible else { return }
         cursorLaunchOriginScreenLocation = notchHUDManager.dockPoint
         cursorFlightLeg = nil
-        overlayWindowManager.hasShownOverlayBefore = true
-        overlayWindowManager.showOverlay(onScreens: NSScreen.screens, companionManager: self)
-        isOverlayVisible = true
+        showOverlayOnAllScreens()
     }
 
     // Both read the backend URL per request: built once from it, they kept asking the old
@@ -686,6 +671,15 @@ final class CompanionManager: ObservableObject {
     /// Used by the panel to show accurate status text ("Active" vs "Ready").
     @Published private(set) var isOverlayVisible: Bool = false
 
+    /// Puts the cursor overlay on every display. `hasShownOverlayBefore` is set first so the
+    /// overlay skips its first-launch welcome bubble: every caller here shows the buddy for a
+    /// reason of its own (a question, a caption, a flight), never as a first launch.
+    private func showOverlayOnAllScreens() {
+        overlayWindowManager.hasShownOverlayBefore = true
+        overlayWindowManager.showOverlay(onScreens: NSScreen.screens, companionManager: self)
+        isOverlayVisible = true
+    }
+
     /// The Claude model used for voice responses. Persisted to UserDefaults.
     @Published var selectedModel: String = UserDefaults.standard.string(forKey: "selectedClaudeModel") ?? "claude-sonnet-4-6"
 
@@ -709,9 +703,7 @@ final class CompanionManager: ObservableObject {
         transientHideTask = nil
 
         if enabled {
-            overlayWindowManager.hasShownOverlayBefore = true
-            overlayWindowManager.showOverlay(onScreens: NSScreen.screens, companionManager: self)
-            isOverlayVisible = true
+            showOverlayOnAllScreens()
         } else {
             overlayWindowManager.hideOverlay()
             isOverlayVisible = false
@@ -774,20 +766,6 @@ final class CompanionManager: ObservableObject {
         set { UserDefaults.standard.set(newValue, forKey: "hasCompletedOnboarding") }
     }
 
-    /// Whether the user has submitted their email during onboarding.
-    @Published var hasSubmittedEmail: Bool = UserDefaults.standard.bool(forKey: "hasSubmittedEmail")
-
-    /// Submits the user's email to FormSpark and identifies them in PostHog.
-    func submitEmail(_ email: String) {
-        let trimmedEmail = email.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmedEmail.isEmpty else { return }
-
-        hasSubmittedEmail = true
-        UserDefaults.standard.set(true, forKey: "hasSubmittedEmail")
-        // OpenClicky: upstream posted the email to the original developer's form and identified the
-        // user in PostHog. Neither happens here — the email stays on this machine.
-    }
-
     /// An account hears on the Mac (Apple speech); own keys keep the configured provider.
     private func applyHearingForAccount() {
         buddyDictationManager.replaceTranscriptionProvider(
@@ -843,9 +821,7 @@ final class CompanionManager: ObservableObject {
                 // Restore the docked state without an animation: the buddy is simply home.
                 isCursorDocked = true
             } else {
-                overlayWindowManager.hasShownOverlayBefore = true
-                overlayWindowManager.showOverlay(onScreens: NSScreen.screens, companionManager: self)
-                isOverlayVisible = true
+                showOverlayOnAllScreens()
             }
         }
 
@@ -1038,9 +1014,7 @@ final class CompanionManager: ObservableObject {
 
                     // If onboarding was already completed, show the cursor overlay now
                     if hasCompletedOnboarding && allPermissionsGranted && !isOverlayVisible && isClickyCursorEnabled {
-                        overlayWindowManager.hasShownOverlayBefore = true
-                        overlayWindowManager.showOverlay(onScreens: NSScreen.screens, companionManager: self)
-                        isOverlayVisible = true
+                        showOverlayOnAllScreens()
                     }
                 }
             } catch {
@@ -1232,9 +1206,7 @@ final class CompanionManager: ObservableObject {
         // Only a first run: someone who used OpenClicky before has finished onboarding already.
         guard !firstRunTour.isFinished, !hasCompletedOnboarding, isClickyCursorEnabled, !isCursorDocked, !isOverlayVisible else { return }
         if flyingFromTheNotch { cursorLaunchOriginScreenLocation = notchHUDManager.dockPoint }
-        overlayWindowManager.hasShownOverlayBefore = true
-        overlayWindowManager.showOverlay(onScreens: NSScreen.screens, companionManager: self)
-        isOverlayVisible = true
+        showOverlayOnAllScreens()
     }
 
     /// The tour's first moment: the pointer flies out of the notch to the mouse and says hello
@@ -1242,9 +1214,7 @@ final class CompanionManager: ObservableObject {
     func introducePointerForTour() {
         if !isCursorDocked && !isOverlayVisible {
             cursorLaunchOriginScreenLocation = notchHUDManager.dockPoint
-            overlayWindowManager.hasShownOverlayBefore = true
-            overlayWindowManager.showOverlay(onScreens: NSScreen.screens, companionManager: self)
-            isOverlayVisible = true
+            showOverlayOnAllScreens()
         }
         DispatchQueue.main.asyncAfter(deadline: .now() + 1.6) { [weak self] in
             guard let self else { return }
@@ -1259,9 +1229,7 @@ final class CompanionManager: ObservableObject {
     func pointAtTourPrimaryButton(saying bubbleText: String) {
         guard let (location, displayFrame) = notchHUDManager.tourPrimaryButtonLocation() else { return }
         if !isOverlayVisible {
-            overlayWindowManager.hasShownOverlayBefore = true
-            overlayWindowManager.showOverlay(onScreens: NSScreen.screens, companionManager: self)
-            isOverlayVisible = true
+            showOverlayOnAllScreens()
         }
         detectedElementBubbleText = bubbleText
         detectedElementScreenLocation = location
@@ -1276,30 +1244,12 @@ final class CompanionManager: ObservableObject {
         Task { @MainActor in
             defer { onFinished() }
             do {
-                let screenCaptures = try await CompanionScreenCaptureUtility.captureAllScreensAsJPEG()
-                guard let cursorScreenCapture = screenCaptures.first(where: { $0.isCursorScreen }) else { return }
-                let dimensionInfo = " (image dimensions: \(cursorScreenCapture.screenshotWidthInPixels)x\(cursorScreenCapture.screenshotHeightInPixels) pixels)"
-                let (fullResponseText, _, _) = try await claudeAPI.analyzeImageStreaming(
-                    images: [(data: cursorScreenCapture.imageData, label: cursorScreenCapture.label + dimensionInfo)],
-                    systemPrompt: Self.onboardingDemoSystemPrompt,
-                    userPrompt: "look around my screen and find something interesting to point at",
-                    onTextChunk: { _ in }
-                )
-                let parseResult = Self.parsePointingCoordinates(from: fullResponseText)
-                guard let pointCoordinate = parseResult.coordinate else { return }
-                if !isOverlayVisible {
-                    overlayWindowManager.hasShownOverlayBefore = true
-                    overlayWindowManager.showOverlay(onScreens: NSScreen.screens, companionManager: self)
-                    isOverlayVisible = true
-                }
-                detectedElementBubbleText = parseResult.spokenText
-                detectedElementScreenLocation = Self.screenLocation(forScreenshotPoint: pointCoordinate, in: cursorScreenCapture)
-                detectedElementDisplayFrame = cursorScreenCapture.displayFrame
-                detectedElementPointToken &+= 1
+                guard let parseResult = try await pointAtSomethingOnScreenForDemo(showingTheOverlayIfHidden: true) else { return }
                 AppLog.append("tour demo: pointing at \(parseResult.elementLabel ?? "something")")
                 // Said in the answering voice; quietly skipped when no voice route is set up.
-                try? await elevenLabsTTSClient.speakText(parseResult.spokenText)
-                while elevenLabsTTSClient.isPlaying { try? await Task.sleep(nanoseconds: 150_000_000) }
+                if let demoCommentAudio = try? await elevenLabsTTSClient.fetchAudio(for: parseResult.spokenText) {
+                    try? await elevenLabsTTSClient.playToCompletion(demoCommentAudio)
+                }
             } catch {
                 AppLog.append("tour demo: could not run (\((error as NSError).domain) \((error as NSError).code))")
             }
@@ -1337,7 +1287,6 @@ final class CompanionManager: ObservableObject {
         case .handsFreeToggleRequested:
             toggleHandsFree()
         case .dictationPressed, .dictationEditPressed, .dictationEditModifierJoined, .dictationReleased, .dictationDoubleTapped, .escapePressed:
-            guard !showOnboardingVideo else { return }
             dictationTakeController.handle(shortcutEvent)
         case .talkPressed, .talkReleased:
             // Delivered through shortcutTransitionPublisher.
@@ -1347,7 +1296,6 @@ final class CompanionManager: ObservableObject {
 
     /// Control tapped twice: the notch island opens a one-line text field.
     func openTextComposer() {
-        guard !showOnboardingVideo else { return }
         notchHUDManager.openTextComposer()
     }
 
@@ -1359,9 +1307,7 @@ final class CompanionManager: ObservableObject {
         transientHideTask?.cancel()
         transientHideTask = nil
         if !isClickyCursorEnabled && !isOverlayVisible && !isCursorDocked {
-            overlayWindowManager.hasShownOverlayBefore = true
-            overlayWindowManager.showOverlay(onScreens: NSScreen.screens, companionManager: self)
-            isOverlayVisible = true
+            showOverlayOnAllScreens()
         }
         stopActiveAnswer()
         currentResponseTask?.cancel()
@@ -1428,8 +1374,6 @@ final class CompanionManager: ObservableObject {
                 showAskCaption("you’re still dictating. tap \(dictationSettings.dictationKey.keycapLabel) to finish, then ask again.", holdSeconds: 4)
                 return
             }
-            // Don't register push-to-talk while the onboarding video is playing
-            guard !showOnboardingVideo else { return }
             AppLog.append("ask: ⌃⌥ pressed, listening")
             lastQuestionFailed = false
             // A new press owns the outcome from here: whatever the last release was waiting for is over.
@@ -1443,9 +1387,7 @@ final class CompanionManager: ObservableObject {
             // If the cursor is hidden, bring it back transiently for this interaction
             // (unless it is docked in the notch — the HUD shows the voice state instead)
             if !isClickyCursorEnabled && !isOverlayVisible && !isCursorDocked {
-                overlayWindowManager.hasShownOverlayBefore = true
-                overlayWindowManager.showOverlay(onScreens: NSScreen.screens, companionManager: self)
-                isOverlayVisible = true
+                showOverlayOnAllScreens()
             }
 
             // Cancel any in-progress response, agent run, and TTS from a previous utterance
@@ -1615,13 +1557,7 @@ final class CompanionManager: ObservableObject {
                     agentActivityText = nil
                 }
 
-                // Build image labels with the actual screenshot pixel dimensions
-                // so Claude's coordinate space matches the image it sees. We
-                // scale from screenshot pixels to display points ourselves.
-                let labeledImages = screenCaptures.map { capture in
-                    let dimensionInfo = " (image dimensions: \(capture.screenshotWidthInPixels)x\(capture.screenshotHeightInPixels) pixels)"
-                    return (data: capture.imageData, label: capture.label + dimensionInfo)
-                }
+                let labeledImages = screenCaptures.map(Self.imageLabeledWithItsPixelSize)
 
                 // Pass conversation history so Claude remembers prior exchanges
                 let historyForAPI = conversationHistory.map { entry in
@@ -1713,16 +1649,7 @@ final class CompanionManager: ObservableObject {
                         speakWithSystemVoice(Self.emptyAnswerSentence)
                     }
                 } else {
-                    // Save this exchange to conversation history
-                    conversationHistory.append((
-                        userTranscript: transcript,
-                        assistantResponse: spokenText
-                    ))
-                }
-
-                // Keep only the last 10 exchanges to avoid unbounded context growth
-                if conversationHistory.count > 10 {
-                    conversationHistory.removeFirst(conversationHistory.count - 10)
+                    rememberExchange(userTranscript: transcript, assistantResponse: spokenText)
                 }
 
                 print("🧠 Conversation history: \(conversationHistory.count) exchanges")
@@ -1844,15 +1771,13 @@ final class CompanionManager: ObservableObject {
     private func handleRealtimeShortcutTransition(_ transition: BuddyPushToTalkShortcut.ShortcutTransition) {
         switch transition {
         case .pressed:
-            guard !showOnboardingVideo, !isDictatingToFrontApp else { return }
+            guard !isDictatingToFrontApp else { return }
             lastQuestionFailed = false
             dismissCursorCaption()
             transientHideTask?.cancel()
             transientHideTask = nil
             if !isClickyCursorEnabled && !isOverlayVisible && !isCursorDocked {
-                overlayWindowManager.hasShownOverlayBefore = true
-                overlayWindowManager.showOverlay(onScreens: NSScreen.screens, companionManager: self)
-                isOverlayVisible = true
+                showOverlayOnAllScreens()
             }
             stopActiveAnswer()
             currentResponseTask?.cancel()
@@ -1956,10 +1881,7 @@ final class CompanionManager: ObservableObject {
         }
 
         // Keep the teacher lane aware of what the agent did.
-        conversationHistory.append((userTranscript: transcript, assistantResponse: spokenText))
-        if conversationHistory.count > 10 {
-            conversationHistory.removeFirst(conversationHistory.count - 10)
-        }
+        rememberExchange(userTranscript: transcript, assistantResponse: spokenText)
         return spokenText
     }
 
@@ -2192,27 +2114,11 @@ final class CompanionManager: ObservableObject {
     /// pointing demo once, then stream in the "press control + option" prompt. Kept the name so
     /// the overlay's call site is unchanged.
     func setupOnboardingVideo() {
-        showOnboardingVideo = false
-        onboardingVideoPlayer = nil
         ClickyAnalytics.trackOnboardingDemoTriggered()
         performOnboardingDemoInteraction()
         DispatchQueue.main.asyncAfter(deadline: .now() + 6.0) { [weak self] in
             guard let self, !self.isCursorCaptionVisible else { return }
             self.startOnboardingPromptStream()
-        }
-    }
-
-    func tearDownOnboardingVideo() {
-        showOnboardingVideo = false
-        if let timeObserver = onboardingDemoTimeObserver {
-            onboardingVideoPlayer?.removeTimeObserver(timeObserver)
-            onboardingDemoTimeObserver = nil
-        }
-        onboardingVideoPlayer?.pause()
-        onboardingVideoPlayer = nil
-        if let observer = onboardingVideoEndObserver {
-            NotificationCenter.default.removeObserver(observer)
-            onboardingVideoEndObserver = nil
         }
     }
 
@@ -2279,9 +2185,7 @@ final class CompanionManager: ObservableObject {
         if isCursorDocked, !isOverlayVisible {
             transientHideTask?.cancel()
             transientHideTask = nil
-            overlayWindowManager.hasShownOverlayBefore = true
-            overlayWindowManager.showOverlay(onScreens: NSScreen.screens, companionManager: self)
-            isOverlayVisible = true
+            showOverlayOnAllScreens()
         }
         cursorCaptionTypingTimer?.invalidate()
         cursorCaptionTypingTimer = nil
@@ -2356,9 +2260,7 @@ final class CompanionManager: ObservableObject {
         if !isOverlayVisible {
             transientHideTask?.cancel()
             transientHideTask = nil
-            overlayWindowManager.hasShownOverlayBefore = true
-            overlayWindowManager.showOverlay(onScreens: NSScreen.screens, companionManager: self)
-            isOverlayVisible = true
+            showOverlayOnAllScreens()
         }
         streamCursorCaption(message, holdSeconds: holdSeconds)
     }
@@ -2386,16 +2288,14 @@ final class CompanionManager: ObservableObject {
         if !isOverlayVisible {
             transientHideTask?.cancel()
             transientHideTask = nil
-            overlayWindowManager.hasShownOverlayBefore = true
-            overlayWindowManager.showOverlay(onScreens: NSScreen.screens, companionManager: self)
-            isOverlayVisible = true
+            showOverlayOnAllScreens()
         }
         streamCursorCaption(message, holdSeconds: 8)
         scheduleTransientHideIfNeeded()
     }
 
-    /// Gradually raises an AVPlayer's volume from its current level to the
-    /// target over the specified duration, creating a smooth audio fade-in.
+    /// The prompt for the pointing demo (onboarding and the tour's "watch this"): one specific thing
+    /// near the middle of the screen, a few words about it, and the [POINT:…] tag last.
     private static let onboardingDemoSystemPrompt = """
     you're openclicky, a small blue cursor buddy living on the user's screen. you're showing off during onboarding — look at their screen and find ONE specific, concrete thing to point at. pick something with a clear name or identity: a specific app icon (say its name), a specific word or phrase of text you can read, a specific filename, a specific button label, a specific tab title, a specific image you can describe. do NOT point at vague things like "a window" or "some text" — be specific about exactly what you see.
 
@@ -2412,52 +2312,67 @@ final class CompanionManager: ObservableObject {
 
     /// Captures a screenshot and asks Claude to find something interesting to
     /// point at, then triggers the buddy's flight animation. Used during
-    /// onboarding to demo the pointing feature while the intro video plays.
+    /// onboarding to demo the pointing feature after the welcome bubble.
     func performOnboardingDemoInteraction() {
         // Don't interrupt an active voice response
         guard voiceState == .idle || voiceState == .responding else { return }
 
         Task {
             do {
-                let screenCaptures = try await CompanionScreenCaptureUtility.captureAllScreensAsJPEG()
-
-                // Only send the cursor screen so Claude can't pick something
-                // on a different monitor that we can't point at.
-                guard let cursorScreenCapture = screenCaptures.first(where: { $0.isCursorScreen }) else {
-                    print("🎯 Onboarding demo: no cursor screen found")
-                    return
-                }
-
-                let dimensionInfo = " (image dimensions: \(cursorScreenCapture.screenshotWidthInPixels)x\(cursorScreenCapture.screenshotHeightInPixels) pixels)"
-                let labeledImages = [(data: cursorScreenCapture.imageData, label: cursorScreenCapture.label + dimensionInfo)]
-
-                let (fullResponseText, _, _) = try await claudeAPI.analyzeImageStreaming(
-                    images: labeledImages,
-                    systemPrompt: Self.onboardingDemoSystemPrompt,
-                    userPrompt: "look around my screen and find something interesting to point at",
-                    onTextChunk: { _ in }
-                )
-
-                let parseResult = Self.parsePointingCoordinates(from: fullResponseText)
-
-                guard let pointCoordinate = parseResult.coordinate else {
+                // The overlay asked for this demo, so it is already showing.
+                guard let parseResult = try await pointAtSomethingOnScreenForDemo(showingTheOverlayIfHidden: false) else {
                     print("🎯 Onboarding demo: no element to point at")
                     return
                 }
-
-                let displayFrame = cursorScreenCapture.displayFrame
-                let globalLocation = Self.screenLocation(forScreenshotPoint: pointCoordinate, in: cursorScreenCapture)
-
-                // Set custom bubble text so the pointing animation uses Claude's
-                // comment instead of a random phrase
-                detectedElementBubbleText = parseResult.spokenText
-                detectedElementScreenLocation = globalLocation
-                detectedElementDisplayFrame = displayFrame
-                detectedElementPointToken &+= 1
                 print("🎯 Onboarding demo: pointing at \"\(parseResult.elementLabel ?? "element")\" — \"\(parseResult.spokenText)\"")
             } catch {
                 print("⚠️ Onboarding demo error: \(error)")
             }
         }
     }
+
+    /// The pointing demo shared by the onboarding and the tour's "watch this": a screenshot of the
+    /// cursor's screen only (Claude must not pick something on a display the buddy is not on),
+    /// Claude picks one specific thing and comments on it, and the buddy flies there with that
+    /// comment in its bubble instead of a random phrase. Returns what Claude said, or nil when
+    /// there was no cursor screen or nothing to point at.
+    private func pointAtSomethingOnScreenForDemo(showingTheOverlayIfHidden: Bool) async throws -> PointingParseResult? {
+        let screenCaptures = try await CompanionScreenCaptureUtility.captureAllScreensAsJPEG()
+        guard let cursorScreenCapture = screenCaptures.first(where: { $0.isCursorScreen }) else { return nil }
+        let (fullResponseText, _, _) = try await claudeAPI.analyzeImageStreaming(
+            images: [Self.imageLabeledWithItsPixelSize(cursorScreenCapture)],
+            systemPrompt: Self.onboardingDemoSystemPrompt,
+            userPrompt: "look around my screen and find something interesting to point at",
+            onTextChunk: { _ in }
+        )
+        let parseResult = Self.parsePointingCoordinates(from: fullResponseText)
+        guard let pointCoordinate = parseResult.coordinate else { return nil }
+        if showingTheOverlayIfHidden && !isOverlayVisible {
+            showOverlayOnAllScreens()
+        }
+        detectedElementBubbleText = parseResult.spokenText
+        detectedElementScreenLocation = Self.screenLocation(forScreenshotPoint: pointCoordinate, in: cursorScreenCapture)
+        detectedElementDisplayFrame = cursorScreenCapture.displayFrame
+        detectedElementPointToken &+= 1
+        return parseResult
+    }
+
+    /// A screenshot with its label and real pixel size ("… (image dimensions: 1280x800 pixels)"),
+    /// so the coordinates Claude answers with are in the image it saw; we scale from screenshot
+    /// pixels to display points ourselves.
+    static func imageLabeledWithItsPixelSize(_ capture: CompanionScreenCapture) -> (data: Data, label: String) {
+        let dimensionInfo = " (image dimensions: \(capture.screenshotWidthInPixels)x\(capture.screenshotHeightInPixels) pixels)"
+        return (data: capture.imageData, label: capture.label + dimensionInfo)
+    }
+
+    /// Remembers one exchange for the ask lane's next question, keeping only the last 10 so the
+    /// context does not grow without bound over a long session.
+    private func rememberExchange(userTranscript: String, assistantResponse: String) {
+        conversationHistory.append((userTranscript: userTranscript, assistantResponse: assistantResponse))
+        if conversationHistory.count > Self.maximumRememberedExchanges {
+            conversationHistory.removeFirst(conversationHistory.count - Self.maximumRememberedExchanges)
+        }
+    }
+
+    private static let maximumRememberedExchanges = 10
 }
