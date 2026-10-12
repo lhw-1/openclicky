@@ -245,7 +245,7 @@ struct BlueCursorView: View {
                 .allowsHitTesting(false)
 
             // Caption typed out next to the buddy: the onboarding prompt ("press control + option
-            // and introduce yourself"), the Home tab's (i) explanation, hands-free feedback. Wraps
+            // and introduce yourself"), the open island's (i) explanation, hands-free feedback. Wraps
             // at 300 pt and flips to the buddy's left when it would run off the screen.
             if isCursorOnThisScreen && companionManager.isCursorCaptionVisible && !companionManager.cursorCaptionText.isEmpty {
                 let fitsToTheRight = cursorPosition.x + 10 + captionBubbleSize.width <= screenFrame.width - 12

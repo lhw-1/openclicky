@@ -6,12 +6,14 @@
 //  around the notch, its top corners flaring into the menu bar and its bottom corners rounded, with
 //  no border and no shadow. Colours and sizes come from `DS.HUD` (the refinement sheet). States:
 //    collapsed — exactly the notch (or a virtual notch on other displays), docked pointer or not:
-//                hovering opens the panel, whose pointer card says it is docked and releases it
+//                hovering opens the panel, whose band says the pointer is docked and whose dock
+//                button releases it
 //    compact   — a 380 × 37 strip that opens while OpenClicky listens / thinks / speaks, one
 //                caption line taller when there is something to say under it
 //    connect   — the "connect <app> to openclicky?" card that opens when a supported app or site
 //                comes to the front for the first time (never / not now / connect + example prompts)
-//    full      — the notch app that opens on hover or click: home, agents, settings tabs
+//    full      — the one short panel that opens on hover or click: the band (pointer status,
+//                voice pill, Settings, quit) over one row (dock, (i), the four shortcuts); no tabs
 //  The cursor buddy can dock here: it flies into the notch and lives in the HUD as a glowing badge.
 //  `HUDPlacement` moves the island: the notch (above), a drawer on the left or right screen edge
 //  (collapsed to a vertical handle), or hidden while idle (shortcuts only).
@@ -92,9 +94,8 @@ final class NotchHUDModel: ObservableObject {
     @Published var geometry: NotchGeometry
     @Published var placement: HUDPlacement = .notch
 
-    // Sizes from the refinement sheet: every card and the open panel are 512 pt wide, the Home
-    // panel 512 × 232 pt and the Agents panel 512 × 392 pt, including the menu-bar band the island
-    // hangs from.
+    // Sizes from the refinement sheet: every card and the open panel are 512 pt wide (360 pt in a
+    // side drawer); heights include the menu-bar band the island hangs from.
     /// Nothing shows below the notch while idle (HeyClicky's collapsed state is the notch itself).
     let collapsedLipHeight: CGFloat = 0
     /// The busy strip is 380 × 37 and grows by one caption line; the caption strip (the (i) text
@@ -112,11 +113,11 @@ final class NotchHUDModel: ObservableObject {
     /// A side drawer is a narrow column with its content stacked, not the notch panel moved.
     var fullWidth: CGFloat { placement.isSideDrawer ? 360 : 512 }
 
-    /// The open panel's tab row: the band plus a little air above the controls, so the pills and
+    /// The open panel's band row: the band plus a little air above the controls, so the pill and
     /// the round buttons never touch the top edge of the screen.
-    var tabBarHeight: CGFloat { topBandHeight + 6 }
+    var bandRowHeight: CGFloat { topBandHeight + 6 }
 
-    /// The band the tab bar sits in: the hardware notch, or at least 34 pt on a display without
+    /// The band the band row sits in: the hardware notch, or at least 34 pt on a display without
     /// one (whose menu bar band may be 0 pt when that display shows no menu bar).
     var topBandHeight: CGFloat {
         geometry.hasHardwareNotch ? geometry.notchHeight : max(geometry.notchHeight, 34)
@@ -144,7 +145,7 @@ final class NotchHUDModel: ObservableObject {
         return cardTopInset + (placement.isSideDrawer ? 168 : 116) + statusRoom
     }
 
-    /// Text typed out in the compact strip (the Home tab's (i) while the buddy is docked); nil = none.
+    /// Text typed out in the compact strip (the open panel's (i) while the buddy is docked); nil = none.
     @Published private(set) var captionText: String?
     /// True while the text composer is open on this island.
     @Published private(set) var isComposerOpen = false
@@ -199,7 +200,7 @@ final class NotchHUDModel: ObservableObject {
     /// The band, then one row: 88 pt under a notch (Claude Design's "max 88pt"); a side drawer
     /// stacks the dock button over the shortcut grid.
     var fullHeight: CGFloat {
-        tabBarHeight + (placement.isSideDrawer ? 92 : 45)
+        bandRowHeight + (placement.isSideDrawer ? 92 : 45)
     }
 
     var width: CGFloat {
@@ -272,7 +273,7 @@ final class NotchHUDModel: ObservableObject {
     /// Hidden and idle, the island is nothing at all: no hover zone, no click target.
     var isInvisible: Bool { placement == .hidden && expansion == .collapsed }
 
-    /// Called whenever the expansion or tab changes so the window can resize itself.
+    /// Called whenever the expansion or the panel's size changes so the window can resize itself.
     var onLayoutChanged: (() -> Void)?
 
     private var isHovering = false
@@ -474,7 +475,7 @@ final class NotchHUDModel: ObservableObject {
 // MARK: - Window
 
 /// Transparent, non-activating panel that floats above the menu bar around the notch. It can
-/// become key so the Agents tab accepts text input, but it never activates the app.
+/// become key so the text composer and the tour's field accept typing, but it never activates the app.
 final class NotchHUDWindow: NSPanel {
     init() {
         super.init(
@@ -662,7 +663,7 @@ final class NotchHUDManager {
         applicationActiveBeforeComposer = nil
     }
 
-    // MARK: Caption (the Home tab's (i) while the buddy is docked)
+    // MARK: Caption (the open panel's (i) while the buddy is docked)
 
     private var captionTypingTimer: Timer?
     private var captionDismissWorkItem: DispatchWorkItem?
@@ -1255,8 +1256,8 @@ struct NotchCaptionView: View {
     }
 }
 
-/// The pointer as the HUD draws it: the orange arrow with its glow, dimmed while it rests in the
-/// notch on the Home card.
+/// The pointer as the HUD draws it: the orange arrow with its glow, dimmed in the band's status
+/// while it rests in the notch.
 struct NotchPointerMark: View {
     var isDimmed: Bool
 

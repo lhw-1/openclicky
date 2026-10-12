@@ -26,7 +26,7 @@ struct NotchFullPanelView: View {
         VStack(alignment: .leading, spacing: 0) {
             NotchBandRow(model: model, companionManager: companionManager)
                 .padding(.top, 6)
-                .frame(height: model.tabBarHeight)
+                .frame(height: model.bandRowHeight)
             NotchPanelBody(model: model, companionManager: companionManager)
                 .padding(.top, model.placement.isSideDrawer ? 6 : 2)
                 .padding(.horizontal, DS.HUD.bodySidePadding)
