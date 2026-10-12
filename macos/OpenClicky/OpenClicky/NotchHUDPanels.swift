@@ -488,10 +488,14 @@ final class AgentResultPanelManager {
         Task {
             do {
                 let detail = try await agentClient.readThread(threadId)
+                // Opening agent A then agent B starts two reads; if A's answer lands last it must
+                // not overwrite the card that now shows B.
+                guard state.threadId == threadId else { return }
                 state.title = detail.thread.preview.split(separator: "\n").first.map(String.init) ?? "Agent"
                 state.summary = detail.lastAgentMessage ?? "(no reply yet)"
                 state.status = detail.turns.last?.status ?? "done"
             } catch {
+                guard state.threadId == threadId else { return }
                 state.summary = "Couldn't load this agent: \(error.localizedDescription)"
                 state.status = "error"
             }
