@@ -122,6 +122,20 @@ struct SpeechVoicesTests {
         #expect(try CloudVoiceRequests.decodeGoogleSpeech(answer) == audio)
     }
 
+    // The account's free voice (/tts, relayed to ElevenLabs) and an own ElevenLabs key ask for the
+    // same model and settings, from one body builder.
+    @Test func theFreeVoiceAndAnOwnElevenLabsKeySendTheSameBody() throws {
+        let body = try #require(try JSONSerialization.jsonObject(with: CloudVoiceRequests.elevenLabsSpeechBody(text: "hi")) as? [String: Any])
+        #expect(body["text"] as? String == "hi")
+        #expect(body["model_id"] as? String == "eleven_flash_v2_5")
+        let voiceSettings = try #require(body["voice_settings"] as? [String: Any])
+        #expect(voiceSettings["stability"] as? Double == 0.5)
+        #expect(voiceSettings["similarity_boost"] as? Double == 0.75)
+        let ownKeyRequest = try CloudVoiceRequests.elevenLabsSpeech(key: "sk_1", text: "hi")
+        let ownKeyBody = try #require(try JSONSerialization.jsonObject(with: ownKeyRequest.httpBody ?? Data()) as? NSDictionary)
+        #expect(ownKeyBody == body as NSDictionary)
+    }
+
     @Test func geminiAudioComesBackAsWAVWhateverItWasSentAs() throws {
         func answer(_ mimeType: String, _ audio: Data) throws -> Data {
             try JSONSerialization.data(withJSONObject: ["candidates": [["content": ["parts": [["inlineData": ["mimeType": mimeType, "data": audio.base64EncodedString()]]]]]]])

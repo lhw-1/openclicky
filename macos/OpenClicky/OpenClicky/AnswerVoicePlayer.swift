@@ -1,17 +1,19 @@
 //
-//  ElevenLabsTTSClient.swift
+//  AnswerVoicePlayer.swift
 //  OpenClicky
 //
-//  Streams text-to-speech audio from ElevenLabs and plays it back
-//  through the system audio output. Uses the streaming endpoint so
-//  playback begins before the full audio has been generated.
+//  Fetches the audio for one piece of a spoken answer and plays it. The voice is the one picked in
+//  Settings → Clicky → Voice (`SpeechVoiceChoice`): a key's voice straight from its vendor, Kokoro
+//  or this Mac through `CloudVoiceSpeaker`, and only the account's free voice from the OpenClicky
+//  backend's /tts (ElevenLabs). Each piece is fetched whole, not streamed; `SpeechQueue` overlaps
+//  fetching the next piece with playing the current one, which is what makes the voice start early.
 //
 
 import AVFoundation
 import Foundation
 
 @MainActor
-final class ElevenLabsTTSClient {
+final class AnswerVoicePlayer {
     /// The /tts URL, read for every request so a backend changed in shell.json while the app runs
     /// is used by the next answer (it was fixed when the client was built).
     private let currentProxyURL: () -> String
@@ -31,10 +33,6 @@ final class ElevenLabsTTSClient {
     /// function so the fallback behavior can be unit tested without constructing a full client.
     nonisolated static func resolvedProxyURL(fromProxyURL proxyURL: String) -> URL {
         URL(string: proxyURL) ?? URL(string: "\(OpenClickyConfiguration.hostedBackendURL)/tts")!
-    }
-
-    convenience init(proxyURL: String) {
-        self.init(currentProxyURL: { proxyURL })
     }
 
     init(currentProxyURL: @escaping () -> String) {
@@ -76,17 +74,8 @@ final class ElevenLabsTTSClient {
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.setValue("audio/mpeg", forHTTPHeaderField: "Accept")
         OpenClickyConfiguration.authorize(&request)
-
-        let body: [String: Any] = [
-            "text": text,
-            "model_id": "eleven_flash_v2_5",
-            "voice_settings": [
-                "stability": 0.5,
-                "similarity_boost": 0.75
-            ]
-        ]
-
-        request.httpBody = try JSONSerialization.data(withJSONObject: body)
+        // The backend relays this body to ElevenLabs as it is, the same body an own ElevenLabs key sends.
+        request.httpBody = try CloudVoiceRequests.elevenLabsSpeechBody(text: text)
 
         let (data, response) = try await BackendSignIn.send(request) { [session] in try await session.data(for: $0) }
         return try Self.audio(from: data, response: response)

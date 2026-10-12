@@ -491,7 +491,7 @@ final class CompanionManager: ObservableObject {
         stopActiveAnswer()
         currentResponseTask?.cancel()
         openClickyAgentClient.cancel()
-        elevenLabsTTSClient.stopPlayback()
+        answerVoicePlayer.stopPlayback()
         if let threadId { lastAgentThreadId = threadId } else if startsNewThread { lastAgentThreadId = nil }
         lastTranscript = trimmedText
         currentResponseTask = Task {
@@ -591,8 +591,8 @@ final class CompanionManager: ObservableObject {
         return ClaudeAPI(currentProxyURL: { "\(OpenClickyConfiguration.backendBaseURL)/chat" }, model: selectedModel)
     }()
 
-    private lazy var elevenLabsTTSClient: ElevenLabsTTSClient = {
-        return ElevenLabsTTSClient(currentProxyURL: { "\(OpenClickyConfiguration.backendBaseURL)/tts" })
+    private lazy var answerVoicePlayer: AnswerVoicePlayer = {
+        return AnswerVoicePlayer(currentProxyURL: { "\(OpenClickyConfiguration.backendBaseURL)/tts" })
     }()
 
     /// Conversation history so Claude remembers prior exchanges within a session.
@@ -620,7 +620,7 @@ final class CompanionManager: ObservableObject {
         AppLog.append("ask: stopped speaking from the island")
         stopActiveAnswer()
         currentResponseTask?.cancel()
-        elevenLabsTTSClient.stopPlayback()
+        answerVoicePlayer.stopPlayback()
         systemSpeechSynthesizer.stopSpeaking(at: .immediate)
         recordedVoice.stop()
         realtimeVoiceClient.stopSpeaking()
@@ -1247,8 +1247,8 @@ final class CompanionManager: ObservableObject {
                 guard let parseResult = try await pointAtSomethingOnScreenForDemo(showingTheOverlayIfHidden: true) else { return }
                 AppLog.append("tour demo: pointing at \(parseResult.elementLabel ?? "something")")
                 // Said in the answering voice; quietly skipped when no voice route is set up.
-                if let demoCommentAudio = try? await elevenLabsTTSClient.fetchAudio(for: parseResult.spokenText) {
-                    try? await elevenLabsTTSClient.playToCompletion(demoCommentAudio)
+                if let demoCommentAudio = try? await answerVoicePlayer.fetchAudio(for: parseResult.spokenText) {
+                    try? await answerVoicePlayer.playToCompletion(demoCommentAudio)
                 }
             } catch {
                 AppLog.append("tour demo: could not run (\((error as NSError).domain) \((error as NSError).code))")
@@ -1312,7 +1312,7 @@ final class CompanionManager: ObservableObject {
         stopActiveAnswer()
         currentResponseTask?.cancel()
         openClickyAgentClient.cancel()
-        elevenLabsTTSClient.stopPlayback()
+        answerVoicePlayer.stopPlayback()
         systemSpeechSynthesizer.stopSpeaking(at: .immediate)
         clearDetectedElementLocation()
         dismissCursorCaption()
@@ -1394,7 +1394,7 @@ final class CompanionManager: ObservableObject {
             stopActiveAnswer()
             currentResponseTask?.cancel()
             openClickyAgentClient.cancel()
-            elevenLabsTTSClient.stopPlayback()
+            answerVoicePlayer.stopPlayback()
             systemSpeechSynthesizer.stopSpeaking(at: .immediate)
             clearDetectedElementLocation()
 
@@ -1516,7 +1516,7 @@ final class CompanionManager: ObservableObject {
     private func sendTranscriptToClaudeWithScreenshot(transcript: String) {
         stopActiveAnswer()
         currentResponseTask?.cancel()
-        elevenLabsTTSClient.stopPlayback()
+        answerVoicePlayer.stopPlayback()
 
         currentResponseTask = Task {
             // Stay in processing (spinner) state — no streaming text displayed
@@ -1575,8 +1575,8 @@ final class CompanionManager: ObservableObject {
                 // the voice, and the pointer moves when the voice starts (the prompt puts the tag first).
                 let answerSpeaker = StreamingAnswerSpeaker(
                     speechQueue: SpeechQueue(
-                        fetchAudio: { [elevenLabsTTSClient] pieceText in try await elevenLabsTTSClient.fetchAudio(for: pieceText) },
-                        playAudio: { [elevenLabsTTSClient] audioData in try await elevenLabsTTSClient.playToCompletion(audioData) }
+                        fetchAudio: { [answerVoicePlayer] pieceText in try await answerVoicePlayer.fetchAudio(for: pieceText) },
+                        playAudio: { [answerVoicePlayer] audioData in try await answerVoicePlayer.playToCompletion(audioData) }
                     ),
                     onVoiceStarts: { [weak self] in
                         self?.voiceState = .responding
@@ -1782,7 +1782,7 @@ final class CompanionManager: ObservableObject {
             stopActiveAnswer()
             currentResponseTask?.cancel()
             openClickyAgentClient.cancel()
-            elevenLabsTTSClient.stopPlayback()
+            answerVoicePlayer.stopPlayback()
             systemSpeechSynthesizer.stopSpeaking(at: .immediate)
             clearDetectedElementLocation()
             ClickyAnalytics.trackPushToTalkStarted()
@@ -1823,7 +1823,7 @@ final class CompanionManager: ObservableObject {
         let spokenText = try await performAgentTask(transcript: transcript, screenCaptures: screenCaptures)
         guard !Task.isCancelled else { return }
         do {
-            try await elevenLabsTTSClient.speakText(spokenText)
+            try await answerVoicePlayer.speakText(spokenText)
             voiceState = .responding
         } catch {
             print("⚠️ TTS via backend failed after agent run (\(error.localizedDescription)); using the system voice")
@@ -1895,7 +1895,7 @@ final class CompanionManager: ObservableObject {
         transientHideTask?.cancel()
         transientHideTask = Task {
             // Wait for TTS audio to finish playing
-            while elevenLabsTTSClient.isPlaying || systemSpeechSynthesizer.isSpeaking || recordedVoice.isPlaying {
+            while answerVoicePlayer.isPlaying || systemSpeechSynthesizer.isSpeaking || recordedVoice.isPlaying {
                 try? await Task.sleep(nanoseconds: 200_000_000)
                 guard !Task.isCancelled else { return }
             }
