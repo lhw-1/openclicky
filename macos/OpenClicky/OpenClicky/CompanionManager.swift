@@ -1649,6 +1649,9 @@ final class CompanionManager: ObservableObject {
                 }
 
                 let labeledImages = screenCaptures.map(Self.imageLabeledWithItsPixelSize)
+                // The text a "rephrase this" would replace: the highlight, or the box the cursor is in.
+                let writingTarget = await WritingTarget.captureFromFrontApp()
+                guard !Task.isCancelled else { return }
 
                 // Pass conversation history so Claude remembers prior exchanges
                 let historyForAPI = conversationHistory.map { entry in
@@ -1662,6 +1665,9 @@ final class CompanionManager: ObservableObject {
                     answeringSource: ProviderRouter.route(for: .claude, credentials: ProviderRouter.currentCredentials()).answeringSource
                 ) ? MacAction.anthropicToolDefinitions() : []
                 let toolsLine = tools.isEmpty ? "" : "\n\n" + Self.accountToolsInstruction
+                // Offered whatever the lane setup, but only when there is text to write over.
+                let askTools = writingTarget == nil ? tools : tools + [WriteInPlace.anthropicToolDefinition()]
+                let writeInPlaceLine = writingTarget == nil ? "" : "\n\n" + WriteInPlace.promptInstruction
                 // The answer is spoken while it is still being written: each finished sentence goes to
                 // the voice, and the pointer moves when the voice starts (the prompt puts the tag first).
                 let answerSpeaker = makeAnswerSpeaker(
@@ -1684,12 +1690,10 @@ final class CompanionManager: ObservableObject {
                 do {
                     (fullResponseText, toolCalls, _) = try await claudeAPI.analyzeImageStreaming(
                         images: labeledImages,
-                        systemPrompt: Self.composeTalkInstructions(base: Self.withReplyLanguage(Self.companionVoiceResponseSystemPrompt) + toolsLine, skillsBlock: talkSkillsBlock()),
+                        systemPrompt: Self.composeTalkInstructions(base: Self.withReplyLanguage(Self.companionVoiceResponseSystemPrompt) + toolsLine + writeInPlaceLine, skillsBlock: talkSkillsBlock()),
                         conversationHistory: historyForAPI,
-                        userPrompt: SelectedTextReader.currentSelection().map {
-                            transcript + "\n\n[" + SelectedTextReader.contextLine(for: $0) + "]"
-                        } ?? transcript,
-                        tools: tools,
+                        userPrompt: Self.askUserPrompt(transcript: transcript, writingTarget: writingTarget),
+                        tools: askTools,
                         onTextChunk: { accumulatedAnswer in
                             answerSpeaker.receive(accumulatedAnswer: accumulatedAnswer)
                         }
@@ -1702,6 +1706,13 @@ final class CompanionManager: ObservableObject {
                 AppLog.append("ask: answer \(fullResponseText.count) chars in \(String(format: "%.1f", Date().timeIntervalSince(askStartedAt))) s")
                 var toolOutcomes: [String] = []
                 for call in toolCalls.prefix(2) {
+                    if call.name == WriteInPlace.toolName {
+                        guard let writingTarget else { continue }
+                        let rewrite = await WriteInPlace.replace(writingTarget, with: call.arguments["text"] as? String ?? "")
+                        if rewrite.didReplace { lastSuccessfulQuickActionAt = Date() }
+                        toolOutcomes.append(rewrite.spokenSentence)
+                        continue
+                    }
                     switch MacAction.parse(toolName: call.name, arguments: call.arguments) {
                     case .action(let action):
                         let outcome = await macActionRunner.perform(action)
@@ -1868,6 +1879,19 @@ final class CompanionManager: ObservableObject {
     }
 
     static let emptyAnswerSentence = "i didn't get an answer. please ask again."
+
+    /// The question as sent: what was said, plus the text it may be about. A text to write over
+    /// carries the exact words (the highlight in full, or the box's text); otherwise a highlight is
+    /// quoted the short way, as context for "what does this mean".
+    static func askUserPrompt(transcript: String, writingTarget: WritingTarget?) -> String {
+        if let writingTarget {
+            return transcript + "\n\n[" + writingTarget.contextLine + "]"
+        }
+        if let selection = SelectedTextReader.currentSelection() {
+            return transcript + "\n\n[" + SelectedTextReader.contextLine(for: selection) + "]"
+        }
+        return transcript
+    }
 
     /// An interrupted request: Swift's CancellationError, or URLSession's own (-999) when the task
     /// reading the answer stream was cancelled by a new question.
