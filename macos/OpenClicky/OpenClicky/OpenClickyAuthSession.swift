@@ -580,11 +580,20 @@ final class OpenClickyAuthSession: ObservableObject {
         }
     }
 
-    /// For the ask lane's 401: handles it and returns the sentence to speak. `errorDescription`
-    /// carries the backend's body; a 401 relayed from the person's own provider key is not about
-    /// the sign-in, and signing out over it would be wrong.
-    func sentenceAfterBackendRejection(errorDescription: String) async -> String {
-        let body = Data(errorDescription.drop { $0 != "{" }.utf8)
+    /// What the ask lane says when `BackendSignIn` has already renewed a refused token once and
+    /// asked again: the same sentences as `spokenSentence(after:)` for the outcome it ended on.
+    nonisolated static func spokenSentence(after signInError: BackendSignInError) -> String {
+        switch signInError {
+        case .expired: return spokenSentence(after: .signedOut)
+        case .couldNotRenew: return spokenSentence(after: .couldNotCheck)
+        }
+    }
+
+    /// For a 401 the ask lane got back as it came (`BackendSignIn` passes a 401 through when it is
+    /// an own key's refusal or the request carried no token; Anthropic refuses an own key directly):
+    /// handles it and returns the sentence to speak. A 401 about the person's own provider key is
+    /// not about the sign-in, and signing out over it would be wrong.
+    func sentenceAfterBackendRejection(responseBody body: Data) async -> String {
         if BackendSignIn.isOwnKeyRefusal(body: body) {
             AppLog.append("sign-in: 401 came from the person's own provider key, sign-in kept")
             return Self.ownKeyRefusedSentence

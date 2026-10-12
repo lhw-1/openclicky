@@ -507,82 +507,6 @@ final class RealtimeVoiceClient: NSObject, ObservableObject {
         }
     }
 
-    /// The local actions OpenClicky performs itself. Typed arguments only: `location` is a closed
-    /// set and there is no path or command anywhere in the schema, so a mishearing cannot widen
-    /// what the fast lane is able to do. See MacActions.swift.
-    // nonisolated so the test target can build the definitions without a main-actor hop; it touches no instance state.
-    nonisolated static func fastActionToolDefinitions() -> [[String: Any]] {
-        let locations = MacActionLocation.allCases.map(\.rawValue)
-        let locationProperty: [String: Any] = [
-            "type": "string",
-            "enum": locations,
-            "description": "Which folder. Leave it out for OpenClicky's own workspace folder.",
-        ]
-        return [
-            [
-                "type": "function",
-                "name": "open_app",
-                "description": "Open or switch to a Mac app by its name, e.g. 'Spotify'. Use this instead of the agent for simply opening an app.",
-                "parameters": ["type": "object", "properties": ["name": ["type": "string", "description": "The app's name as the user said it."]], "required": ["name"]],
-            ],
-            [
-                "type": "function",
-                "name": "open_url",
-                "description": "Open a web page in the user's browser. http and https only.",
-                "parameters": ["type": "object", "properties": ["url": ["type": "string", "description": "The full https URL."]], "required": ["url"]],
-            ],
-            [
-                "type": "function",
-                "name": "create_folder",
-                "description": "Make a new folder. Use this instead of the agent for a single folder.",
-                "parameters": [
-                    "type": "object",
-                    "properties": [
-                        "name": ["type": "string", "description": "The folder's name, without any slashes."],
-                        "location": locationProperty,
-                    ],
-                    "required": ["name"],
-                ],
-            ],
-            [
-                "type": "function",
-                "name": "reveal_in_finder",
-                "description": "Show an existing file or folder in Finder.",
-                "parameters": [
-                    "type": "object",
-                    "properties": [
-                        "name": ["type": "string", "description": "The file or folder's name."],
-                        "location": locationProperty,
-                    ],
-                    "required": ["name"],
-                ],
-            ],
-            [
-                "type": "function",
-                "name": "set_volume",
-                "description": "Set the Mac's output volume.",
-                "parameters": ["type": "object", "properties": ["level": ["type": "integer", "description": "0 to 100."]], "required": ["level"]],
-            ],
-            [
-                "type": "function",
-                "name": "media_control",
-                "description": "Play, pause, or skip whatever is playing.",
-                "parameters": ["type": "object", "properties": ["action": ["type": "string", "enum": ["playpause", "next", "previous"]]], "required": ["action"]],
-            ],
-        ]
-    }
-
-    /// The same quick actions as Anthropic tool definitions, for the ask lane on accounts (no realtime there).
-    nonisolated static func anthropicToolDefinitions() -> [[String: Any]] {
-        fastActionToolDefinitions().map { definition in
-            [
-                "name": definition["name"] as? String ?? "",
-                "description": definition["description"] as? String ?? "",
-                "input_schema": definition["parameters"] as? [String: Any] ?? ["type": "object", "properties": [String: Any]()],
-            ]
-        }
-    }
-
     private func sessionUpdate(mode: TurnMode, instructions text: String) -> [String: Any] {
         var input: [String: Any] = [
             "format": ["type": "audio/pcm", "rate": Int(Self.sampleRate)],
@@ -626,7 +550,7 @@ final class RealtimeVoiceClient: NSObject, ObservableObject {
             "session": [
                 "type": "realtime",
                 "instructions": text,
-                "tools": [tool, pointTool] + Self.fastActionToolDefinitions(),
+                "tools": [tool, pointTool] + MacAction.realtimeToolDefinitions(),
                 "tool_choice": "auto",
                 "audio": ["input": input, "output": output],
             ],

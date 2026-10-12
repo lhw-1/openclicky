@@ -45,13 +45,13 @@ struct AccountCapabilitiesTests {
     }
 
     @MainActor @Test func aClaude402IsSpokenAsThePlainLimitSentence() {
-        func claudeError(_ code: Int, _ body: String) -> NSError {
-            NSError(domain: "ClaudeAPI", code: code, userInfo: [NSLocalizedDescriptionKey: "API Error (\(code)): \(body)"])
+        func claudeError(_ code: Int, _ body: String) -> BackendHTTPError {
+            BackendHTTPError(service: .answers, status: code, body: Data(body.utf8))
         }
         #expect(CompanionManager.limitSentence(for: claudeError(402, #"{"error":"daily_limit"}"#)) == AccountLimitError.dailyLimit.message)
         #expect(CompanionManager.limitSentence(for: claudeError(402, "not json")) == AccountLimitError.personalLimit.message)
         #expect(CompanionManager.limitSentence(for: claudeError(500, #"{"error":"daily_limit"}"#)) == nil)
-        #expect(CompanionManager.limitSentence(for: NSError(domain: "ElevenLabsTTS", code: 402)) == nil)
+        #expect(CompanionManager.limitSentence(for: BackendHTTPError(service: .voice, status: 402, body: Data(#"{"error":"tts_budget"}"#.utf8))) == nil)
         #expect(CompanionManager.limitSentence(for: claudeError(402, #"{"error":"tts_budget"}"#)) == AccountLimitError.personalLimit.message)
     }
 

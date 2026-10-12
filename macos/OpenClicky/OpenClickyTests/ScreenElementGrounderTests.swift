@@ -36,6 +36,19 @@ struct ScreenElementGrounderTests {
         #expect(prompt.contains("arXiv"))
     }
 
+    // Another answer key used to make ClaudeAPI.analyzeImage throw, swallowed by `try?`, so
+    // grounding never ran there. Keys with images run it; only the slow plans are skipped.
+    @Test func groundingRunsOnEveryAnswerSourceButThePlans() {
+        #expect(ScreenElementGrounder.reasonGroundingCannotRun(on: .anthropicDirect) == nil)
+        #expect(ScreenElementGrounder.reasonGroundingCannotRun(on: .backend) == nil)
+        for source in [AnswerSource.openAI, .openRouter, .gemini, .groq, .mistral, .xai] {
+            #expect(ScreenElementGrounder.reasonGroundingCannotRun(on: .answerProvider(source)) == nil)
+        }
+        #expect(ScreenElementGrounder.reasonGroundingCannotRun(on: .answerProvider(.claudeCodePlan)) != nil)
+        #expect(ScreenElementGrounder.reasonGroundingCannotRun(on: .answerProvider(.codexPlan)) != nil)
+        #expect(ScreenElementGrounder.reasonGroundingCannotRun(on: .unavailable("add a key")) != nil)
+    }
+
     @Test func noneAndMissingTagsGiveNil() {
         #expect(ScreenElementGrounder.parsePoint(from: "[POINT:none]", imageSize: imageSize) == nil)
         #expect(ScreenElementGrounder.parsePoint(from: "I can't see that element.", imageSize: imageSize) == nil)

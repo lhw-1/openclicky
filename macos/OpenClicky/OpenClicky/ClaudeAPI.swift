@@ -58,14 +58,18 @@ class ClaudeAPI {
 
     /// The person's own Anthropic key goes straight to Anthropic with the same Messages body /chat
     /// relays; without one, the backend's /chat on the account's token (`ProviderRouter`).
-    private func makeAPIRequest() throws -> URLRequest {
+    /// `goesToBackend` says the request carries the account's token, so a 401 is the sign-in's
+    /// and goes through `BackendSignIn` (refresh once, send again).
+    private func makeAPIRequest() throws -> (request: URLRequest, goesToBackend: Bool) {
         var request: URLRequest
+        let goesToBackend: Bool
         switch ProviderRouter.current(for: .claude) {
         case .anthropicDirect:
             guard let anthropicKey = ProviderRouter.currentCredentials().anthropicKey else {
                 throw ProviderRouteUnavailable(capability: .claude, sentence: ProviderRouter.needsAnthropicKeySentence)
             }
             request = DirectProviderRequests.anthropicMessages(key: anthropicKey)
+            goesToBackend = false
         case .unavailable(let sentence):
             throw ProviderRouteUnavailable(capability: .claude, sentence: sentence)
         case .answerProvider(let source):
@@ -76,9 +80,44 @@ class ClaudeAPI {
             request.httpMethod = "POST"
             request.setValue("application/json", forHTTPHeaderField: "Content-Type")
             OpenClickyConfiguration.authorize(&request)
+            goesToBackend = true
         }
         request.timeoutInterval = 120
-        return request
+        return (request, goesToBackend)
+    }
+
+    /// The start of a streamed answer: the byte stream of a 2xx answer, or a refusal whose body has
+    /// been read to the end (BackendSignIn needs a 401's body to tell the sign-in's from an own key's).
+    private enum StreamingAnswerStart {
+        case streaming(URLSession.AsyncBytes, status: Int)
+        case refused(status: Int, body: Data)
+
+        var statusAndBody: (status: Int, body: Data) {
+            switch self {
+            case .streaming(_, let status): return (status, Data())
+            case .refused(let status, let body): return (status, body)
+            }
+        }
+    }
+
+    private static func startStreamingAnswer(_ request: URLRequest, session: URLSession) async throws -> StreamingAnswerStart {
+        let (byteStream, response) = try await session.bytes(for: request)
+        guard let httpResponse = response as? HTTPURLResponse else {
+            throw NSError(
+                domain: "ClaudeAPI",
+                code: -1,
+                userInfo: [NSLocalizedDescriptionKey: "Invalid HTTP response"]
+            )
+        }
+        // If non-2xx status, read the full body as error text
+        guard (200...299).contains(httpResponse.statusCode) else {
+            var errorBodyChunks: [String] = []
+            for try await line in byteStream.lines {
+                errorBodyChunks.append(line)
+            }
+            return .refused(status: httpResponse.statusCode, body: Data(errorBodyChunks.joined(separator: "\n").utf8))
+        }
+        return .streaming(byteStream, status: httpResponse.statusCode)
     }
 
     /// Detects the MIME type of image data by inspecting the first bytes.
@@ -150,37 +189,15 @@ class ClaudeAPI {
         // Another source answers (an OpenAI-compatible key, Gemini, a Claude Code or Codex plan):
         // the same question goes to its AnswerProvider, and its text streams back the same way.
         if case .answerProvider(let source) = ProviderRouter.current(for: .claude) {
-            let provider = try await AnswerProviderFactory.make(for: source, credentials: ProviderRouter.currentCredentials(),
-                                                          modelOverrides: OpenClickyConfiguration.settings.answerModels ?? [:])
-            let answerRequest = AnswerRequest(
-                images: images.map { AnswerRequest.Image(data: $0.data, label: $0.label, mediaType: detectImageMediaType(for: $0.data)) },
-                systemPrompt: systemPrompt,
-                history: conversationHistory.map { AnswerRequest.Turn(user: $0.userPlaceholder, assistant: $0.assistantResponse) },
-                userPrompt: userPrompt,
-                tools: tools.compactMap(Self.answerTool(fromAnthropicTool:)))
-            // The pieces come through a stream this call reads to the end, in order; each is handed
-            // on as the whole answer so far, like the Anthropic path below. Cancelling the question
-            // cancels the provider (a CLI process is ended).
-            let (pieces, piecesContinuation) = AsyncStream<String>.makeStream()
-            let answerTask = Task<AnswerResult, Error> {
-                defer { piecesContinuation.finish() }
-                return try await provider.answer(answerRequest) { piecesContinuation.yield($0) }
-            }
-            let result = try await withTaskCancellationHandler {
-                var answerSoFar = ""
-                for await piece in pieces {
-                    answerSoFar += piece
-                    await onTextChunk(answerSoFar)
-                }
-                return try await answerTask.value
-            } onCancel: {
-                answerTask.cancel()
-            }
-            AppLog.append("answer: \(source.displayName) answered (\(result.text.count) chars, \(result.toolCalls.count) tool calls)")
+            let result = try await answerThroughProvider(
+                source: source, images: images, systemPrompt: systemPrompt, conversationHistory: conversationHistory,
+                userPrompt: userPrompt, tools: tools, maxTokens: 1024, onTextChunk: onTextChunk)
             return (text: result.text, toolCalls: result.toolCalls, duration: Date().timeIntervalSince(startTime))
         }
 
-        var request = try makeAPIRequest()
+        let apiRequest = try makeAPIRequest()
+        var request = apiRequest.request
+        let goesToBackend = apiRequest.goesToBackend
 
         // Build messages array
         var messages: [[String: Any]] = []
@@ -226,29 +243,19 @@ class ClaudeAPI {
         let payloadMB = Double(bodyData.count) / 1_048_576.0
         print("🌐 Claude streaming request: \(String(format: "%.1f", payloadMB))MB, \(images.count) image(s)")
 
-        // Use bytes streaming for SSE (Server-Sent Events)
-        let (byteStream, response) = try await session.bytes(for: request)
-
-        guard let httpResponse = response as? HTTPURLResponse else {
-            throw NSError(
-                domain: "ClaudeAPI",
-                code: -1,
-                userInfo: [NSLocalizedDescriptionKey: "Invalid HTTP response"]
-            )
-        }
-
-        // If non-2xx status, read the full body as error text
-        guard (200...299).contains(httpResponse.statusCode) else {
-            var errorBodyChunks: [String] = []
-            for try await line in byteStream.lines {
-                errorBodyChunks.append(line)
-            }
-            let errorBody = errorBodyChunks.joined(separator: "\n")
-            throw NSError(
-                domain: "ClaudeAPI",
-                code: httpResponse.statusCode,
-                userInfo: [NSLocalizedDescriptionKey: "API Error (\(httpResponse.statusCode)): \(errorBody)"]
-            )
+        // Use bytes streaming for SSE (Server-Sent Events). On the account's token a refused
+        // sign-in is renewed once and the question sent again, like every other backend call.
+        let session = self.session
+        let streamingAnswerStart = goesToBackend
+            ? try await BackendSignIn.send(request, using: { try await Self.startStreamingAnswer($0, session: session) },
+                                           readingStatusAndBodyWith: { $0.statusAndBody })
+            : try await Self.startStreamingAnswer(request, session: session)
+        let byteStream: URLSession.AsyncBytes
+        switch streamingAnswerStart {
+        case .streaming(let answerByteStream, _):
+            byteStream = answerByteStream
+        case .refused(let status, let body):
+            throw BackendHTTPError(service: .answers, status: status, body: body)
         }
 
         // Parse SSE stream — each event is "data: {json}\n\n"
@@ -298,7 +305,51 @@ class ClaudeAPI {
         return (text: accumulatedResponseText, toolCalls: Self.parseToolCalls(fromSSELines: sseLines), duration: duration)
     }
 
-    /// Non-streaming fallback for validation requests where we don't need progressive display.
+    /// The same question asked of another source's AnswerProvider (an OpenAI-compatible key,
+    /// Gemini, a Claude Code or Codex plan). The pieces come through a stream this call reads to the
+    /// end, in order; each is handed on as the whole answer so far, like the Anthropic path.
+    /// Cancelling the question cancels the provider (a CLI process is ended).
+    private func answerThroughProvider(
+        source: AnswerSource,
+        images: [(data: Data, label: String)],
+        systemPrompt: String,
+        conversationHistory: [(userPlaceholder: String, assistantResponse: String)],
+        userPrompt: String,
+        tools: [[String: Any]],
+        maxTokens: Int,
+        onTextChunk: @MainActor @Sendable (String) -> Void
+    ) async throws -> AnswerResult {
+        let provider = try await AnswerProviderFactory.make(for: source, credentials: ProviderRouter.currentCredentials(),
+                                                      modelOverrides: OpenClickyConfiguration.settings.answerModels ?? [:])
+        var answerRequest = AnswerRequest(
+            images: images.map { AnswerRequest.Image(data: $0.data, label: $0.label, mediaType: detectImageMediaType(for: $0.data)) },
+            systemPrompt: systemPrompt,
+            history: conversationHistory.map { AnswerRequest.Turn(user: $0.userPlaceholder, assistant: $0.assistantResponse) },
+            userPrompt: userPrompt,
+            tools: tools.compactMap(Self.answerTool(fromAnthropicTool:)))
+        answerRequest.maxTokens = maxTokens
+        let (pieces, piecesContinuation) = AsyncStream<String>.makeStream()
+        let answerTask = Task<AnswerResult, Error> {
+            defer { piecesContinuation.finish() }
+            return try await provider.answer(answerRequest) { piecesContinuation.yield($0) }
+        }
+        let result = try await withTaskCancellationHandler {
+            var answerSoFar = ""
+            for await piece in pieces {
+                answerSoFar += piece
+                await onTextChunk(answerSoFar)
+            }
+            return try await answerTask.value
+        } onCancel: {
+            answerTask.cancel()
+        }
+        AppLog.append("answer: \(source.displayName) answered (\(result.text.count) chars, \(result.toolCalls.count) tool calls)")
+        return result
+    }
+
+    /// Non-streaming request for short answers nobody watches arrive (screen grounding). Another
+    /// answer source gets the question through its AnswerProvider, as the streaming call does; it
+    /// used to throw here, so grounding silently never ran on those routes.
     func analyzeImage(
         images: [(data: Data, label: String)],
         systemPrompt: String,
@@ -307,7 +358,18 @@ class ClaudeAPI {
     ) async throws -> (text: String, duration: TimeInterval) {
         let startTime = Date()
 
-        var request = try makeAPIRequest()
+        if case .answerProvider(let source) = ProviderRouter.current(for: .claude) {
+            let result = try await answerThroughProvider(
+                source: source, images: images, systemPrompt: systemPrompt, conversationHistory: conversationHistory,
+                // Not the 256 Anthropic gets below: a reasoning model (a Gemini 3, an OpenAI
+                // reasoning model) spends part of its limit thinking before the short answer.
+                userPrompt: userPrompt, tools: [], maxTokens: 1024, onTextChunk: { _ in })
+            return (text: result.text, duration: Date().timeIntervalSince(startTime))
+        }
+
+        let apiRequest = try makeAPIRequest()
+        var request = apiRequest.request
+        let goesToBackend = apiRequest.goesToBackend
 
         var messages: [[String: Any]] = []
         for (userPlaceholder, assistantResponse) in conversationHistory {
@@ -349,16 +411,19 @@ class ClaudeAPI {
         let payloadMB = Double(bodyData.count) / 1_048_576.0
         print("🌐 Claude request: \(String(format: "%.1f", payloadMB))MB, \(images.count) image(s)")
 
-        let (data, response) = try await session.data(for: request)
+        let (data, response) = goesToBackend
+            ? try await BackendSignIn.send(request) { [session] in try await session.data(for: $0) }
+            : try await session.data(for: request)
 
-        guard let httpResponse = response as? HTTPURLResponse,
-              (200...299).contains(httpResponse.statusCode) else {
-            let responseString = String(data: data, encoding: .utf8) ?? "Unknown error"
+        guard let httpResponse = response as? HTTPURLResponse else {
             throw NSError(
                 domain: "ClaudeAPI",
-                code: (response as? HTTPURLResponse)?.statusCode ?? -1,
-                userInfo: [NSLocalizedDescriptionKey: "API Error: \(responseString)"]
+                code: -1,
+                userInfo: [NSLocalizedDescriptionKey: "Invalid HTTP response"]
             )
+        }
+        guard (200...299).contains(httpResponse.statusCode) else {
+            throw BackendHTTPError(service: .answers, status: httpResponse.statusCode, body: data)
         }
 
         let json = try JSONSerialization.jsonObject(with: data) as? [String: Any]

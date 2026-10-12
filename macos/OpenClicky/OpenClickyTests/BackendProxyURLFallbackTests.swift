@@ -2,7 +2,7 @@
 //  BackendProxyURLFallbackTests.swift
 //  OpenClickyTests
 //
-//  ClaudeAPI and ElevenLabsTTSClient build their backend URL from the user-configurable backend
+//  ClaudeAPI and AnswerVoicePlayer build their backend URL from the user-configurable backend
 //  base URL (shell.json or an environment override), not a compile-time literal. A malformed value
 //  must fall back to the hosted backend's own endpoint instead of force-unwrapping into a crash.
 //
@@ -26,12 +26,12 @@ struct BackendProxyURLFallbackTests {
     }
 
     @Test func elevenLabsUsesTheProxyURLWhenItParses() {
-        let url = ElevenLabsTTSClient.resolvedProxyURL(fromProxyURL: "https://example.com/tts")
+        let url = AnswerVoicePlayer.resolvedProxyURL(fromProxyURL: "https://example.com/tts")
         #expect(url.absoluteString == "https://example.com/tts")
     }
 
     @Test func elevenLabsFallsBackToTheHostedBackendWhenTheProxyURLDoesNotParse() {
-        let url = ElevenLabsTTSClient.resolvedProxyURL(fromProxyURL: "")
+        let url = AnswerVoicePlayer.resolvedProxyURL(fromProxyURL: "")
         #expect(url.absoluteString == "\(OpenClickyConfiguration.hostedBackendURL)/tts")
     }
 
@@ -43,7 +43,7 @@ struct BackendProxyURLFallbackTests {
         currentBackend = "https://second.example"
         #expect(claudeAPI.apiURL.absoluteString == "https://second.example/chat")
 
-        let ttsClient = ElevenLabsTTSClient(currentProxyURL: { "\(currentBackend)/tts" })
+        let ttsClient = AnswerVoicePlayer(currentProxyURL: { "\(currentBackend)/tts" })
         #expect(ttsClient.proxyURL.absoluteString == "https://second.example/tts")
         currentBackend = "https://third.example"
         #expect(ttsClient.proxyURL.absoluteString == "https://third.example/tts")

@@ -26,6 +26,40 @@ nonisolated enum BackendSignInError: LocalizedError, Equatable {
     }
 }
 
+/// A refused answer to a model call, with the status and body exactly as they came: the account
+/// notices (402 limits, 503 trouble), a refused sign-in (401) and an own key's refusal (a 401 whose
+/// `error` is an object) are read from the body here, instead of being scraped back out of an
+/// error description. ClaudeAPI throws it for /chat and for Anthropic on an own key (the backend
+/// relays Anthropic's answers in the same shape); AnswerVoicePlayer for the free voice's /tts.
+nonisolated struct BackendHTTPError: LocalizedError, CustomNSError, Equatable {
+    /// Which call was refused.
+    enum Service: String, Equatable, Sendable {
+        /// A question: ClaudeAPI (/chat, or Anthropic directly).
+        case answers
+        /// The account's free voice: AnswerVoicePlayer (/tts).
+        case voice
+    }
+
+    let service: Service
+    let status: Int
+    let body: Data
+
+    var bodyText: String { String(decoding: body, as: UTF8.self) }
+
+    var errorDescription: String? {
+        switch service {
+        case .answers: return "API Error (\(status)): \(bodyText)"
+        case .voice: return "TTS API error (\(status)): \(bodyText)"
+        }
+    }
+
+    // Bridged to NSError with the status as its code, so log lines that print an error's domain
+    // and code still show the status.
+    static var errorDomain: String { "OpenClickyBackendHTTP" }
+    var errorCode: Int { status }
+    var errorUserInfo: [String: Any] { [NSLocalizedDescriptionKey: errorDescription ?? ""] }
+}
+
 nonisolated enum BackendSignIn {
     typealias Transport = (URLRequest) async throws -> (Data, URLResponse)
 
@@ -35,8 +69,20 @@ nonisolated enum BackendSignIn {
     /// provider key) is returned as it is, for the caller to read.
     static func send(_ request: URLRequest, using transport: Transport,
                      signIn: SignInRejectionHandling = .live) async throws -> (Data, URLResponse) {
+        try await send(request, using: transport, readingStatusAndBodyWith: { answer in
+            (status: statusCode(of: answer.1), body: answer.0)
+        }, signIn: signIn)
+    }
+
+    /// `send` for an answer of any shape. `readingStatusAndBodyWith` gives an answer's status and,
+    /// for a refusal, its body. ClaudeAPI's streamed answers come this way: the stream of a 2xx
+    /// answer must be left for the caller to read, so only a refusal's body is read ahead.
+    static func send<Answer>(_ request: URLRequest, using transport: (URLRequest) async throws -> Answer,
+                             readingStatusAndBodyWith statusAndBody: (Answer) -> (status: Int, body: Data),
+                             signIn: SignInRejectionHandling = .live) async throws -> Answer {
         let firstAnswer = try await transport(request)
-        guard isSignInRejection(status: statusCode(of: firstAnswer.1), body: firstAnswer.0) else { return firstAnswer }
+        let firstStatusAndBody = statusAndBody(firstAnswer)
+        guard isSignInRejection(status: firstStatusAndBody.status, body: firstStatusAndBody.body) else { return firstAnswer }
         // Sent with no token (a Mac on its own keys, no account): there is no sign-in to renew or
         // end, so nobody is signed out or told to sign in again; the caller reads the answer.
         guard let sentToken = bearerToken(in: request), !sentToken.isEmpty else {
@@ -52,7 +98,8 @@ nonisolated enum BackendSignIn {
         var retriedRequest = request
         retriedRequest.setValue("Bearer \(renewedToken)", forHTTPHeaderField: "Authorization")
         let secondAnswer = try await transport(retriedRequest)
-        guard isSignInRejection(status: statusCode(of: secondAnswer.1), body: secondAnswer.0) else { return secondAnswer }
+        let secondStatusAndBody = statusAndBody(secondAnswer)
+        guard isSignInRejection(status: secondStatusAndBody.status, body: secondStatusAndBody.body) else { return secondAnswer }
         // A token just renewed and refused as well: the sign-in itself is dead, not its token.
         AppLog.append("sign-in: the renewed token was refused too; signing out")
         await signIn.signOutExpired()

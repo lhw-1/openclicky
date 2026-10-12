@@ -57,17 +57,9 @@ final class CompanionManager: ObservableObject {
     /// same coordinates twice in a row (the location alone would not change).
     @Published var detectedElementPointToken: Int = 0
 
-    // MARK: - Onboarding Video State (shared across all screen overlays)
-
-    @Published var onboardingVideoPlayer: AVPlayer?
-    @Published var showOnboardingVideo: Bool = false
-    @Published var onboardingVideoOpacity: Double = 0.0
-    private var onboardingVideoEndObserver: NSObjectProtocol?
-    private var onboardingDemoTimeObserver: Any?
-
     // MARK: - Onboarding Prompt Bubble
 
-    /// Text streamed character-by-character on the cursor after the onboarding video ends.
+    /// Text streamed character-by-character on the cursor after the onboarding demo.
     @Published var cursorCaptionText: String = ""
     @Published var cursorCaptionOpacity: Double = 0.0
     @Published var isCursorCaptionVisible: Bool = false
@@ -238,8 +230,7 @@ final class CompanionManager: ObservableObject {
                 AppLog.append("talk: you said: \(text.prefix(300))")
             case .assistant:
                 AppLog.append("talk: openclicky said: \(text.prefix(300))")
-                self.conversationHistory.append((userTranscript: self.lastTranscript ?? "", assistantResponse: text))
-                if self.conversationHistory.count > 10 { self.conversationHistory.removeFirst(self.conversationHistory.count - 10) }
+                self.rememberExchange(userTranscript: self.lastTranscript ?? "", assistantResponse: text)
                 print("🔊 (realtime) \(text)")
             }
         }
@@ -373,9 +364,7 @@ final class CompanionManager: ObservableObject {
         guard voiceState == .idle else { return }
         isDockingInProgress = true
         if !isOverlayVisible {
-            overlayWindowManager.hasShownOverlayBefore = true
-            overlayWindowManager.showOverlay(onScreens: NSScreen.screens, companionManager: self)
-            isOverlayVisible = true
+            showOverlayOnAllScreens()
         }
         transientHideTask?.cancel()
         transientHideTask = nil
@@ -414,9 +403,7 @@ final class CompanionManager: ObservableObject {
         notchHUDManager.clearCaption()
         // Re-create the overlay with the buddy starting at the notch; it flies to the mouse.
         cursorLaunchOriginScreenLocation = notchHUDManager.dockPoint
-        overlayWindowManager.hasShownOverlayBefore = true
-        overlayWindowManager.showOverlay(onScreens: NSScreen.screens, companionManager: self)
-        isOverlayVisible = true
+        showOverlayOnAllScreens()
         print("🎯 Cursor released from the notch")
     }
 
@@ -501,10 +488,7 @@ final class CompanionManager: ObservableObject {
             speakWithSystemVoice(AccountLimitError.notOnPlan.message)
             return
         }
-        stopActiveAnswer()
-        currentResponseTask?.cancel()
-        openClickyAgentClient.cancel()
-        elevenLabsTTSClient.stopPlayback()
+        interruptCurrentAnswer(includingAgentWork: true)
         if let threadId { lastAgentThreadId = threadId } else if startsNewThread { lastAgentThreadId = nil }
         lastTranscript = trimmedText
         currentResponseTask = Task {
@@ -518,6 +502,7 @@ final class CompanionManager: ObservableObject {
                 agentActivityText = nil
                 speakCreditsErrorFallback()
             }
+            await waitForSystemVoiceNoticeToEnd()
             if !Task.isCancelled {
                 voiceState = .idle
                 scheduleTransientHideIfNeeded()
@@ -595,9 +580,7 @@ final class CompanionManager: ObservableObject {
         guard isCursorDocked, !isOverlayVisible else { return }
         cursorLaunchOriginScreenLocation = notchHUDManager.dockPoint
         cursorFlightLeg = nil
-        overlayWindowManager.hasShownOverlayBefore = true
-        overlayWindowManager.showOverlay(onScreens: NSScreen.screens, companionManager: self)
-        isOverlayVisible = true
+        showOverlayOnAllScreens()
     }
 
     // Both read the backend URL per request: built once from it, they kept asking the old
@@ -606,8 +589,8 @@ final class CompanionManager: ObservableObject {
         return ClaudeAPI(currentProxyURL: { "\(OpenClickyConfiguration.backendBaseURL)/chat" }, model: selectedModel)
     }()
 
-    private lazy var elevenLabsTTSClient: ElevenLabsTTSClient = {
-        return ElevenLabsTTSClient(currentProxyURL: { "\(OpenClickyConfiguration.backendBaseURL)/tts" })
+    private lazy var answerVoicePlayer: AnswerVoicePlayer = {
+        return AnswerVoicePlayer(currentProxyURL: { "\(OpenClickyConfiguration.backendBaseURL)/tts" })
     }()
 
     /// Conversation history so Claude remembers prior exchanges within a session.
@@ -621,29 +604,39 @@ final class CompanionManager: ObservableObject {
     /// speaks again so a new response can begin immediately.
     private var currentResponseTask: Task<Void, Never>?
 
-    /// The ask lane's answer being spoken, kept so a new question stops it outright. Stopping only
-    /// the player ends the current piece "normally", and the queue went on to the next piece (and
-    /// kept fetching every remaining piece from /tts).
+    /// The answer being spoken (the ask lane's, or the agent's result), kept so a new question
+    /// stops it outright. Stopping only the player ends the current piece "normally", and the queue
+    /// went on to the next piece (and kept fetching every remaining piece from /tts).
     private var activeAnswerSpeaker: StreamingAnswerSpeaker?
     private var activeAnswerPlayback: Task<Void, Error>?
 
-    /// Stops the spoken answer, its remaining /tts fetches, and its pointer — before the player is
-    /// stopped, so the queue cannot move on to the next piece.
     /// The island's stop button: silence whatever Clicky is saying. Agent work keeps going.
     func stopSpeaking() {
         guard voiceState == .responding else { return }
         AppLog.append("ask: stopped speaking from the island")
-        stopActiveAnswer()
-        currentResponseTask?.cancel()
-        elevenLabsTTSClient.stopPlayback()
-        systemSpeechSynthesizer.stopSpeaking(at: .immediate)
-        recordedVoice.stop()
+        interruptCurrentAnswer(includingAgentWork: false)
         realtimeVoiceClient.stopSpeaking()
         // A cancelled answer skips its own reset to idle.
         voiceState = .idle
         scheduleTransientHideIfNeeded()
     }
 
+    /// Silences everything this manager is saying and abandons the answer in progress: the queued
+    /// pieces of a spoken answer, the response task, the answer voice, and a system-voice or
+    /// recorded notice. `includingAgentWork` also ends a running agent turn: a new question
+    /// replaces it, while the island's stop button only silences the voice and leaves the agent
+    /// working. The realtime session is left alone: its next turn cancels its own reply, and only
+    /// the stop button silences it outright.
+    private func interruptCurrentAnswer(includingAgentWork: Bool) {
+        stopActiveAnswer()
+        currentResponseTask?.cancel()
+        if includingAgentWork { openClickyAgentClient.cancel() }
+        answerVoicePlayer.stopPlayback()
+        stopSystemVoice()
+    }
+
+    /// Stops the spoken answer, its remaining /tts fetches, and its pointer — before the player is
+    /// stopped, so the queue cannot move on to the next piece.
     private func stopActiveAnswer() {
         activeAnswerSpeaker?.cancel()
         activeAnswerPlayback?.cancel()
@@ -686,6 +679,15 @@ final class CompanionManager: ObservableObject {
     /// Used by the panel to show accurate status text ("Active" vs "Ready").
     @Published private(set) var isOverlayVisible: Bool = false
 
+    /// Puts the cursor overlay on every display. `hasShownOverlayBefore` is set first so the
+    /// overlay skips its first-launch welcome bubble: every caller here shows the buddy for a
+    /// reason of its own (a question, a caption, a flight), never as a first launch.
+    private func showOverlayOnAllScreens() {
+        overlayWindowManager.hasShownOverlayBefore = true
+        overlayWindowManager.showOverlay(onScreens: NSScreen.screens, companionManager: self)
+        isOverlayVisible = true
+    }
+
     /// The Claude model used for voice responses. Persisted to UserDefaults.
     @Published var selectedModel: String = UserDefaults.standard.string(forKey: "selectedClaudeModel") ?? "claude-sonnet-4-6"
 
@@ -709,9 +711,7 @@ final class CompanionManager: ObservableObject {
         transientHideTask = nil
 
         if enabled {
-            overlayWindowManager.hasShownOverlayBefore = true
-            overlayWindowManager.showOverlay(onScreens: NSScreen.screens, companionManager: self)
-            isOverlayVisible = true
+            showOverlayOnAllScreens()
         } else {
             overlayWindowManager.hideOverlay()
             isOverlayVisible = false
@@ -774,20 +774,6 @@ final class CompanionManager: ObservableObject {
         set { UserDefaults.standard.set(newValue, forKey: "hasCompletedOnboarding") }
     }
 
-    /// Whether the user has submitted their email during onboarding.
-    @Published var hasSubmittedEmail: Bool = UserDefaults.standard.bool(forKey: "hasSubmittedEmail")
-
-    /// Submits the user's email to FormSpark and identifies them in PostHog.
-    func submitEmail(_ email: String) {
-        let trimmedEmail = email.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmedEmail.isEmpty else { return }
-
-        hasSubmittedEmail = true
-        UserDefaults.standard.set(true, forKey: "hasSubmittedEmail")
-        // OpenClicky: upstream posted the email to the original developer's form and identified the
-        // user in PostHog. Neither happens here — the email stays on this machine.
-    }
-
     /// An account hears on the Mac (Apple speech); own keys keep the configured provider.
     private func applyHearingForAccount() {
         buddyDictationManager.replaceTranscriptionProvider(
@@ -843,9 +829,7 @@ final class CompanionManager: ObservableObject {
                 // Restore the docked state without an animation: the buddy is simply home.
                 isCursorDocked = true
             } else {
-                overlayWindowManager.hasShownOverlayBefore = true
-                overlayWindowManager.showOverlay(onScreens: NSScreen.screens, companionManager: self)
-                isOverlayVisible = true
+                showOverlayOnAllScreens()
             }
         }
 
@@ -885,8 +869,7 @@ final class CompanionManager: ObservableObject {
         overlayWindowManager.hideOverlay()
         transientHideTask?.cancel()
 
-        stopActiveAnswer()
-        currentResponseTask?.cancel()
+        interruptCurrentAnswer(includingAgentWork: false)
         currentResponseTask = nil
         shortcutTransitionCancellable?.cancel()
         companionShortcutCancellable?.cancel()
@@ -1038,9 +1021,7 @@ final class CompanionManager: ObservableObject {
 
                     // If onboarding was already completed, show the cursor overlay now
                     if hasCompletedOnboarding && allPermissionsGranted && !isOverlayVisible && isClickyCursorEnabled {
-                        overlayWindowManager.hasShownOverlayBefore = true
-                        overlayWindowManager.showOverlay(onScreens: NSScreen.screens, companionManager: self)
-                        isOverlayVisible = true
+                        showOverlayOnAllScreens()
                     }
                 }
             } catch {
@@ -1232,9 +1213,7 @@ final class CompanionManager: ObservableObject {
         // Only a first run: someone who used OpenClicky before has finished onboarding already.
         guard !firstRunTour.isFinished, !hasCompletedOnboarding, isClickyCursorEnabled, !isCursorDocked, !isOverlayVisible else { return }
         if flyingFromTheNotch { cursorLaunchOriginScreenLocation = notchHUDManager.dockPoint }
-        overlayWindowManager.hasShownOverlayBefore = true
-        overlayWindowManager.showOverlay(onScreens: NSScreen.screens, companionManager: self)
-        isOverlayVisible = true
+        showOverlayOnAllScreens()
     }
 
     /// The tour's first moment: the pointer flies out of the notch to the mouse and says hello
@@ -1242,9 +1221,7 @@ final class CompanionManager: ObservableObject {
     func introducePointerForTour() {
         if !isCursorDocked && !isOverlayVisible {
             cursorLaunchOriginScreenLocation = notchHUDManager.dockPoint
-            overlayWindowManager.hasShownOverlayBefore = true
-            overlayWindowManager.showOverlay(onScreens: NSScreen.screens, companionManager: self)
-            isOverlayVisible = true
+            showOverlayOnAllScreens()
         }
         DispatchQueue.main.asyncAfter(deadline: .now() + 1.6) { [weak self] in
             guard let self else { return }
@@ -1259,9 +1236,7 @@ final class CompanionManager: ObservableObject {
     func pointAtTourPrimaryButton(saying bubbleText: String) {
         guard let (location, displayFrame) = notchHUDManager.tourPrimaryButtonLocation() else { return }
         if !isOverlayVisible {
-            overlayWindowManager.hasShownOverlayBefore = true
-            overlayWindowManager.showOverlay(onScreens: NSScreen.screens, companionManager: self)
-            isOverlayVisible = true
+            showOverlayOnAllScreens()
         }
         detectedElementBubbleText = bubbleText
         detectedElementScreenLocation = location
@@ -1276,30 +1251,12 @@ final class CompanionManager: ObservableObject {
         Task { @MainActor in
             defer { onFinished() }
             do {
-                let screenCaptures = try await CompanionScreenCaptureUtility.captureAllScreensAsJPEG()
-                guard let cursorScreenCapture = screenCaptures.first(where: { $0.isCursorScreen }) else { return }
-                let dimensionInfo = " (image dimensions: \(cursorScreenCapture.screenshotWidthInPixels)x\(cursorScreenCapture.screenshotHeightInPixels) pixels)"
-                let (fullResponseText, _, _) = try await claudeAPI.analyzeImageStreaming(
-                    images: [(data: cursorScreenCapture.imageData, label: cursorScreenCapture.label + dimensionInfo)],
-                    systemPrompt: Self.onboardingDemoSystemPrompt,
-                    userPrompt: "look around my screen and find something interesting to point at",
-                    onTextChunk: { _ in }
-                )
-                let parseResult = Self.parsePointingCoordinates(from: fullResponseText)
-                guard let pointCoordinate = parseResult.coordinate else { return }
-                if !isOverlayVisible {
-                    overlayWindowManager.hasShownOverlayBefore = true
-                    overlayWindowManager.showOverlay(onScreens: NSScreen.screens, companionManager: self)
-                    isOverlayVisible = true
-                }
-                detectedElementBubbleText = parseResult.spokenText
-                detectedElementScreenLocation = Self.screenLocation(forScreenshotPoint: pointCoordinate, in: cursorScreenCapture)
-                detectedElementDisplayFrame = cursorScreenCapture.displayFrame
-                detectedElementPointToken &+= 1
+                guard let parseResult = try await pointAtSomethingOnScreenForDemo(showingTheOverlayIfHidden: true) else { return }
                 AppLog.append("tour demo: pointing at \(parseResult.elementLabel ?? "something")")
                 // Said in the answering voice; quietly skipped when no voice route is set up.
-                try? await elevenLabsTTSClient.speakText(parseResult.spokenText)
-                while elevenLabsTTSClient.isPlaying { try? await Task.sleep(nanoseconds: 150_000_000) }
+                if let demoCommentAudio = try? await answerVoicePlayer.fetchAudio(for: parseResult.spokenText) {
+                    try? await answerVoicePlayer.playToCompletion(demoCommentAudio)
+                }
             } catch {
                 AppLog.append("tour demo: could not run (\((error as NSError).domain) \((error as NSError).code))")
             }
@@ -1337,7 +1294,6 @@ final class CompanionManager: ObservableObject {
         case .handsFreeToggleRequested:
             toggleHandsFree()
         case .dictationPressed, .dictationEditPressed, .dictationEditModifierJoined, .dictationReleased, .dictationDoubleTapped, .escapePressed:
-            guard !showOnboardingVideo else { return }
             dictationTakeController.handle(shortcutEvent)
         case .talkPressed, .talkReleased:
             // Delivered through shortcutTransitionPublisher.
@@ -1347,7 +1303,6 @@ final class CompanionManager: ObservableObject {
 
     /// Control tapped twice: the notch island opens a one-line text field.
     func openTextComposer() {
-        guard !showOnboardingVideo else { return }
         notchHUDManager.openTextComposer()
     }
 
@@ -1359,15 +1314,9 @@ final class CompanionManager: ObservableObject {
         transientHideTask?.cancel()
         transientHideTask = nil
         if !isClickyCursorEnabled && !isOverlayVisible && !isCursorDocked {
-            overlayWindowManager.hasShownOverlayBefore = true
-            overlayWindowManager.showOverlay(onScreens: NSScreen.screens, companionManager: self)
-            isOverlayVisible = true
+            showOverlayOnAllScreens()
         }
-        stopActiveAnswer()
-        currentResponseTask?.cancel()
-        openClickyAgentClient.cancel()
-        elevenLabsTTSClient.stopPlayback()
-        systemSpeechSynthesizer.stopSpeaking(at: .immediate)
+        interruptCurrentAnswer(includingAgentWork: true)
         clearDetectedElementLocation()
         dismissCursorCaption()
         lastTranscript = trimmedText
@@ -1428,8 +1377,6 @@ final class CompanionManager: ObservableObject {
                 showAskCaption("you’re still dictating. tap \(dictationSettings.dictationKey.keycapLabel) to finish, then ask again.", holdSeconds: 4)
                 return
             }
-            // Don't register push-to-talk while the onboarding video is playing
-            guard !showOnboardingVideo else { return }
             AppLog.append("ask: ⌃⌥ pressed, listening")
             lastQuestionFailed = false
             // A new press owns the outcome from here: whatever the last release was waiting for is over.
@@ -1443,17 +1390,11 @@ final class CompanionManager: ObservableObject {
             // If the cursor is hidden, bring it back transiently for this interaction
             // (unless it is docked in the notch — the HUD shows the voice state instead)
             if !isClickyCursorEnabled && !isOverlayVisible && !isCursorDocked {
-                overlayWindowManager.hasShownOverlayBefore = true
-                overlayWindowManager.showOverlay(onScreens: NSScreen.screens, companionManager: self)
-                isOverlayVisible = true
+                showOverlayOnAllScreens()
             }
 
             // Cancel any in-progress response, agent run, and TTS from a previous utterance
-            stopActiveAnswer()
-            currentResponseTask?.cancel()
-            openClickyAgentClient.cancel()
-            elevenLabsTTSClient.stopPlayback()
-            systemSpeechSynthesizer.stopSpeaking(at: .immediate)
+            interruptCurrentAnswer(includingAgentWork: true)
             clearDetectedElementLocation()
 
             // Dismiss the onboarding prompt / caption if it's showing
@@ -1572,9 +1513,7 @@ final class CompanionManager: ObservableObject {
     /// Claude's response may include a [POINT:x,y:label] tag which triggers
     /// the buddy to fly to that element on screen.
     private func sendTranscriptToClaudeWithScreenshot(transcript: String) {
-        stopActiveAnswer()
-        currentResponseTask?.cancel()
-        elevenLabsTTSClient.stopPlayback()
+        interruptCurrentAnswer(includingAgentWork: false)
 
         currentResponseTask = Task {
             // Stay in processing (spinner) state — no streaming text displayed
@@ -1615,13 +1554,7 @@ final class CompanionManager: ObservableObject {
                     agentActivityText = nil
                 }
 
-                // Build image labels with the actual screenshot pixel dimensions
-                // so Claude's coordinate space matches the image it sees. We
-                // scale from screenshot pixels to display points ourselves.
-                let labeledImages = screenCaptures.map { capture in
-                    let dimensionInfo = " (image dimensions: \(capture.screenshotWidthInPixels)x\(capture.screenshotHeightInPixels) pixels)"
-                    return (data: capture.imageData, label: capture.label + dimensionInfo)
-                }
+                let labeledImages = screenCaptures.map(Self.imageLabeledWithItsPixelSize)
 
                 // Pass conversation history so Claude remembers prior exchanges
                 let historyForAPI = conversationHistory.map { entry in
@@ -1633,15 +1566,11 @@ final class CompanionManager: ObservableObject {
                 let tools = Self.offersQuickActionsToAskLane(
                     agentLaneRuns: agentLaneRuns,
                     answeringSource: ProviderRouter.route(for: .claude, credentials: ProviderRouter.currentCredentials()).answeringSource
-                ) ? RealtimeVoiceClient.anthropicToolDefinitions() : []
+                ) ? MacAction.anthropicToolDefinitions() : []
                 let toolsLine = tools.isEmpty ? "" : "\n\n" + Self.accountToolsInstruction
                 // The answer is spoken while it is still being written: each finished sentence goes to
                 // the voice, and the pointer moves when the voice starts (the prompt puts the tag first).
-                let answerSpeaker = StreamingAnswerSpeaker(
-                    speechQueue: SpeechQueue(
-                        fetchAudio: { [elevenLabsTTSClient] pieceText in try await elevenLabsTTSClient.fetchAudio(for: pieceText) },
-                        playAudio: { [elevenLabsTTSClient] audioData in try await elevenLabsTTSClient.playToCompletion(audioData) }
-                    ),
+                let answerSpeaker = makeAnswerSpeaker(
                     onVoiceStarts: { [weak self] in
                         self?.voiceState = .responding
                         self?.dismissCursorCaption()
@@ -1713,16 +1642,7 @@ final class CompanionManager: ObservableObject {
                         speakWithSystemVoice(Self.emptyAnswerSentence)
                     }
                 } else {
-                    // Save this exchange to conversation history
-                    conversationHistory.append((
-                        userTranscript: transcript,
-                        assistantResponse: spokenText
-                    ))
-                }
-
-                // Keep only the last 10 exchanges to avoid unbounded context growth
-                if conversationHistory.count > 10 {
-                    conversationHistory.removeFirst(conversationHistory.count - 10)
+                    rememberExchange(userTranscript: transcript, assistantResponse: spokenText)
                 }
 
                 print("🧠 Conversation history: \(conversationHistory.count) exchanges")
@@ -1742,7 +1662,9 @@ final class CompanionManager: ObservableObject {
                 } catch let failure as SpeechQueue.Failure {
                     // 402 is the account's voice allowance (tts_budget): the system voice is the plan, not a failure.
                     let nsError = failure.underlyingError as NSError
-                    if !(nsError.domain == "ElevenLabsTTS" && nsError.code == 402) {
+                    let voiceRefusal = failure.underlyingError as? BackendHTTPError
+                    let isVoiceAllowanceSpent = voiceRefusal?.service == .voice && voiceRefusal?.status == 402
+                    if !isVoiceAllowanceSpent {
                         ClickyAnalytics.trackTTSError(error: nsError.localizedDescription)
                     }
                     print("⚠️ TTS via backend failed (\(nsError.localizedDescription)); using the system voice")
@@ -1770,10 +1692,14 @@ final class CompanionManager: ObservableObject {
                     // Not an outage: nothing is set up to answer yet. Said in text beside the
                     // pointer, not in the system voice, which reads a setup note like an alarm.
                     showAskCaption(unavailable.sentence, holdSeconds: 8)
-                } else if Self.isSignInRejection(error) {
-                    // The backend refused the token. One refresh; a sign-in nothing can renew, or a
-                    // second 401 in a row, signs out. Either way the person hears what to do.
-                    speakWithSystemVoice(await OpenClickyAuthSession.shared.sentenceAfterBackendRejection(errorDescription: error.localizedDescription))
+                } else if let signInError = error as? BackendSignInError {
+                    // The backend refused the token and BackendSignIn has already renewed it once and
+                    // asked again: the sign-in is over, or could not be renewed right now.
+                    speakWithSystemVoice(OpenClickyAuthSession.spokenSentence(after: signInError))
+                } else if let refusal = Self.refusedQuestion(error), Self.isSignInRejection(refusal) {
+                    // A 401 BackendSignIn passed through (an own key's refusal relayed by the backend,
+                    // or a request sent with no token), or Anthropic refusing an own key directly.
+                    speakWithSystemVoice(await OpenClickyAuthSession.shared.sentenceAfterBackendRejection(responseBody: refusal.body))
                 } else if Self.isAccountNotice(error) {
                     if let notice = Self.accountNoticeToSpeak(for: error, alreadySpoken: &spokenAccountNotices) {
                         speakWithSystemVoice(notice)
@@ -1786,6 +1712,8 @@ final class CompanionManager: ObservableObject {
                 }
             }
 
+            // A notice in the system voice is still being said: the turn is over when it ends.
+            await waitForSystemVoiceNoticeToEnd()
             if !Task.isCancelled {
                 voiceState = .idle
                 scheduleTransientHideIfNeeded()
@@ -1829,10 +1757,11 @@ final class CompanionManager: ObservableObject {
                 break
             }
         }
-        let nsError = error as NSError
-        if nsError.domain == "ClaudeAPI" && (nsError.code == 401 || nsError.code == 403) {
+        if let refusal = refusedQuestion(error), refusal.status == 401 || refusal.status == 403 {
             return "something went wrong talking to the openclicky backend. check the backend and your token in the settings file."
         }
+        // Not an HTTP refusal: the stream had started when Anthropic reported the failure.
+        let nsError = error as NSError
         if nsError.domain == "ClaudeAPI" && nsError.code == ClaudeAPI.midStreamErrorCode {
             return "the answer stopped partway. please ask again."
         }
@@ -1844,21 +1773,15 @@ final class CompanionManager: ObservableObject {
     private func handleRealtimeShortcutTransition(_ transition: BuddyPushToTalkShortcut.ShortcutTransition) {
         switch transition {
         case .pressed:
-            guard !showOnboardingVideo, !isDictatingToFrontApp else { return }
+            guard !isDictatingToFrontApp else { return }
             lastQuestionFailed = false
             dismissCursorCaption()
             transientHideTask?.cancel()
             transientHideTask = nil
             if !isClickyCursorEnabled && !isOverlayVisible && !isCursorDocked {
-                overlayWindowManager.hasShownOverlayBefore = true
-                overlayWindowManager.showOverlay(onScreens: NSScreen.screens, companionManager: self)
-                isOverlayVisible = true
+                showOverlayOnAllScreens()
             }
-            stopActiveAnswer()
-            currentResponseTask?.cancel()
-            openClickyAgentClient.cancel()
-            elevenLabsTTSClient.stopPlayback()
-            systemSpeechSynthesizer.stopSpeaking(at: .immediate)
+            interruptCurrentAnswer(includingAgentWork: true)
             clearDetectedElementLocation()
             ClickyAnalytics.trackPushToTalkStarted()
             voiceState = .listening
@@ -1897,12 +1820,57 @@ final class CompanionManager: ObservableObject {
     private func runOpenClickyAgentLane(transcript: String, screenCaptures: [CompanionScreenCapture]) async throws {
         let spokenText = try await performAgentTask(transcript: transcript, screenCaptures: screenCaptures)
         guard !Task.isCancelled else { return }
+        await speakWholeReply(spokenText)
+    }
+
+    /// The speaker for one spoken reply: its pieces are fetched and played by the answer voice
+    /// player, the next one fetched while the current one plays.
+    private func makeAnswerSpeaker(onVoiceStarts: @escaping () -> Void, onPointTag: @escaping (String) -> Void) -> StreamingAnswerSpeaker {
+        StreamingAnswerSpeaker(
+            speechQueue: SpeechQueue(
+                fetchAudio: { [answerVoicePlayer] pieceText in try await answerVoicePlayer.fetchAudio(for: pieceText) },
+                playAudio: { [answerVoicePlayer] audioData in try await answerVoicePlayer.playToCompletion(audioData) }
+            ),
+            onVoiceStarts: onVoiceStarts,
+            onPointTag: onPointTag
+        )
+    }
+
+    /// Speaks a reply that is already whole (the agent's result) the way a streamed answer is
+    /// spoken: in pieces through `SpeechQueue`, kept as the active answer so the island's stop
+    /// button and a new question silence it. It used to go out as one /tts request whose call
+    /// returned as soon as playback began, so nothing could stop it and `.responding` was set
+    /// after the voice had already started. Returns once the reply has been said, was interrupted,
+    /// or the voice failed and the system voice has said what was left.
+    private func speakWholeReply(_ replyText: String) async {
+        let answerSpeaker = makeAnswerSpeaker(
+            onVoiceStarts: { [weak self] in
+                self?.voiceState = .responding
+                self?.dismissCursorCaption()
+            },
+            // The agent's reply carries no [POINT:…] tag; the chunker would only strip one.
+            onPointTag: { _ in }
+        )
+        let answerPlayback = Task { @MainActor in try await answerSpeaker.play() }
+        activeAnswerSpeaker = answerSpeaker
+        activeAnswerPlayback = answerPlayback
+        answerSpeaker.receiveWholeReply(replyText)
         do {
-            try await elevenLabsTTSClient.speakText(spokenText)
-            voiceState = .responding
+            // A question asked meanwhile cancels the calling task; the cancellation is passed on.
+            try await withTaskCancellationHandler {
+                try await answerPlayback.value
+            } onCancel: {
+                answerPlayback.cancel()
+            }
+        } catch let failure as SpeechQueue.Failure {
+            guard !Task.isCancelled else { return }
+            let nsError = failure.underlyingError as NSError
+            print("⚠️ TTS failed after agent run (\(nsError.localizedDescription)); using the system voice")
+            AppLog.append("agent: voice failed (\(nsError.code)); using the system voice")
+            speakWithSystemVoice(failure.unspokenText.joined(separator: " "))
+            await waitForSystemVoiceNoticeToEnd()
         } catch {
-            print("⚠️ TTS via backend failed after agent run (\(error.localizedDescription)); using the system voice")
-            speakWithSystemVoice(spokenText)
+            // Interrupted by a new question or the stop button.
         }
     }
 
@@ -1956,10 +1924,7 @@ final class CompanionManager: ObservableObject {
         }
 
         // Keep the teacher lane aware of what the agent did.
-        conversationHistory.append((userTranscript: transcript, assistantResponse: spokenText))
-        if conversationHistory.count > 10 {
-            conversationHistory.removeFirst(conversationHistory.count - 10)
-        }
+        rememberExchange(userTranscript: transcript, assistantResponse: spokenText)
         return spokenText
     }
 
@@ -1973,7 +1938,7 @@ final class CompanionManager: ObservableObject {
         transientHideTask?.cancel()
         transientHideTask = Task {
             // Wait for TTS audio to finish playing
-            while elevenLabsTTSClient.isPlaying || systemSpeechSynthesizer.isSpeaking || recordedVoice.isPlaying {
+            while answerVoicePlayer.isPlaying || systemSpeechSynthesizer.isSpeaking || recordedVoice.isPlaying {
                 try? await Task.sleep(nanoseconds: 200_000_000)
                 guard !Task.isCancelled else { return }
             }
@@ -2002,24 +1967,72 @@ final class CompanionManager: ObservableObject {
     /// OpenClicky: speak with the built-in macOS voice when the backend has no text-to-speech
     /// route (for example an OpenRouter-only backend). Keeps the conversation audible.
     private let systemSpeechSynthesizer = AVSpeechSynthesizer()
+    /// Tells when a system-voice utterance has ended, finished or stopped.
+    private let systemSpeechFinishObserver = SystemSpeechFinishObserver()
 
     /// The bundled recordings of the lines said the same way every time (RecordedVoice.swift).
     let recordedVoice = RecordedVoice()
 
+    /// Bumped for every notice spoken and every interruption, so the end of an older notice (one
+    /// cut off by the next, say) never sets a newer turn back to idle.
+    private var systemVoiceNoticeNumber = 0
+    private var isSystemVoiceNoticeSpeaking = false
+    /// Turns waiting for the notice to end before they go back to idle (`waitForSystemVoiceNoticeToEnd`).
+    private var systemVoiceNoticeEndWaiters: [CheckedContinuation<Void, Never>] = []
+
+    /// Says `text` in this Mac's voice, or plays its recording when it is one of the fixed notices.
+    /// The state is `.responding` while it talks and goes back to `.idle` when it ends: nothing set
+    /// it back before, so the island stayed "speaking" after a notice until the next question.
     private func speakWithSystemVoice(_ text: String) {
         answeringSourceName = nil
+        stopSystemVoice()
+        let noticeNumber = systemVoiceNoticeNumber
+        isSystemVoiceNoticeSpeaking = true
+        let noticeEnded: () -> Void = { [weak self] in self?.systemVoiceNoticeEnded(noticeNumber: noticeNumber) }
+        voiceState = .responding
         // A fixed notice that has a recording plays it, in the app's own voice.
-        if let line = RecordedVoice.line(forSpokenText: text), recordedVoice.play(line) {
-            systemSpeechSynthesizer.stopSpeaking(at: .immediate)
-            voiceState = .responding
+        if let line = RecordedVoice.line(forSpokenText: text), recordedVoice.play(line, onFinished: noticeEnded) {
             return
         }
         let utterance = AVSpeechUtterance(string: text)
         utterance.voice = MacVoice.currentVoice()
         utterance.rate = MacVoice.speakingRate(for: utterance.voice)
-        systemSpeechSynthesizer.stopSpeaking(at: .immediate)
+        systemSpeechFinishObserver.watch(utterance, onEnded: noticeEnded)
+        systemSpeechSynthesizer.delegate = systemSpeechFinishObserver
         systemSpeechSynthesizer.speak(utterance)
-        voiceState = .responding
+    }
+
+    private func systemVoiceNoticeEnded(noticeNumber: Int) {
+        guard noticeNumber == systemVoiceNoticeNumber, isSystemVoiceNoticeSpeaking else { return }
+        isSystemVoiceNoticeSpeaking = false
+        resumeSystemVoiceNoticeEndWaiters()
+        // A notice is the last thing a turn says: once it has been said, the turn is over.
+        guard voiceState == .responding else { return }
+        voiceState = .idle
+        scheduleTransientHideIfNeeded()
+    }
+
+    /// Stops a notice being said in the system voice or played from its recording.
+    private func stopSystemVoice() {
+        systemVoiceNoticeNumber += 1
+        isSystemVoiceNoticeSpeaking = false
+        systemSpeechSynthesizer.stopSpeaking(at: .immediate)
+        recordedVoice.stop()
+        resumeSystemVoiceNoticeEndWaiters()
+    }
+
+    /// Returns once the notice being said has ended or was stopped; at once when none is.
+    private func waitForSystemVoiceNoticeToEnd() async {
+        guard isSystemVoiceNoticeSpeaking else { return }
+        await withCheckedContinuation { continuation in
+            systemVoiceNoticeEndWaiters.append(continuation)
+        }
+    }
+
+    private func resumeSystemVoiceNoticeEndWaiters() {
+        let waiters = systemVoiceNoticeEndWaiters
+        systemVoiceNoticeEndWaiters = []
+        waiters.forEach { $0.resume() }
     }
 
     /// The ask lane offers the quick actions where nothing else does them: whenever the agent lane
@@ -2038,35 +2051,37 @@ final class CompanionManager: ObservableObject {
         return ([answer] + toolOutcomes).filter { !$0.isEmpty }.joined(separator: " ")
     }
 
+    /// The refusal of a question (ClaudeAPI's /chat, or Anthropic on an own key), as it came; nil
+    /// for anything else, including the voice's own refusals.
+    static func refusedQuestion(_ error: Error) -> BackendHTTPError? {
+        guard let refusal = error as? BackendHTTPError, refusal.service == .answers else { return nil }
+        return refusal
+    }
+
     /// The plain sentence for an account limit, when the ask lane's Claude call answered 402.
-    /// `ClaudeAPI` puts the response body after `API Error (402): `, so the JSON starts at the first `{`.
     static func limitSentence(for error: Error) -> String? {
-        let error = error as NSError
-        guard error.domain == "ClaudeAPI", error.code == 402 else { return nil }
-        let body = Data(((error.userInfo[NSLocalizedDescriptionKey] as? String) ?? "").drop { $0 != "{" }.utf8)
-        let message = AccountLimitError.from(status: 402, body: body)?.message ?? ""
+        guard let refusal = refusedQuestion(error), refusal.status == 402 else { return nil }
+        let message = AccountLimitError.from(status: 402, body: refusal.body)?.message ?? ""
         return message.isEmpty ? AccountLimitError.personalLimit.message : message
     }
 
-    /// The account's answer to a failed ask: a 402 limit, or the free service's 503 trouble.
-    /// The backend answered 401: the token was refused (expired, or issued before a move).
+    /// The question was refused with a 401: the account's token (expired, or issued before a move),
+    /// or the person's own key, refused by Anthropic or relayed by the backend.
     static func isSignInRejection(_ error: Error) -> Bool {
-        let error = error as NSError
-        return error.domain == "ClaudeAPI" && error.code == 401
+        refusedQuestion(error)?.status == 401
     }
 
+    /// The account's answer to a failed ask: a 402 limit, or the free service's 503 trouble.
     static func isAccountNotice(_ error: Error) -> Bool {
-        let error = error as NSError
-        guard error.domain == "ClaudeAPI" else { return false }
-        return error.code == 402 || (error.code == 503 && serviceTrouble(in: error))
+        guard let refusal = refusedQuestion(error) else { return false }
+        return refusal.status == 402 || isServiceTrouble(refusal)
     }
 
     /// The sentence for an account notice the first time this session; nil afterwards (and for any
     /// other error), so a lane that keeps hitting the same limit falls back silently.
     static func accountNoticeToSpeak(for error: Error, alreadySpoken: inout Set<String>) -> String? {
-        let nsError = error as NSError
         let sentence: String?
-        if nsError.domain == "ClaudeAPI", nsError.code == 503, serviceTrouble(in: nsError) {
+        if let refusal = refusedQuestion(error), isServiceTrouble(refusal) {
             sentence = AccountLimitError.serviceTroubleMessage
         } else {
             sentence = limitSentence(for: error)
@@ -2075,9 +2090,8 @@ final class CompanionManager: ObservableObject {
         return sentence
     }
 
-    private static func serviceTrouble(in error: NSError) -> Bool {
-        let body = Data(((error.userInfo[NSLocalizedDescriptionKey] as? String) ?? "").drop { $0 != "{" }.utf8)
-        return AccountLimitError.isServiceTrouble(status: error.code, body: body)
+    private static func isServiceTrouble(_ refusal: BackendHTTPError) -> Bool {
+        refusal.status == 503 && AccountLimitError.isServiceTrouble(status: refusal.status, body: refusal.body)
     }
 
     /// The screens a question carries: the cursor's screen first, and for an account at most one
@@ -2192,27 +2206,11 @@ final class CompanionManager: ObservableObject {
     /// pointing demo once, then stream in the "press control + option" prompt. Kept the name so
     /// the overlay's call site is unchanged.
     func setupOnboardingVideo() {
-        showOnboardingVideo = false
-        onboardingVideoPlayer = nil
         ClickyAnalytics.trackOnboardingDemoTriggered()
         performOnboardingDemoInteraction()
         DispatchQueue.main.asyncAfter(deadline: .now() + 6.0) { [weak self] in
             guard let self, !self.isCursorCaptionVisible else { return }
             self.startOnboardingPromptStream()
-        }
-    }
-
-    func tearDownOnboardingVideo() {
-        showOnboardingVideo = false
-        if let timeObserver = onboardingDemoTimeObserver {
-            onboardingVideoPlayer?.removeTimeObserver(timeObserver)
-            onboardingDemoTimeObserver = nil
-        }
-        onboardingVideoPlayer?.pause()
-        onboardingVideoPlayer = nil
-        if let observer = onboardingVideoEndObserver {
-            NotificationCenter.default.removeObserver(observer)
-            onboardingVideoEndObserver = nil
         }
     }
 
@@ -2279,9 +2277,7 @@ final class CompanionManager: ObservableObject {
         if isCursorDocked, !isOverlayVisible {
             transientHideTask?.cancel()
             transientHideTask = nil
-            overlayWindowManager.hasShownOverlayBefore = true
-            overlayWindowManager.showOverlay(onScreens: NSScreen.screens, companionManager: self)
-            isOverlayVisible = true
+            showOverlayOnAllScreens()
         }
         cursorCaptionTypingTimer?.invalidate()
         cursorCaptionTypingTimer = nil
@@ -2356,9 +2352,7 @@ final class CompanionManager: ObservableObject {
         if !isOverlayVisible {
             transientHideTask?.cancel()
             transientHideTask = nil
-            overlayWindowManager.hasShownOverlayBefore = true
-            overlayWindowManager.showOverlay(onScreens: NSScreen.screens, companionManager: self)
-            isOverlayVisible = true
+            showOverlayOnAllScreens()
         }
         streamCursorCaption(message, holdSeconds: holdSeconds)
     }
@@ -2386,16 +2380,14 @@ final class CompanionManager: ObservableObject {
         if !isOverlayVisible {
             transientHideTask?.cancel()
             transientHideTask = nil
-            overlayWindowManager.hasShownOverlayBefore = true
-            overlayWindowManager.showOverlay(onScreens: NSScreen.screens, companionManager: self)
-            isOverlayVisible = true
+            showOverlayOnAllScreens()
         }
         streamCursorCaption(message, holdSeconds: 8)
         scheduleTransientHideIfNeeded()
     }
 
-    /// Gradually raises an AVPlayer's volume from its current level to the
-    /// target over the specified duration, creating a smooth audio fade-in.
+    /// The prompt for the pointing demo (onboarding and the tour's "watch this"): one specific thing
+    /// near the middle of the screen, a few words about it, and the [POINT:…] tag last.
     private static let onboardingDemoSystemPrompt = """
     you're openclicky, a small blue cursor buddy living on the user's screen. you're showing off during onboarding — look at their screen and find ONE specific, concrete thing to point at. pick something with a clear name or identity: a specific app icon (say its name), a specific word or phrase of text you can read, a specific filename, a specific button label, a specific tab title, a specific image you can describe. do NOT point at vague things like "a window" or "some text" — be specific about exactly what you see.
 
@@ -2412,52 +2404,97 @@ final class CompanionManager: ObservableObject {
 
     /// Captures a screenshot and asks Claude to find something interesting to
     /// point at, then triggers the buddy's flight animation. Used during
-    /// onboarding to demo the pointing feature while the intro video plays.
+    /// onboarding to demo the pointing feature after the welcome bubble.
     func performOnboardingDemoInteraction() {
         // Don't interrupt an active voice response
         guard voiceState == .idle || voiceState == .responding else { return }
 
         Task {
             do {
-                let screenCaptures = try await CompanionScreenCaptureUtility.captureAllScreensAsJPEG()
-
-                // Only send the cursor screen so Claude can't pick something
-                // on a different monitor that we can't point at.
-                guard let cursorScreenCapture = screenCaptures.first(where: { $0.isCursorScreen }) else {
-                    print("🎯 Onboarding demo: no cursor screen found")
-                    return
-                }
-
-                let dimensionInfo = " (image dimensions: \(cursorScreenCapture.screenshotWidthInPixels)x\(cursorScreenCapture.screenshotHeightInPixels) pixels)"
-                let labeledImages = [(data: cursorScreenCapture.imageData, label: cursorScreenCapture.label + dimensionInfo)]
-
-                let (fullResponseText, _, _) = try await claudeAPI.analyzeImageStreaming(
-                    images: labeledImages,
-                    systemPrompt: Self.onboardingDemoSystemPrompt,
-                    userPrompt: "look around my screen and find something interesting to point at",
-                    onTextChunk: { _ in }
-                )
-
-                let parseResult = Self.parsePointingCoordinates(from: fullResponseText)
-
-                guard let pointCoordinate = parseResult.coordinate else {
+                // The overlay asked for this demo, so it is already showing.
+                guard let parseResult = try await pointAtSomethingOnScreenForDemo(showingTheOverlayIfHidden: false) else {
                     print("🎯 Onboarding demo: no element to point at")
                     return
                 }
-
-                let displayFrame = cursorScreenCapture.displayFrame
-                let globalLocation = Self.screenLocation(forScreenshotPoint: pointCoordinate, in: cursorScreenCapture)
-
-                // Set custom bubble text so the pointing animation uses Claude's
-                // comment instead of a random phrase
-                detectedElementBubbleText = parseResult.spokenText
-                detectedElementScreenLocation = globalLocation
-                detectedElementDisplayFrame = displayFrame
-                detectedElementPointToken &+= 1
                 print("🎯 Onboarding demo: pointing at \"\(parseResult.elementLabel ?? "element")\" — \"\(parseResult.spokenText)\"")
             } catch {
                 print("⚠️ Onboarding demo error: \(error)")
             }
         }
+    }
+
+    /// The pointing demo shared by the onboarding and the tour's "watch this": a screenshot of the
+    /// cursor's screen only (Claude must not pick something on a display the buddy is not on),
+    /// Claude picks one specific thing and comments on it, and the buddy flies there with that
+    /// comment in its bubble instead of a random phrase. Returns what Claude said, or nil when
+    /// there was no cursor screen or nothing to point at.
+    private func pointAtSomethingOnScreenForDemo(showingTheOverlayIfHidden: Bool) async throws -> PointingParseResult? {
+        let screenCaptures = try await CompanionScreenCaptureUtility.captureAllScreensAsJPEG()
+        guard let cursorScreenCapture = screenCaptures.first(where: { $0.isCursorScreen }) else { return nil }
+        let (fullResponseText, _, _) = try await claudeAPI.analyzeImageStreaming(
+            images: [Self.imageLabeledWithItsPixelSize(cursorScreenCapture)],
+            systemPrompt: Self.onboardingDemoSystemPrompt,
+            userPrompt: "look around my screen and find something interesting to point at",
+            onTextChunk: { _ in }
+        )
+        let parseResult = Self.parsePointingCoordinates(from: fullResponseText)
+        guard let pointCoordinate = parseResult.coordinate else { return nil }
+        if showingTheOverlayIfHidden && !isOverlayVisible {
+            showOverlayOnAllScreens()
+        }
+        detectedElementBubbleText = parseResult.spokenText
+        detectedElementScreenLocation = Self.screenLocation(forScreenshotPoint: pointCoordinate, in: cursorScreenCapture)
+        detectedElementDisplayFrame = cursorScreenCapture.displayFrame
+        detectedElementPointToken &+= 1
+        return parseResult
+    }
+
+    /// A screenshot with its label and real pixel size ("… (image dimensions: 1280x800 pixels)"),
+    /// so the coordinates Claude answers with are in the image it saw; we scale from screenshot
+    /// pixels to display points ourselves.
+    static func imageLabeledWithItsPixelSize(_ capture: CompanionScreenCapture) -> (data: Data, label: String) {
+        let dimensionInfo = " (image dimensions: \(capture.screenshotWidthInPixels)x\(capture.screenshotHeightInPixels) pixels)"
+        return (data: capture.imageData, label: capture.label + dimensionInfo)
+    }
+
+    /// Remembers one exchange for the ask lane's next question, keeping only the last 10 so the
+    /// context does not grow without bound over a long session.
+    private func rememberExchange(userTranscript: String, assistantResponse: String) {
+        conversationHistory.append((userTranscript: userTranscript, assistantResponse: assistantResponse))
+        if conversationHistory.count > Self.maximumRememberedExchanges {
+            conversationHistory.removeFirst(conversationHistory.count - Self.maximumRememberedExchanges)
+        }
+    }
+
+    private static let maximumRememberedExchanges = 10
+}
+
+/// Tells the companion when the system-voice utterance it is watching has ended: spoken to the
+/// end, or stopped (the next notice, a new question, the stop button). Only the latest utterance
+/// counts, so the end of one cut off by the next is not mistaken for the new one's.
+private final class SystemSpeechFinishObserver: NSObject, AVSpeechSynthesizerDelegate {
+    private weak var watchedUtterance: AVSpeechUtterance?
+    private var onWatchedUtteranceEnded: (() -> Void)?
+
+    /// `utterance` is about to be spoken; `onEnded` runs once when it ends.
+    func watch(_ utterance: AVSpeechUtterance, onEnded: @escaping () -> Void) {
+        watchedUtterance = utterance
+        onWatchedUtteranceEnded = onEnded
+    }
+
+    func speechSynthesizer(_ synthesizer: AVSpeechSynthesizer, didFinish utterance: AVSpeechUtterance) {
+        DispatchQueue.main.async { self.utteranceEnded(utterance) }
+    }
+
+    func speechSynthesizer(_ synthesizer: AVSpeechSynthesizer, didCancel utterance: AVSpeechUtterance) {
+        DispatchQueue.main.async { self.utteranceEnded(utterance) }
+    }
+
+    private func utteranceEnded(_ utterance: AVSpeechUtterance) {
+        guard utterance === watchedUtterance else { return }
+        let onEnded = onWatchedUtteranceEnded
+        watchedUtterance = nil
+        onWatchedUtteranceEnded = nil
+        onEnded?()
     }
 }

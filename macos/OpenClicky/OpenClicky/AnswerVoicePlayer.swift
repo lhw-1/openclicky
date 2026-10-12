@@ -1,17 +1,19 @@
 //
-//  ElevenLabsTTSClient.swift
+//  AnswerVoicePlayer.swift
 //  OpenClicky
 //
-//  Streams text-to-speech audio from ElevenLabs and plays it back
-//  through the system audio output. Uses the streaming endpoint so
-//  playback begins before the full audio has been generated.
+//  Fetches the audio for one piece of a spoken answer and plays it. The voice is the one picked in
+//  Settings → Clicky → Voice (`SpeechVoiceChoice`): a key's voice straight from its vendor, Kokoro
+//  or this Mac through `CloudVoiceSpeaker`, and only the account's free voice from the OpenClicky
+//  backend's /tts (ElevenLabs). Each piece is fetched whole, not streamed; `SpeechQueue` overlaps
+//  fetching the next piece with playing the current one, which is what makes the voice start early.
 //
 
 import AVFoundation
 import Foundation
 
 @MainActor
-final class ElevenLabsTTSClient {
+final class AnswerVoicePlayer {
     /// The /tts URL, read for every request so a backend changed in shell.json while the app runs
     /// is used by the next answer (it was fixed when the client was built).
     private let currentProxyURL: () -> String
@@ -33,10 +35,6 @@ final class ElevenLabsTTSClient {
         URL(string: proxyURL) ?? URL(string: "\(OpenClickyConfiguration.hostedBackendURL)/tts")!
     }
 
-    convenience init(proxyURL: String) {
-        self.init(currentProxyURL: { proxyURL })
-    }
-
     init(currentProxyURL: @escaping () -> String) {
         self.currentProxyURL = currentProxyURL
 
@@ -44,17 +42,6 @@ final class ElevenLabsTTSClient {
         configuration.timeoutIntervalForRequest = 30
         configuration.timeoutIntervalForResource = 60
         self.session = URLSession(configuration: configuration)
-    }
-
-    /// Sends `text` to ElevenLabs TTS and plays the resulting audio.
-    /// Throws on network or decoding errors. Cancellation-safe.
-    func speakText(_ text: String) async throws {
-        let data = try await fetchAudio(for: text)
-        try Task.checkCancellation()
-        let player = try AVAudioPlayer(data: data)
-        self.audioPlayer = player
-        player.play()
-        print("🔊 ElevenLabs TTS: playing \(data.count / 1024)KB audio")
     }
 
     /// The audio for `text`, without playing it, in the voice `SpeechVoiceChoice.current()` names;
@@ -76,17 +63,8 @@ final class ElevenLabsTTSClient {
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.setValue("audio/mpeg", forHTTPHeaderField: "Accept")
         OpenClickyConfiguration.authorize(&request)
-
-        let body: [String: Any] = [
-            "text": text,
-            "model_id": "eleven_flash_v2_5",
-            "voice_settings": [
-                "stability": 0.5,
-                "similarity_boost": 0.75
-            ]
-        ]
-
-        request.httpBody = try JSONSerialization.data(withJSONObject: body)
+        // The backend relays this body to ElevenLabs as it is, the same body an own ElevenLabs key sends.
+        request.httpBody = try CloudVoiceRequests.elevenLabsSpeechBody(text: text)
 
         let (data, response) = try await BackendSignIn.send(request) { [session] in try await session.data(for: $0) }
         return try Self.audio(from: data, response: response)
@@ -100,9 +78,7 @@ final class ElevenLabsTTSClient {
         }
 
         guard (200...299).contains(httpResponse.statusCode) else {
-            let errorBody = String(data: data, encoding: .utf8) ?? "Unknown error"
-            throw NSError(domain: "ElevenLabsTTS", code: httpResponse.statusCode,
-                          userInfo: [NSLocalizedDescriptionKey: "TTS API error (\(httpResponse.statusCode)): \(errorBody)"])
+            throw BackendHTTPError(service: .voice, status: httpResponse.statusCode, body: data)
         }
         return data
     }
@@ -147,9 +123,9 @@ final class ElevenLabsTTSClient {
     }
 }
 
-/// Tells `playToCompletion` when an AVAudioPlayer has finished, exactly once (natural end, decode
-/// error, or a stop).
-private final class AudioPlayerFinishObserver: NSObject, AVAudioPlayerDelegate {
+/// Tells `playToCompletion` (and RecordedVoice) when an AVAudioPlayer has finished, exactly once
+/// (natural end, decode error, or a stop).
+final class AudioPlayerFinishObserver: NSObject, AVAudioPlayerDelegate {
     var onFinish: (() -> Void)?
 
     func finishOnce() {

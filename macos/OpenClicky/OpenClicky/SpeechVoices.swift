@@ -205,11 +205,17 @@ enum CloudVoiceRequests {
         request.setValue(key, forHTTPHeaderField: "xi-api-key")
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.setValue("audio/mpeg", forHTTPHeaderField: "Accept")
-        request.httpBody = try JSONSerialization.data(withJSONObject: [
+        request.httpBody = try elevenLabsSpeechBody(text: text)
+        return request
+    }
+
+    /// The ElevenLabs text-to-speech body, for an own key here and for the account's free voice
+    /// (the backend's /tts relays it to ElevenLabs), so both ask for the same model and settings.
+    static func elevenLabsSpeechBody(text: String) throws -> Data {
+        try JSONSerialization.data(withJSONObject: [
             "text": text, "model_id": elevenLabsModel,
             "voice_settings": ["stability": 0.5, "similarity_boost": 0.75],
         ])
-        return request
     }
 
     // MARK: Google Cloud Text-to-Speech
@@ -343,7 +349,7 @@ enum CloudVoiceError: Error, LocalizedError, Equatable {
 // MARK: - Speaking
 
 /// The audio for one piece of an answer in a voice that needs no account (the account's voice goes
-/// through the backend, in ElevenLabsTTSClient). Shared by the answers and the keys' Test buttons.
+/// through the backend, in AnswerVoicePlayer). Shared by the answers and the keys' Test buttons.
 enum CloudVoiceSpeaker {
     @MainActor
     static func audio(for text: String, voice: SpeechVoiceChoice, settings: OpenClickyShellSettings = OpenClickyConfiguration.settings,

@@ -4,7 +4,7 @@ import Testing
 
 struct ClaudeToolStreamTests {
     @Test func anthropicToolsMirrorTheRealtimeOnes() {
-        let tools = RealtimeVoiceClient.anthropicToolDefinitions()
+        let tools = MacAction.anthropicToolDefinitions()
         let names = tools.compactMap { $0["name"] as? String }
         #expect(names == ["open_app", "open_url", "create_folder", "reveal_in_finder", "set_volume", "media_control"])
         #expect(tools.allSatisfy { $0["input_schema"] is [String: Any] && $0["type"] == nil })

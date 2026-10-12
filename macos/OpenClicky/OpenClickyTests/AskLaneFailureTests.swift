@@ -12,7 +12,7 @@ struct AskLaneFailureTests {
         #expect(CompanionManager.isCancellation(NSError(domain: NSURLErrorDomain, code: NSURLErrorCancelled)))
         #expect(CompanionManager.isCancellation(CancellationError()))
         #expect(!CompanionManager.isCancellation(URLError(.timedOut)))
-        #expect(!CompanionManager.isCancellation(NSError(domain: "ClaudeAPI", code: 500)))
+        #expect(!CompanionManager.isCancellation(BackendHTTPError(service: .answers, status: 500, body: Data())))
     }
 
     // F-34: a screenshot that cannot be taken is not a backend or token problem.
@@ -28,10 +28,12 @@ struct AskLaneFailureTests {
     }
 
     @Test func theTokenSentenceIsKeptForARefusedToken() {
-        let forbidden = NSError(domain: "ClaudeAPI", code: 403)
-        #expect(CompanionManager.askFailureSentence(for: forbidden, screenRecordingAllowed: true).contains("token"))
-        let serverError = NSError(domain: "ClaudeAPI", code: 500)
-        #expect(!CompanionManager.askFailureSentence(for: serverError, screenRecordingAllowed: true).contains("token"))
+        let forbidden = BackendHTTPError(service: .answers, status: 403, body: Data())
+        #expect(CompanionManager.askFailureSentence(for: forbidden, screenRecordingAllowed: true)
+                == "something went wrong talking to the openclicky backend. check the backend and your token in the settings file.")
+        let serverError = BackendHTTPError(service: .answers, status: 500, body: Data())
+        #expect(CompanionManager.askFailureSentence(for: serverError, screenRecordingAllowed: true)
+                == "something went wrong getting your answer. please ask again.")
         #expect(CompanionManager.askFailureSentence(for: URLError(.notConnectedToInternet), screenRecordingAllowed: true).contains("internet"))
     }
 

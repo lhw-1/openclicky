@@ -6,7 +6,8 @@
 //  missed). The Realtime model's own pixel guess is hundreds of pixels off for icons, but Claude
 //  locates an element on the same 1280 px screenshot to within a few pixels (measured ≤ 8 px on
 //  a "+" header button and a small "New" button, 2–4 s with Haiku 4.5), so the description the
-//  Realtime model gave is handed to Claude through the backend's /chat proxy.
+//  Realtime model gave is handed to Claude (an own Anthropic key, or the backend's /chat proxy) or,
+//  when another answer source is picked, to that source's AnswerProvider. The plans are skipped.
 //
 
 import CoreGraphics
@@ -25,20 +26,47 @@ nonisolated enum ScreenElementGrounder {
         let visibleText: String?
     }
 
-    /// Asks Claude where `label`/`text` is on `capture`'s screenshot. Nil when the backend is not
-    /// configured, the request fails, or Claude answers [POINT:none].
+    /// Asks Claude where `label`/`text` is on `capture`'s screenshot. Nil when nothing can answer
+    /// (or only a plan), the request fails, or Claude answers [POINT:none]; app.log says when it
+    /// could not ask.
     static func locate(label: String, text: String, userRequest: String?, in capture: CompanionScreenCapture) async -> Located? {
-        // Own Anthropic key: Claude at Anthropic directly; else the backend's /chat on the account (ClaudeAPI routes it).
-        guard await ProviderRouter.current(for: .claude).unavailableSentence == nil else { return nil }
+        // Own Anthropic key: Claude at Anthropic directly; another answer key: its own provider;
+        // else the backend's /chat on the account (ClaudeAPI routes it).
+        if let reason = reasonGroundingCannotRun(on: await ProviderRouter.current(for: .claude)) {
+            AppLog.append("point_at: no grounding (\(reason))")
+            return nil
+        }
         let imageSize = CGSize(width: capture.screenshotWidthInPixels, height: capture.screenshotHeightInPixels)
         let api = await ClaudeAPI(proxyURL: "\(OpenClickyConfiguration.backendBaseURL)/chat", model: model)
-        let reply = try? await api.analyzeImage(
-            images: [(data: capture.imageData, label: "Screenshot of the user's screen, \(Int(imageSize.width))×\(Int(imageSize.height)) px, origin top-left.")],
-            systemPrompt: "You locate UI elements in screenshots and answer only with a [POINT:x,y:visible text] tag in the screenshot's pixel coordinates.",
-            userPrompt: prompt(label: label, text: text, userRequest: userRequest, imageSize: imageSize)
-        )
-        guard let reply, let point = parsePoint(from: reply.text, imageSize: imageSize) else { return nil }
+        let reply: (text: String, duration: TimeInterval)
+        do {
+            reply = try await api.analyzeImage(
+                images: [(data: capture.imageData, label: "Screenshot of the user's screen, \(Int(imageSize.width))×\(Int(imageSize.height)) px, origin top-left.")],
+                systemPrompt: "You locate UI elements in screenshots and answer only with a [POINT:x,y:visible text] tag in the screenshot's pixel coordinates.",
+                userPrompt: prompt(label: label, text: text, userRequest: userRequest, imageSize: imageSize)
+            )
+        } catch {
+            // Only the domain and code: a refusal's body could quote the request.
+            let nsError = error as NSError
+            AppLog.append("point_at: grounding failed (\(nsError.domain) \(nsError.code))")
+            return nil
+        }
+        guard let point = parsePoint(from: reply.text, imageSize: imageSize) else { return nil }
         return Located(point: point, visibleText: parseVisibleText(from: reply.text))
+    }
+
+    /// Why grounding is skipped on `route`; nil when it can run. The plans answer through a CLI
+    /// that takes several seconds to start, while the pointer is waiting mid-sentence, so they
+    /// are skipped; the model's own guess (or OCR) stands instead.
+    static func reasonGroundingCannotRun(on route: ProviderRoute) -> String? {
+        switch route {
+        case .unavailable:
+            return "nothing is set up to answer"
+        case .answerProvider(let source) where source == .claudeCodePlan || source == .codexPlan:
+            return "\(source.displayName) is too slow to locate an element mid-sentence"
+        case .anthropicDirect, .backend, .openAIDirect, .answerProvider:
+            return nil
+        }
     }
 
     static func prompt(label: String, text: String, userRequest: String?, imageSize: CGSize) -> String {

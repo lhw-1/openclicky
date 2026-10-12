@@ -131,4 +131,56 @@ struct SpeechQueueTests {
         #expect(voiceStarts == 0)
         #expect(pointTags.isEmpty)
     }
+
+    // The agent's result arrives whole. It used to go out as one /tts request (which the backend
+    // cuts at 400 characters) and nothing could stop it; now it is cut into pieces like an answer.
+    @Test func aWholeAgentReplyIsSpokenInPiecesInOrder() async throws {
+        let firstSentence = "done, i made the folder on your desktop and put the three reports in it."
+        let laterSentences = Array(repeating: "each report is named after the month it covers so they sort in order.", count: 4)
+        let wholeReply = ([firstSentence] + laterSentences).joined(separator: " ") + " i saved 3 files."
+        var fetchedPieces: [String] = []
+        var playedPieces: [String] = []
+        var voiceStarts = 0
+        let speaker = StreamingAnswerSpeaker(
+            speechQueue: SpeechQueue(
+                fetchAudio: { pieceText in fetchedPieces.append(pieceText); return Data(pieceText.utf8) },
+                playAudio: { playedPieces.append(String(decoding: $0, as: UTF8.self)) }),
+            onVoiceStarts: { voiceStarts += 1 },
+            onPointTag: { _ in Issue.record("an agent reply has no point tag") })
+        let playback = Task { try await speaker.play() }
+        speaker.receiveWholeReply(wholeReply)
+        try await playback.value
+        #expect(playedPieces.count > 1)
+        #expect(playedPieces.first == firstSentence)
+        #expect(playedPieces == fetchedPieces)
+        #expect(playedPieces.joined(separator: " ") == wholeReply)
+        #expect(voiceStarts == 1)
+    }
+
+    @Test func aWholeReplyWhoseVoiceFailsHandsBackWhatWasNotSaid() async {
+        let firstPiece = "the first part was said out loud."
+        let wholeReply = firstPiece + " " + String(repeating: "the rest could not be fetched at all. ", count: 5)
+        var playedPieces: [String] = []
+        let speaker = StreamingAnswerSpeaker(
+            speechQueue: SpeechQueue(
+                fetchAudio: { pieceText in
+                    if pieceText != firstPiece { throw FetchFailed() }
+                    return Data(pieceText.utf8)
+                },
+                playAudio: { playedPieces.append(String(decoding: $0, as: UTF8.self)) }),
+            onVoiceStarts: {},
+            onPointTag: { _ in })
+        let playback = Task { try await speaker.play() }
+        speaker.receiveWholeReply(wholeReply)
+        do {
+            try await playback.value
+            Issue.record("expected the failure to surface")
+        } catch let failure as SpeechQueue.Failure {
+            #expect(playedPieces == [firstPiece])
+            let everythingSaidOrHandedBack = (playedPieces + failure.unspokenText).joined(separator: " ")
+            #expect(everythingSaidOrHandedBack == wholeReply.trimmingCharacters(in: .whitespaces))
+        } catch {
+            Issue.record("unexpected error \(error)")
+        }
+    }
 }

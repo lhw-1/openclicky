@@ -48,25 +48,41 @@ final class RecordedVoice {
     }
 
     private var player: AVAudioPlayer?
+    /// Tells whoever played the current line that it ended. Held here because the player's
+    /// delegate is weak.
+    private var finishObserver: AudioPlayerFinishObserver?
 
     var isPlaying: Bool { player?.isPlaying ?? false }
 
     /// Plays `line`, cutting off whatever recording was playing. False when it is not bundled.
+    /// `onFinished` runs once when the line ends: played to the end, cut off by the next line, or
+    /// stopped (the companion uses it to go back to idle after a spoken notice).
     @discardableResult
-    func play(_ line: Line) -> Bool {
+    func play(_ line: Line, onFinished: (() -> Void)? = nil) -> Bool {
         guard let url = Bundle.main.url(forResource: line.rawValue, withExtension: "mp3"),
               let newPlayer = try? AVAudioPlayer(contentsOf: url) else {
             AppLog.append("recorded voice: \(line.rawValue).mp3 is not in the bundle")
             return false
         }
-        player?.stop()
+        stopCurrentLine()
         newPlayer.volume = 0.85
+        let newFinishObserver = AudioPlayerFinishObserver()
+        newFinishObserver.onFinish = onFinished
+        newPlayer.delegate = newFinishObserver
+        finishObserver = newFinishObserver
         player = newPlayer
-        newPlayer.play()
+        if !newPlayer.play() { newFinishObserver.finishOnce() }
         return true
     }
 
     func stop() {
+        stopCurrentLine()
+    }
+
+    /// A stopped AVAudioPlayer never calls its delegate, so the end is reported here.
+    private func stopCurrentLine() {
         player?.stop()
+        finishObserver?.finishOnce()
+        finishObserver = nil
     }
 }

@@ -100,7 +100,7 @@ private func sampleRequest(history: [AnswerRequest.Turn] = []) -> AnswerRequest 
 private func sampleRequestOfferingQuickActions() -> AnswerRequest {
     var request = sampleRequest()
     request.userPrompt = "make a folder called test-plan-actions on my desktop"
-    request.tools = RealtimeVoiceClient.anthropicToolDefinitions().compactMap(ClaudeAPI.answerTool(fromAnthropicTool:))
+    request.tools = MacAction.anthropicToolDefinitions().compactMap(ClaudeAPI.answerTool(fromAnthropicTool:))
     return request
 }
 
