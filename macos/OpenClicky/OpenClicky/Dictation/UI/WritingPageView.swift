@@ -247,6 +247,8 @@ struct WritingPageView: View {
     private var cleanUpRow: some View {
         let hasModel = DictationEngineResolver.makePolisher() != nil
         let needsModelNote = hasModel ? "" : " Needs an AI key (Settings → Account) or a free OpenClicky account."
+        let tidiedOnThisMac = AppleModelTakePolisherAvailability.isAvailable(languageCode: settings.languageCode)
+        let whereWordsAreTidied = tidiedOnThisMac ? "Apple Intelligence tidies your words on this Mac" : "Your words are sent online to be tidied"
         let cleanUpIsOn = Binding<Bool>(
             get: { Self.cleanUpSwitchShowsOn(settings: settings) },
             set: { isOn in
@@ -255,7 +257,7 @@ struct WritingPageView: View {
             })
         return SettingsRow(
             title: "Clean up my words with AI",
-            detail: "Adds punctuation and fixes numbers. Your words are sent online to be tidied, so they appear when you let go. Off: words type straight in as you speak." + needsModelNote) {
+            detail: "Adds punctuation and fixes numbers. " + whereWordsAreTidied + ", so they appear when you let go. Off: words type straight in as you speak." + needsModelNote) {
             SettingsSwitch(isOn: cleanUpIsOn).pointerCursor()
         }
     }

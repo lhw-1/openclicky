@@ -58,10 +58,17 @@ enum DictationEngineResolver {
         }
     }
 
-    /// The model that polishes takes and answers Hey Clicky: Sarvam with a key, else the person's
+    /// The model that polishes takes and answers Hey Clicky: Apple's on-device model where the Mac
+    /// has it, else Sarvam with a key, else the person's
     /// own OpenAI, Anthropic, Groq, Gemini, Mistral, OpenRouter or xAI key, else the backend with
     /// an account, else none.
     static func makePolisher() -> (any TakePolisher)? {
+        // Apple's on-device model first: free, private and already on the Mac where it exists.
+        #if canImport(FoundationModels)
+        if #available(macOS 26, *), AppleModelTakePolisherAvailability.isAvailable(languageCode: UserDefaults.standard.string(forKey: "dictation.language")) {
+            return AppleModelTakePolisher()
+        }
+        #endif
         let sarvamKey = OpenClickyConfiguration.settings.sarvamKey?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         if !sarvamKey.isEmpty { return SarvamTakePolisher(client: SarvamSpeechClient(key: sarvamKey)) }
         // Own keys first: an OpenAI key polishes on OpenAI (BackendTakePolisher routes it there),
