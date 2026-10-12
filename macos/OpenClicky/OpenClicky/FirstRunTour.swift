@@ -490,8 +490,8 @@ final class FirstRunTourController: ObservableObject {
         defaults.removeObject(forKey: Self.stepKey)
         companionManager?.dictationSettings.hasCompletedDictationOnboarding = true
         publish()
-        // Setup is done: Kokoro can download in the background now.
-        KokoroVoice.shared.startAutomaticSetup(tourIsFinished: true)
+        // Setup is done: the models can download in the background now.
+        companionManager?.startAutomaticModelDownloads(tourIsFinished: true)
     }
 
     // MARK: The card's buttons

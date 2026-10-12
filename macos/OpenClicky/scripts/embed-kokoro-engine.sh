@@ -4,7 +4,7 @@
 #
 # Run by the OpenClicky target's "Embed Kokoro engine" build phase. The release archive is fetched
 # once into ThirdParty/ (git-ignored) and checked against a pinned SHA-256; the version must match
-# OpenClicky/Kokoro/sherpa-onnx-c-api.h. release.sh re-signs the two libraries with Developer ID.
+# OpenClicky/Sherpa/sherpa-onnx-c-api.h. release.sh re-signs the two libraries with Developer ID.
 set -euo pipefail
 
 VERSION="1.13.8"

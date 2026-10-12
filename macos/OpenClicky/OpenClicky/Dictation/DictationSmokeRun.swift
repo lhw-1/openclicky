@@ -23,6 +23,20 @@ enum DictationSmokeRun {
             // The environment's key is for this run only; nothing is written to shell.json.
             provider = SarvamTranscriptionProvider(key: { key }, language: { settings.language })
         } else {
+            if engine == .parakeet, !ParakeetDictation.isInstalled {
+                // The smoke downloads the model first, as choosing it in Settings does.
+                let parakeet = ParakeetDictation.shared
+                parakeet.download()
+                var lastTenth = -1
+                while parakeet.state != .installed {
+                    if case .failed(let message) = parakeet.state { print("smoke: parakeet download failed: \(message)"); return 1 }
+                    if case .downloading(let fraction) = parakeet.state, Int(fraction * 10) != lastTenth {
+                        lastTenth = Int(fraction * 10)
+                        print("smoke: parakeet downloading \(lastTenth * 10)%")
+                    }
+                    try? await Task.sleep(nanoseconds: 250_000_000)
+                }
+            }
             if let reason = DictationEngineResolver.unavailableReason(for: engine) {
                 print("smoke: \(engine.rawValue) unavailable: \(reason)")
                 return 2

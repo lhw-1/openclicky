@@ -2,7 +2,7 @@
 //  KokoroEngine.swift
 //  OpenClicky
 //
-//  Runs Kokoro through sherpa-onnx's C API, loaded with dlopen from the app's Frameworks folder.
+//  Runs Kokoro through sherpa-onnx's C API (SherpaLibrary).
 //  Only ever used inside the Kokoro helper process (KokoroHelper.swift): freeing the model in the
 //  app gave back almost none of its memory (sherpa-onnx keeps ~300 MB allocated), while ending the
 //  helper gives back all of it.
@@ -10,7 +10,7 @@
 
 import Foundation
 
-final class KokoroEngine {
+nonisolated final class KokoroEngine {
     struct Request: Codable, Sendable {
         let text: String
         let speakerID: Int
@@ -59,20 +59,12 @@ final class KokoroEngine {
 
     private func loadLibrary(from folder: URL) throws -> Library {
         if let library { return library }
-        let path = folder.appendingPathComponent("libsherpa-onnx-c-api.dylib").path
-        // libonnxruntime.dylib sits beside it and is found through its @loader_path rpath.
-        guard let handle = dlopen(path, RTLD_NOW | RTLD_LOCAL) else {
-            throw KokoroError.libraryNotLoaded(String(cString: dlerror()))
-        }
-        func symbol<T>(_ name: String, as type: T.Type) throws -> T {
-            guard let pointer = dlsym(handle, name) else { throw KokoroError.libraryNotLoaded("\(name) is missing") }
-            return unsafeBitCast(pointer, to: type)
-        }
+        let sherpa = try SherpaLibrary.open(in: folder)
         let loaded = Library(
-            create: try symbol("SherpaOnnxCreateOfflineTts", as: CreateFunction.self),
-            destroy: try symbol("SherpaOnnxDestroyOfflineTts", as: DestroyFunction.self),
-            generate: try symbol("SherpaOnnxOfflineTtsGenerate", as: GenerateFunction.self),
-            destroyAudio: try symbol("SherpaOnnxDestroyOfflineTtsGeneratedAudio", as: DestroyAudioFunction.self))
+            create: try sherpa.symbol("SherpaOnnxCreateOfflineTts", as: CreateFunction.self),
+            destroy: try sherpa.symbol("SherpaOnnxDestroyOfflineTts", as: DestroyFunction.self),
+            generate: try sherpa.symbol("SherpaOnnxOfflineTtsGenerate", as: GenerateFunction.self),
+            destroyAudio: try sherpa.symbol("SherpaOnnxDestroyOfflineTtsGeneratedAudio", as: DestroyAudioFunction.self))
         library = loaded
         return loaded
     }

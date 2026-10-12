@@ -134,6 +134,7 @@ struct WordsPageView: View {
     private var engineTitle: String {
         switch settings.engine {
         case .offline: return "On this Mac"
+        case .parakeet: return "Parakeet, on this Mac"
         case .sarvam: return "Sarvam hears you"
         case .openclicky: return "OpenAI, via OpenClicky"
         case .assemblyai: return "AssemblyAI, via OpenClicky"
@@ -151,7 +152,7 @@ struct WordsPageView: View {
     static func engineSentenceInSentenceCase(settings: DictationSettings, hasPolisher: Bool) -> String {
         let history = settings.incognito ? "Incognito: nothing is saved." : "Your history stays on this Mac."
         switch settings.engine {
-        case .offline:
+        case .offline, .parakeet:
             if DictationEngineResolver.wantsModelPolish(settings: settings) && hasPolisher {
                 return "Your voice stays on this Mac; the words go to a model for polish. " + history
             }

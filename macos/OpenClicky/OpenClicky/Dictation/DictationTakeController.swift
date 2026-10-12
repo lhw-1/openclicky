@@ -24,6 +24,8 @@ enum DictationEngineResolver {
         switch choice {
         case .offline:
             return AppleSpeechTranscriptionProvider(preferredLocale: settings.language.bareCode == nil ? nil : Locale(identifier: settings.language.code))
+        case .parakeet:
+            return ParakeetTranscriptionProvider()
         case .sarvam:
             return SarvamTranscriptionProvider(language: { settings.language })
         case .openclicky:
@@ -43,10 +45,15 @@ enum DictationEngineResolver {
     /// The backend engines hear through OpenAI (/agent/transcribe, or OpenAI itself on an own key) and
     /// AssemblyAI (/transcribe-token, minted on OpenClicky's key: account only), neither of which a
     /// free account's grant covers.
-    static func unavailableReason(for choice: DictationEngineChoice, kind: AccountKind, isConfigured: Bool, signedIn: Bool, sarvamKey: String?) -> String? {
+    static func unavailableReason(for choice: DictationEngineChoice, kind: AccountKind, isConfigured: Bool, signedIn: Bool, sarvamKey: String?,
+                                  parakeetInstalled: Bool = ParakeetDictation.isInstalled,
+                                  bareLanguageCode: String? = UserDefaults.standard.string(forKey: "dictation.language").flatMap { DictationLanguage.named($0).bareCode }) -> String? {
         switch choice {
         case .offline:
             return nil
+        case .parakeet:
+            if !ParakeetDictation.hears(bareLanguageCode: bareLanguageCode) { return "parakeet doesn't hear this language; pick auto-detect or a european language" }
+            return parakeetInstalled ? nil : "needs its \(ParakeetDictation.downloadSizeText) download"
         case .sarvam:
             let key = sarvamKey?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
             return key.isEmpty ? "needs your sarvam key" : nil
@@ -99,7 +106,7 @@ enum DictationEngineResolver {
     @MainActor
     static func wantsModelPolish(settings: DictationSettings, engine: DictationEngineChoice) -> Bool {
         guard settings.polishWithModel else { return false }
-        if engine == .offline { return settings.polishOfflineTakes }
+        if engine == .offline || engine == .parakeet { return settings.polishOfflineTakes }
         return true
     }
 }

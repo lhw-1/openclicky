@@ -16,6 +16,8 @@ import Foundation
 enum DictationEngineChoice: String, CaseIterable, Identifiable {
     /// Apple's on-device recogniser. Nothing leaves the Mac.
     case offline
+    /// NVIDIA's Parakeet through sherpa-onnx, downloaded once. Nothing leaves the Mac.
+    case parakeet
     /// Sarvam's Saaras, with the user's own key (`sarvamKey` in shell.json).
     case sarvam
     /// The OpenClicky backend (an account or the user's own OpenAI key).
@@ -28,6 +30,7 @@ enum DictationEngineChoice: String, CaseIterable, Identifiable {
     var displayName: String {
         switch self {
         case .offline: return "on this Mac"
+        case .parakeet: return "Parakeet"
         case .sarvam: return "Sarvam"
         case .openclicky: return "OpenClicky"
         case .assemblyai: return "AssemblyAI"
@@ -37,7 +40,7 @@ enum DictationEngineChoice: String, CaseIterable, Identifiable {
     /// The word in the notch HUD's pill: where the dictated words come from.
     var sourceBadge: String {
         switch self {
-        case .offline: return "local"
+        case .offline, .parakeet: return "local"
         case .sarvam: return "Sarvam"
         case .openclicky: return "OpenAI"
         case .assemblyai: return "AssemblyAI"
@@ -47,6 +50,7 @@ enum DictationEngineChoice: String, CaseIterable, Identifiable {
     var detail: String {
         switch self {
         case .offline: return "apple's recogniser, offline. your voice never leaves this mac."
+        case .parakeet: return "parakeet, offline. your voice never leaves this mac."
         case .sarvam: return "saaras hears eleven indian languages. audio goes to sarvam with your key."
         case .openclicky: return "transcribed by the openclicky backend with your account or your openai key."
         case .assemblyai: return "streaming transcription through the openclicky backend."

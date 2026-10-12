@@ -52,6 +52,7 @@ enum VoiceProviderCopy {
     static func title(for choice: DictationEngineChoice) -> String {
         switch choice {
         case .offline: return "This Mac"
+        case .parakeet: return "Parakeet, on this Mac"
         case .sarvam: return "Sarvam"
         case .openclicky: return "OpenAI, via OpenClicky"
         case .assemblyai: return "AssemblyAI, via OpenClicky"
@@ -60,7 +61,7 @@ enum VoiceProviderCopy {
 
     static func tag(for choice: DictationEngineChoice) -> String {
         switch choice {
-        case .offline: return "Private · offline"
+        case .offline, .parakeet: return "Private · offline"
         case .sarvam: return "Audio goes to Sarvam"
         case .openclicky: return "Audio goes to OpenAI"
         case .assemblyai: return "Audio goes to AssemblyAI"
@@ -70,6 +71,9 @@ enum VoiceProviderCopy {
     static func detail(for choice: DictationEngineChoice) -> String {
         switch choice {
         case .offline: return "Apple’s on-device recogniser. Nothing leaves this Mac. No key, no account."
+        case .parakeet: return ParakeetDictation.isRecommendedForThisMac
+            ? "Far more accurate than Apple’s recogniser on this Mac, and offline too. English and 24 European languages. A \(ParakeetDictation.downloadSizeText) download."
+            : "NVIDIA’s open model, offline. English and 24 European languages. A \(ParakeetDictation.downloadSizeText) download."
         case .sarvam: return "Saaras hears eleven Indian languages. Billed by Sarvam to your key."
         case .openclicky: return "Needs an OpenClicky account or your own OpenAI key."
         case .assemblyai: return "Words appear as you speak. Needs the OpenClicky backend."
@@ -80,6 +84,7 @@ enum VoiceProviderCopy {
     static func unavailableBadge(for choice: DictationEngineChoice) -> String {
         switch choice {
         case .offline: return ""
+        case .parakeet: return "Not downloaded"
         case .sarvam: return "Needs a key"
         case .openclicky: return "Needs account"
         case .assemblyai: return "Needs backend"
@@ -90,6 +95,7 @@ enum VoiceProviderCopy {
         let common = ["engine", "provider", "transcription", "speech", "who hears you", tag(for: choice)]
         switch choice {
         case .offline: return common + ["offline", "local", "apple", "private", "on device"]
+        case .parakeet: return common + ["offline", "local", "parakeet", "nvidia", "private", "on device", "download", "model"]
         case .sarvam: return common + ["sarvam", "saaras", "key", "api key", "indian", "hindi"]
         case .openclicky: return common + ["openai", "openclicky", "account", "backend", "cloud"]
         case .assemblyai: return common + ["assemblyai", "streaming", "backend", "cloud"]
@@ -107,6 +113,7 @@ private struct VoiceProviderOption: View {
     let companionManager: CompanionManager
     @ObservedObject private var shellSettingsRevision = ShellSettingsRevision.shared
     @Environment(\.settingsSearchQuery) private var searchQuery
+    @ObservedObject private var parakeet = ParakeetDictation.shared
 
     private var isSelected: Bool { settings.engine == choice }
 
@@ -115,13 +122,16 @@ private struct VoiceProviderOption: View {
         let _ = shellSettingsRevision.revision
         let unavailableReason = DictationEngineResolver.unavailableReason(for: choice)
         VStack(alignment: .leading, spacing: 6) {
-            Button(action: { settings.engine = choice }) {
+            Button(action: {
+                settings.engine = choice
+                if choice == .parakeet { ParakeetDictation.shared.download() }
+            }) {
                 HStack(alignment: .top, spacing: 10) {
                     SettingsRadioDot(isSelected: isSelected).padding(.top, 1)
                     VStack(alignment: .leading, spacing: 2) {
                         HStack(spacing: 8) {
                             Text(settingsHighlighted(VoiceProviderCopy.title(for: choice), query: searchQuery)).font(SettingsLook.rowTitle)
-                            SettingsTag(text: VoiceProviderCopy.tag(for: choice), isPositive: choice == .offline)
+                            SettingsTag(text: VoiceProviderCopy.tag(for: choice), isPositive: choice == .offline || choice == .parakeet)
                         }
                         Text(settingsHighlighted(VoiceProviderCopy.detail(for: choice), query: searchQuery))
                             .font(SettingsLook.caption).foregroundStyle(.secondary)
@@ -141,7 +151,9 @@ private struct VoiceProviderOption: View {
             .accessibilityHint(unavailableReason ?? VoiceProviderCopy.detail(for: choice))
             .accessibilityAddTraits(isSelected ? .isSelected : [])
 
-            if isSelected, let unavailableReason {
+            if choice == .parakeet, isSelected || parakeet.state.isBusy || parakeet.state == .installed {
+                ParakeetDownloadRow().padding(.leading, 24)
+            } else if isSelected, let unavailableReason {
                 HStack(spacing: 8) {
                     Text(unavailableReason).font(SettingsLook.caption).foregroundStyle(SettingsLook.danger)
                         .fixedSize(horizontal: false, vertical: true)
@@ -152,6 +164,38 @@ private struct VoiceProviderOption: View {
             }
         }
         .padding(.vertical, 2)
+    }
+}
+
+/// Parakeet's model under its option: download (progress, cancel, retry), or remove it.
+private struct ParakeetDownloadRow: View {
+    @ObservedObject private var parakeet = ParakeetDictation.shared
+
+    var body: some View {
+        HStack(spacing: 8) {
+            switch parakeet.state {
+            case .notInstalled:
+                caption("Not downloaded yet. Takes stay with Apple’s recogniser until it is.")
+                Button("Download \(ParakeetDictation.downloadSizeText)") { parakeet.download() }.controlSize(.small)
+            case .downloading(let fraction):
+                caption("Downloading, \(Int((fraction * 100).rounded()))%. Takes stay with Apple’s recogniser until it’s ready.")
+                ProgressView(value: fraction).frame(width: 100)
+                Button("Cancel") { parakeet.cancelDownload() }.controlSize(.small)
+            case .unpacking:
+                caption("Unpacking. Almost there.")
+                ProgressView().controlSize(.small)
+            case .failed(let message):
+                Text(message).font(SettingsLook.caption).foregroundStyle(SettingsLook.danger)
+                Button("Try Again") { parakeet.download() }.controlSize(.small)
+            case .installed:
+                caption("Downloaded. It loads while you speak, so takes start straight away.")
+                Button("Remove") { parakeet.remove() }.controlSize(.small)
+            }
+        }
+    }
+
+    private func caption(_ text: String) -> some View {
+        Text(text).font(SettingsLook.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
     }
 }
 

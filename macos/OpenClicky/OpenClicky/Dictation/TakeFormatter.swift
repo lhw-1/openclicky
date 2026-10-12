@@ -68,6 +68,8 @@ enum TakeFormatter {
 
         var text = collapsed
         if context.style.removeFillers { text = removeFillers(from: text) }
+        // English only: other languages say their numbers in their own words.
+        if context.language.bareCode == nil || context.language.bareCode == "en" { text = SpokenNumbers.digitize(text) }
         text = applyDictionary(to: text, terms: context.dictionary)
         if context.style.sentenceCase { text = sentenceCased(text) }
         return FormattedTake(text: text, expandedShortcut: nil, formattingDegraded: false)

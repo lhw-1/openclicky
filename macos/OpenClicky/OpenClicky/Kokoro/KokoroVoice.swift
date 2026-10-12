@@ -18,41 +18,20 @@
 //
 
 import Combine
-import CryptoKit
 import Foundation
-import Network
 
 @MainActor
 final class KokoroVoice: ObservableObject {
     static let shared = KokoroVoice()
 
-    enum State: Equatable {
-        case notInstalled
-        case downloading(fraction: Double)
-        case unpacking
-        case installed
-        case failed(String)
-
-        var isBusy: Bool {
-            switch self {
-            case .downloading, .unpacking: return true
-            default: return false
-            }
-        }
-    }
+    typealias State = ModelInstallState
 
     @Published private(set) var state: State
-
-    struct Download: Sendable {
-        let url: URL
-        let sha256: String
-        let bytes: Int64
-    }
 
     /// The embedded sherpa-onnx version (scripts/embed-kokoro-engine.sh); must match sherpa-onnx-c-api.h.
     nonisolated static let runtimeVersion = "1.13.8"
     /// Kokoro v1.0, multilingual, full precision.
-    nonisolated static let modelDownload = Download(
+    nonisolated static let modelDownload = ModelDownload(
         url: URL(string: "https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/kokoro-multi-lang-v1_0.tar.bz2")!,
         sha256: "c5f7e2d2caf082bc1d20fb70334a61d99d20b484500aad32e7cf84c128ea3298", bytes: 349_906_910)
     /// What Settings says before the download, rounded.
@@ -63,21 +42,19 @@ final class KokoroVoice: ObservableObject {
             .appendingPathComponent("OpenClicky/Kokoro", isDirectory: true)
     }
     /// The engine, inside the app.
-    nonisolated static var libraryFolder: URL { Bundle.main.privateFrameworksURL ?? Bundle.main.bundleURL.appendingPathComponent("Contents/Frameworks") }
+    nonisolated static var libraryFolder: URL { SherpaLibrary.folder }
     nonisolated static var modelFolder: URL { folder.appendingPathComponent("kokoro-multi-lang-v1_0", isDirectory: true) }
 
     nonisolated static var isInstalled: Bool {
         let fileManager = FileManager.default
-        return [libraryFolder.appendingPathComponent("libsherpa-onnx-c-api.dylib"),
-                libraryFolder.appendingPathComponent("libonnxruntime.dylib"),
-                modelFolder.appendingPathComponent("model.onnx"),
+        return SherpaLibrary.isEmbedded() && [modelFolder.appendingPathComponent("model.onnx"),
                 modelFolder.appendingPathComponent("voices.bin"),
                 modelFolder.appendingPathComponent("tokens.txt"),
                 modelFolder.appendingPathComponent("espeak-ng-data")].allSatisfy { fileManager.fileExists(atPath: $0.path) }
     }
 
     private var downloadTask: Task<Void, Never>?
-    private let engine = KokoroHelperClient()
+    private let engine = SherpaHelperClient(flag: KokoroHelper.flag, logName: "kokoro")
     /// How long the model stays in memory after the last answer it spoke.
     nonisolated static let idleUnloadSeconds: UInt64 = 180
     private var idleUnloadTask: Task<Void, Never>?
@@ -185,7 +162,8 @@ final class KokoroVoice: ObservableObject {
         let request = KokoroEngine.Request(text: text, speakerID: speaker.id, languageHint: Self.languageHint(for: languageCode),
                                            libraryFolder: Self.libraryFolder, modelFolder: Self.modelFolder)
         defer { scheduleIdleUnload() }
-        return try await engine.audio(for: request)
+        guard let wav = Data(base64Encoded: try await engine.send(request, as: KokoroHelper.Reply.self).wav) else { throw KokoroError.nothingGenerated }
+        return wav
     }
 
 
@@ -194,9 +172,6 @@ final class KokoroVoice: ObservableObject {
     /// Set when the person removed Kokoro or cancelled its download: it is never fetched again on
     /// its own (picking it in Settings clears this).
     nonisolated static let declinedKey = "openclicky.kokoro.declined"
-    /// Free space the automatic download asks for: the archive and the unpacked model side by side
-    /// (about 750 MB), with room to spare.
-    nonisolated static let automaticDownloadFreeSpace: Int64 = 2_000_000_000
 
     /// At launch and when the welcome tour ends: once setup is done, Kokoro downloads in the
     /// background, and when it is ready it becomes the voice (if the voice was left on Automatic),
@@ -207,10 +182,10 @@ final class KokoroVoice: ObservableObject {
         guard tourIsFinished, downloadTask == nil,
               !UserDefaults.standard.bool(forKey: Self.declinedKey),
               Self.speaker(forLanguage: ReplyLanguage.currentCode, picked: nil) != nil,
-              Self.freeSpace() >= Self.automaticDownloadFreeSpace else { return }
+              ModelDownload.freeSpace() >= ModelDownload.automaticDownloadFreeSpace else { return }
         Task {
             // Not on a phone hotspot or a metered connection: it tries again next launch.
-            if await Self.networkIsExpensiveOrConstrained() {
+            if await ModelDownload.networkIsExpensiveOrConstrained() {
                 AppLog.append("kokoro: automatic download waits for an unmetered network")
                 return
             }
@@ -236,23 +211,6 @@ final class KokoroVoice: ObservableObject {
         return SpeechVoiceChoice.kokoro.rawValue
     }
 
-    nonisolated private static func freeSpace() -> Int64 {
-        let home = FileManager.default.homeDirectoryForCurrentUser
-        let values = try? home.resourceValues(forKeys: [.volumeAvailableCapacityForImportantUsageKey])
-        return values?.volumeAvailableCapacityForImportantUsage ?? 0
-    }
-
-    nonisolated private static func networkIsExpensiveOrConstrained() async -> Bool {
-        await withCheckedContinuation { continuation in
-            let monitor = NWPathMonitor()
-            monitor.pathUpdateHandler = { path in
-                monitor.cancel()
-                continuation.resume(returning: path.status != .satisfied || path.isExpensive || path.isConstrained)
-            }
-            monitor.start(queue: DispatchQueue(label: "org.openclicky.kokoro.network"))
-        }
-    }
-
     // MARK: Download
 
     /// Downloads, checks and unpacks Kokoro; does nothing while a download runs or once installed.
@@ -266,25 +224,14 @@ final class KokoroVoice: ObservableObject {
         state = .downloading(fraction: 0)
         downloadTask = Task { [weak self] in
             do {
-                try FileManager.default.createDirectory(at: Self.folder, withIntermediateDirectories: true)
-                let downloads = [Self.modelDownload]
-                let totalBytes = Double(downloads.reduce(0) { $0 + $1.bytes })
-                var bytesBefore: Int64 = 0
-                var archives: [URL] = []
-                for download in downloads {
-                    let before = Double(bytesBefore)
-                    let archive = try await Self.fetch(download) { written in
-                        Task { @MainActor in self?.state = .downloading(fraction: min(1, (before + Double(written)) / totalBytes)) }
+                try await Self.modelDownload.install(into: Self.folder) { fraction in
+                    Task { @MainActor in
+                        // A late progress report must not undo the installed state.
+                        guard let self, self.state.isBusy else { return }
+                        self.state = fraction >= 1 ? .unpacking : .downloading(fraction: fraction)
                     }
-                    archives.append(archive)
-                    bytesBefore += download.bytes
                 }
-                self?.state = .unpacking
-                for archive in archives {
-                    try await Self.unpack(archive)
-                    try? FileManager.default.removeItem(at: archive)
-                }
-                guard Self.isInstalled else { throw KokoroError.unpackFailed("the files weren't where they should be") }
+                guard Self.isInstalled else { throw ModelDownloadError.unpackFailed("the files weren't where they should be") }
                 AppLog.append("kokoro: installed")
                 self?.state = .installed
                 if isAutomatic {
@@ -320,79 +267,20 @@ final class KokoroVoice: ObservableObject {
         try? FileManager.default.removeItem(at: Self.folder)
         state = .notInstalled
     }
-
-    /// One archive into the Kokoro folder, checked against its SHA-256 (a resumable download is
-    /// not worth it: a failed one is retried whole, and GitHub serves both quickly).
-    private static func fetch(_ download: Download, progress: @escaping @Sendable (Int64) -> Void) async throws -> URL {
-        let progressDelegate = DownloadProgressDelegate(progress: progress)
-        let (temporaryURL, response) = try await URLSession.shared.download(from: download.url, delegate: progressDelegate)
-        try Task.checkCancellation()
-        guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode) else {
-            throw KokoroError.downloadFailed("the server answered \((response as? HTTPURLResponse)?.statusCode ?? 0)")
-        }
-        let destination = folder.appendingPathComponent(download.url.lastPathComponent)
-        try? FileManager.default.removeItem(at: destination)
-        try FileManager.default.moveItem(at: temporaryURL, to: destination)
-        guard try sha256(of: destination) == download.sha256 else {
-            try? FileManager.default.removeItem(at: destination)
-            throw KokoroError.downloadFailed("the download didn't match its checksum")
-        }
-        return destination
-    }
-
-    nonisolated static func sha256(of fileURL: URL) throws -> String {
-        let handle = try FileHandle(forReadingFrom: fileURL)
-        defer { try? handle.close() }
-        var hasher = SHA256()
-        while let chunk = try handle.read(upToCount: 4 << 20), !chunk.isEmpty { hasher.update(data: chunk) }
-        return hasher.finalize().map { String(format: "%02x", $0) }.joined()
-    }
-
-    nonisolated private static func unpack(_ archive: URL) async throws {
-        try await Task.detached {
-            let tar = Process()
-            tar.executableURL = URL(fileURLWithPath: "/usr/bin/tar")
-            tar.arguments = ["-xjf", archive.path, "-C", folder.path]
-            try tar.run()
-            tar.waitUntilExit()
-            guard tar.terminationStatus == 0 else { throw KokoroError.unpackFailed("tar exited with \(tar.terminationStatus)") }
-        }.value
-    }
 }
 
 enum KokoroError: Error, LocalizedError, Equatable {
     case notInstalled
     case languageNotSpoken
-    case downloadFailed(String)
-    case unpackFailed(String)
-    case libraryNotLoaded(String)
     case modelNotLoaded
     case nothingGenerated
-    case helperFailed(String)
 
     var errorDescription: String? {
         switch self {
         case .notInstalled: return "Kokoro isn't downloaded yet."
         case .languageNotSpoken: return "Kokoro doesn't speak this language."
-        case let .downloadFailed(reason): return "Kokoro couldn't be downloaded: \(reason)."
-        case let .unpackFailed(reason): return "Kokoro couldn't be unpacked: \(reason)."
-        case let .libraryNotLoaded(reason): return "Kokoro's library didn't load: \(reason)"
         case .modelNotLoaded: return "Kokoro's model didn't load."
         case .nothingGenerated: return "Kokoro said nothing."
-        case let .helperFailed(reason): return "Kokoro's helper failed: \(reason)."
         }
     }
-}
-
-/// Reports bytes written for one download.
-private final class DownloadProgressDelegate: NSObject, URLSessionDownloadDelegate, @unchecked Sendable {
-    let progress: @Sendable (Int64) -> Void
-    init(progress: @escaping @Sendable (Int64) -> Void) { self.progress = progress }
-
-    func urlSession(_ session: URLSession, downloadTask: URLSessionDownloadTask, didWriteData bytesWritten: Int64,
-                    totalBytesWritten: Int64, totalBytesExpectedToWrite: Int64) {
-        progress(totalBytesWritten)
-    }
-
-    func urlSession(_ session: URLSession, downloadTask: URLSessionDownloadTask, didFinishDownloadingTo location: URL) {}
 }

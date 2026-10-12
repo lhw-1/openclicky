@@ -167,7 +167,7 @@ private struct VoiceDestinationPill: View {
 enum NotchVoiceDestination {
     static func pillLabel(for engine: DictationEngineChoice) -> String {
         switch engine {
-        case .offline: return "voice stays on this mac"
+        case .offline, .parakeet: return "voice stays on this mac"
         case .sarvam: return "sarvam hears you"
         case .openclicky: return "openai hears you"
         case .assemblyai: return "assemblyai hears you"
@@ -176,7 +176,7 @@ enum NotchVoiceDestination {
 
     static func shortPillLabel(for engine: DictationEngineChoice) -> String {
         switch engine {
-        case .offline: return "on this mac"
+        case .offline, .parakeet: return "on this mac"
         case .sarvam: return "sarvam"
         case .openclicky: return "openai"
         case .assemblyai: return "assemblyai"
@@ -186,7 +186,7 @@ enum NotchVoiceDestination {
     /// Who hears the voice, for the Settings summary ("hears you: this mac").
     static func listenerName(for engine: DictationEngineChoice) -> String {
         switch engine {
-        case .offline: return "this mac"
+        case .offline, .parakeet: return "this mac"
         case .sarvam: return "sarvam"
         case .openclicky: return "openai"
         case .assemblyai: return "assemblyai"
@@ -197,6 +197,7 @@ enum NotchVoiceDestination {
     static func speechToTextName(for engine: DictationEngineChoice) -> String {
         switch engine {
         case .offline: return "apple"
+        case .parakeet: return "parakeet"
         case .sarvam: return "saaras v4"
         case .openclicky: return "openai, via openclicky"
         case .assemblyai: return "assemblyai streaming"
@@ -206,7 +207,11 @@ enum NotchVoiceDestination {
     /// Nil when the engine can run; otherwise the pill's orange call to action.
     static func blockedPillLabel(for engine: DictationEngineChoice) -> String? {
         guard DictationEngineResolver.unavailableReason(for: engine) != nil else { return nil }
-        return engine == .sarvam ? "add sarvam key ›" : "set up backend ›"
+        switch engine {
+        case .sarvam: return "add sarvam key ›"
+        case .parakeet: return "download parakeet ›"
+        default: return "set up backend ›"
+        }
     }
 
     /// Where the pill (and the Home warning card) sends the user: Settings → Account when the
@@ -214,7 +219,8 @@ enum NotchVoiceDestination {
     @MainActor
     static func openSetup(for engine: DictationEngineChoice, companionManager: CompanionManager) {
         let isMissingSomething = DictationEngineResolver.unavailableReason(for: engine) != nil
-        companionManager.showSettings(isMissingSomething ? .account : .dictation)
+        // Parakeet's download lives on the Dictation page, next to the engine.
+        companionManager.showSettings(isMissingSomething && engine != .parakeet ? .account : .dictation)
     }
 }
 

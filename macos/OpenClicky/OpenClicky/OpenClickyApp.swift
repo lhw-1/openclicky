@@ -12,13 +12,14 @@ import ServiceManagement
 import SwiftUI
 import Sparkle
 
-/// The entry point. The Kokoro helper (the same binary, started by the app with a flag) branches
+/// The entry point. The Kokoro and Parakeet helpers (the same binary, started by the app with a flag) branch
 /// off here, before SwiftUI creates the app delegate and with it the island, the menu bar item and
 /// the shortcut tap.
 @main
 enum OpenClickyMain {
     static func main() {
         if CommandLine.arguments.contains(KokoroHelper.flag) { KokoroHelper.run() }
+        if CommandLine.arguments.contains(ParakeetHelper.flag) { ParakeetHelper.run() }
         OpenClickyApp.main()
     }
 }
