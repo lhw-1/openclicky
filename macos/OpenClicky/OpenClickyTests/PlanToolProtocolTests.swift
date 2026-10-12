@@ -10,7 +10,7 @@ import Foundation
 import Testing
 @testable import OpenClicky
 
-private let quickActionTools = RealtimeVoiceClient.anthropicToolDefinitions().compactMap(ClaudeAPI.answerTool(fromAnthropicTool:))
+private let quickActionTools = MacAction.anthropicToolDefinitions().compactMap(ClaudeAPI.answerTool(fromAnthropicTool:))
 private let quickActionToolNames = Set(quickActionTools.map(\.name))
 
 private func parse(_ answerText: String) -> (text: String, toolCalls: [ClaudeToolCall]) {

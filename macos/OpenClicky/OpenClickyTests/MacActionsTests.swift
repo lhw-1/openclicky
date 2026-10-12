@@ -276,12 +276,12 @@ struct MacActionParsingTests {
 struct FastActionToolDefinitionTests {
 
     @Test func everyFastActionIsOfferedToTheModel() {
-        let names = RealtimeVoiceClient.fastActionToolDefinitions().compactMap { $0["name"] as? String }
+        let names = MacAction.realtimeToolDefinitions().compactMap { $0["name"] as? String }
         #expect(names == ["open_app", "open_url", "create_folder", "reveal_in_finder", "set_volume", "media_control"])
     }
 
     @Test func createFolderDeclaresTheClosedLocationSet() throws {
-        let definition = try #require(RealtimeVoiceClient.fastActionToolDefinitions().first { $0["name"] as? String == "create_folder" })
+        let definition = try #require(MacAction.realtimeToolDefinitions().first { $0["name"] as? String == "create_folder" })
         let parameters = try #require(definition["parameters"] as? [String: Any])
         let properties = try #require(parameters["properties"] as? [String: Any])
         let location = try #require(properties["location"] as? [String: Any])
@@ -303,7 +303,7 @@ struct FastActionToolDefinitionTests {
     /// definition is caught here rather than needing a matching edit here), builds arguments from
     /// them, and asserts `parse` turns those exact values into the matching typed action.
     @Test func everyDeclaredArgumentKeyParsesIntoTheMatchingAction() throws {
-        for definition in RealtimeVoiceClient.fastActionToolDefinitions() {
+        for definition in MacAction.realtimeToolDefinitions() {
             let toolName = try #require(definition["name"] as? String)
             let parameters = try #require(definition["parameters"] as? [String: Any])
             let properties = try #require(parameters["properties"] as? [String: Any])

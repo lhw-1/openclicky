@@ -1569,7 +1569,7 @@ final class CompanionManager: ObservableObject {
                 let tools = Self.offersQuickActionsToAskLane(
                     agentLaneRuns: agentLaneRuns,
                     answeringSource: ProviderRouter.route(for: .claude, credentials: ProviderRouter.currentCredentials()).answeringSource
-                ) ? RealtimeVoiceClient.anthropicToolDefinitions() : []
+                ) ? MacAction.anthropicToolDefinitions() : []
                 let toolsLine = tools.isEmpty ? "" : "\n\n" + Self.accountToolsInstruction
                 // The answer is spoken while it is still being written: each finished sentence goes to
                 // the voice, and the pointer moves when the voice starts (the prompt puts the tag first).
