@@ -173,6 +173,9 @@ final class DictationTakeController: ObservableObject {
     var afterMicrophoneCloses: (() -> Void)?
     /// A take's words when the window wants them (the onboarding's first take, the record page box).
     var onTakeFinished: ((TakeRecord) -> Void)?
+    /// The key went down with no text box focused: the pointer says so beside the mouse, so the
+    /// person knows to click into one instead of finding out from "copied, press ⌘V" at the end.
+    var onNoTextBoxAtPress: ((String) -> Void)?
     /// The first-run tour's practice: takes are heard and recorded but never typed or pasted.
     var holdsTakesOnTheIsland = false
 
@@ -241,6 +244,17 @@ final class DictationTakeController: ObservableObject {
 
     /// What the orb says when a Hey Clicky edit is asked for with the clean-up switch off.
     static let heyClickyNeedsCleanUpMessage = "hey clicky needs “clean up my words with ai” on (styles)"
+
+    /// What the pointer says when a take starts with no text box focused.
+    static let noTextBoxPointerMessage = "you're not in a text box. click into one and your words will go there."
+    static let noTextBoxOrbHint = "click into a text box for your words"
+
+    /// Accessibility can read the focused element and it is not a text box (a list, a button, a
+    /// page's text): the words would have nowhere to go. Unknown (no permission, an app that
+    /// exposes nothing) is not "no text box": the paste is tried then, as before.
+    static func hasNoTextBoxToPasteInto(_ field: FocusedFieldSnapshot, isAccessibilityTrusted: Bool) -> Bool {
+        isAccessibilityTrusted && field.role != nil && !field.isEditable && !field.isSecure
+    }
 
     /// The rewrites the box offers: Kivi's casual and formal keys, as chips, plus shorter.
     static let quickRewrites: [(label: String, instruction: String)] = [
@@ -526,6 +540,14 @@ final class DictationTakeController: ObservableObject {
         orb.isBoxOpen = settings.orbRestsExpanded && orb.boxText != nil
         orb.phase = mode == .edit ? .editListening : .listening
         orb.hint = mode == .edit ? "say your edit, then let go" : "tap / release to transcribe"
+        // An edit works on the selection or the last take, and the tour's practice is never
+        // pasted: only a dictation needs somewhere to put its words.
+        if mode == .dictate, !holdsTakesOnTheIsland,
+           Self.hasNoTextBoxToPasteInto(fieldAtPress, isAccessibilityTrusted: host.isAccessibilityTrusted()) {
+            orb.hint = Self.noTextBoxOrbHint
+            onNoTextBoxAtPress?(Self.noTextBoxPointerMessage)
+            AppLog.append("take \(thisTakeID.uuidString.prefix(8)): no text box at press; the pointer asked for one")
+        }
         earcons.play(.start)
         earcons.tap()
         startInactivityTimer()
@@ -801,12 +823,26 @@ final class DictationTakeController: ObservableObject {
     /// cursor was when the key went down — and only there: never into a password field, another
     /// app, or another element of the same app; otherwise they are left on the pasteboard (the
     /// caller puts them there) or, for the tour's practice and a password field, only in the orb.
-    private func deliverWhereTheTakeBegan(_ outputText: String, field: FocusedFieldSnapshot) async -> (outcome: TakeRecord.PasteOutcome, message: String) {
+    /// The one exception: a take that began outside any text box goes to the text box focused now.
+    private func deliverWhereTheTakeBegan(_ outputText: String, field fieldAtPress: FocusedFieldSnapshot) async -> (outcome: TakeRecord.PasteOutcome, message: String) {
         let pastedMessage = "moved to text box"
         if holdsTakesOnTheIsland {
             // The tour's practice take: shown on the island, never typed into the app in front
             // (a new user's first words went into their terminal).
             return (.leftInOrb, "practice take, kept here")
+        }
+        // The take began outside any text box and the pointer asked for one: a text box focused
+        // now is the one the person clicked into for these words, so they go there. Nothing at
+        // press was a place to protect. Every check below runs on that field instead.
+        var field = fieldAtPress
+        var followsTheTextBoxClickedDuringTheTake = false
+        if Self.hasNoTextBoxToPasteInto(fieldAtPress, isAccessibilityTrusted: host.isAccessibilityTrusted()) {
+            let fieldNow = host.readFocusedField()
+            if fieldNow.isEditable || fieldNow.isSecure {
+                field = fieldNow
+                followsTheTextBoxClickedDuringTheTake = true
+                AppLog.append("take \(takeID.uuidString.prefix(8)): no text box at press; pasting into the \(fieldNow.role ?? "?") clicked since, in \(fieldNow.appName ?? "?")")
+            }
         }
         if field.isSecure || host.isSecureInputOn() {
             // Not copied either: a password should not sit on the clipboard (it can sync to other
@@ -816,7 +852,7 @@ final class DictationTakeController: ObservableObject {
         if let appAtPress = field.appBundleID, let appInFrontNow = host.frontAppBundleID(), appAtPress != appInFrontNow {
             return (.leftOnPasteboard, "the app changed. copied, press ⌘V")
         }
-        if focusMovedSincePress() {
+        if !followsTheTextBoxClickedDuringTheTake, focusMovedSincePress() {
             return (.leftOnPasteboard, "the focus moved. copied, press ⌘V")
         }
         // Editable, or unknown (no permission / the app exposes nothing): try the paste.

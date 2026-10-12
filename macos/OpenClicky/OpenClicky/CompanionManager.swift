@@ -1201,6 +1201,12 @@ final class CompanionManager: ObservableObject {
             self?.isDictatingToFrontApp = false
             self?.realtimeVoiceClient.resumeListeningAfterDictation()
         }
+        controller.onNoTextBoxAtPress = { [weak self] message in
+            guard let self else { return }
+            // The pointer may be resting out of sight ("after a shake"): it is the one speaking.
+            self.wakePointer()
+            self.showQuietNotice(message)
+        }
         return controller
     }()
 

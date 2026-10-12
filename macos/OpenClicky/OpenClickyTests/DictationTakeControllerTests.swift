@@ -114,6 +114,8 @@ private struct Harness {
         var landing: PasteLanding = .verified
         /// How many times the controller asked the host to build a polisher.
         var polisherBuilds = 0
+        /// The focused field as the host reads it now (a test moves focus by changing it).
+        var focusedField = FocusedFieldSnapshot.unknown
     }
 
     init(polisher: (any TakePolisher)? = nil, field: FocusedFieldSnapshot? = nil) throws {
@@ -133,7 +135,8 @@ private struct Harness {
         pasted.focusedTarget = FocusedTextTarget(processID: Harness.notesProcessID, element: AXUIElementCreateApplication(Harness.notesProcessID),
                                                  role: snapshot.role, isSecure: snapshot.isSecure)
         var host = DictationHost()
-        host.readFocusedField = { snapshot }
+        pasted.focusedField = snapshot
+        host.readFocusedField = { pasted.focusedField }
         host.readNearbyTerms = { [] }
         host.frontAppBundleID = { pasted.frontApp }
         host.isSecureInputOn = { false }
@@ -426,6 +429,99 @@ struct DictationTakeControllerTests {
         #expect(h.pasted.copied.isEmpty)
         #expect(!h.orb.isBoxOpen)
         #expect(h.orb.phase == .done("not pasting into a password field"))
+    }
+
+    // MARK: no text box at press (the pointer asks for one)
+
+    private static let finderList = FocusedFieldSnapshot(appBundleID: "com.apple.finder", appName: "Finder", role: "AXList", isEditable: false, isSecure: false, value: nil, selectedText: nil)
+    private static let notesBox = FocusedFieldSnapshot(appBundleID: "com.apple.Notes", appName: "Notes", role: "AXTextArea", isEditable: true, isSecure: false, value: "", selectedText: nil)
+
+    @Test @MainActor func aTakeWithNoTextBoxAsksThePointerToSaySo() async throws {
+        let h = try Harness(field: Self.finderList)
+        h.pasted.frontApp = "com.apple.finder"
+        var pointerMessages: [String] = []
+        h.controller.onNoTextBoxAtPress = { pointerMessages.append($0) }
+        h.controller.handle(.dictationPressed)
+        #expect(pointerMessages == [DictationTakeController.noTextBoxPointerMessage])
+        #expect(h.orb.hint == DictationTakeController.noTextBoxOrbHint)
+        await h.waitUntil { h.controller.state == .listening }
+        h.controller.handle(.dictationReleased(wasTap: false))
+        h.capture.deliverFinal("hello")
+        await h.waitUntil { h.controller.state == .idle }
+        // Never clicked into one: the words are copied, as before.
+        #expect(h.pasted.texts.isEmpty)
+        #expect(h.pasted.copied == ["Hello"])
+        #expect(h.orb.phase == .done("no text box. copied, press ⌘V"))
+    }
+
+    @Test @MainActor func aTextBoxClickedDuringTheTakeGetsTheWords() async throws {
+        let h = try Harness(field: Self.finderList)
+        h.pasted.frontApp = "com.apple.finder"
+        h.controller.handle(.dictationPressed)
+        await h.waitUntil { h.controller.state == .listening }
+        // The person clicks into a note while still talking: another app, another element.
+        h.pasted.frontApp = "com.apple.Notes"
+        h.pasted.focusedField = Self.notesBox
+        h.pasted.focusedTarget = FocusedTextTarget(processID: 5151, element: AXUIElementCreateApplication(5151), role: "AXTextArea", isSecure: false)
+        h.controller.handle(.dictationReleased(wasTap: false))
+        h.capture.deliverFinal("hello there")
+        await h.waitUntil { h.controller.state == .idle }
+        #expect(h.pasted.texts == ["Hello there"])
+        #expect(h.pasted.copied.isEmpty)
+        #expect(h.orb.phase == .done("moved to text box"))
+        #expect(try h.store.recent().first?.pasteOutcome == .verified)
+    }
+
+    @Test @MainActor func aPasswordFieldClickedDuringTheTakeGetsNothing() async throws {
+        let h = try Harness(field: Self.finderList)
+        h.pasted.frontApp = "com.apple.finder"
+        h.controller.handle(.dictationPressed)
+        await h.waitUntil { h.controller.state == .listening }
+        h.pasted.frontApp = "com.apple.Safari"
+        h.pasted.focusedField = FocusedFieldSnapshot(appBundleID: "com.apple.Safari", appName: "Safari", role: "AXTextField", isEditable: false, isSecure: true, value: nil, selectedText: nil)
+        h.controller.handle(.dictationReleased(wasTap: false))
+        h.capture.deliverFinal("my password")
+        await h.waitUntil { h.controller.state == .idle }
+        #expect(h.pasted.texts.isEmpty)
+        #expect(h.pasted.copied.isEmpty)
+        #expect(h.orb.phase == .done("not pasting into a password field"))
+    }
+
+    @Test @MainActor func aTakeInATextBoxDoesNotAskThePointer() async throws {
+        let h = try Harness()
+        var pointerMessages: [String] = []
+        h.controller.onNoTextBoxAtPress = { pointerMessages.append($0) }
+        h.controller.handle(.dictationPressed)
+        #expect(pointerMessages.isEmpty)
+        #expect(h.orb.hint == "tap / release to transcribe")
+    }
+
+    @Test @MainActor func anUnknownFieldDoesNotAskThePointer() async throws {
+        // An app that exposes nothing (no role): the paste is tried, so nothing is said.
+        let unknown = FocusedFieldSnapshot(appBundleID: "com.example.app", appName: "Example", role: nil, isEditable: false, isSecure: false, value: nil, selectedText: nil)
+        let h = try Harness(field: unknown)
+        var pointerMessages: [String] = []
+        h.controller.onNoTextBoxAtPress = { pointerMessages.append($0) }
+        h.controller.handle(.dictationPressed)
+        #expect(pointerMessages.isEmpty)
+    }
+
+    @Test @MainActor func theToursPracticeTakeDoesNotAskThePointer() async throws {
+        let h = try Harness(field: Self.finderList)
+        h.controller.holdsTakesOnTheIsland = true
+        var pointerMessages: [String] = []
+        h.controller.onNoTextBoxAtPress = { pointerMessages.append($0) }
+        h.controller.handle(.dictationPressed)
+        #expect(pointerMessages.isEmpty)
+    }
+
+    @Test @MainActor func noTextBoxIsOnlySaidWhenAccessibilityCanTell() {
+        #expect(DictationTakeController.hasNoTextBoxToPasteInto(Self.finderList, isAccessibilityTrusted: true))
+        #expect(!DictationTakeController.hasNoTextBoxToPasteInto(Self.finderList, isAccessibilityTrusted: false))
+        #expect(!DictationTakeController.hasNoTextBoxToPasteInto(Self.notesBox, isAccessibilityTrusted: true))
+        #expect(!DictationTakeController.hasNoTextBoxToPasteInto(.unknown, isAccessibilityTrusted: true))
+        let secure = FocusedFieldSnapshot(appBundleID: "com.apple.Safari", appName: "Safari", role: "AXTextField", isEditable: false, isSecure: true, value: nil, selectedText: nil)
+        #expect(!DictationTakeController.hasNoTextBoxToPasteInto(secure, isAccessibilityTrusted: true))
     }
 
     @Test @MainActor func incognitoPastesButRecordsNothing() async throws {
