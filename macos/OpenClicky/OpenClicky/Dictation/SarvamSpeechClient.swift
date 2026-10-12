@@ -22,8 +22,8 @@ enum SarvamSpeechError: Error, LocalizedError, Equatable {
 
     var errorDescription: String? {
         switch self {
-        case .noKey: return "sarvam needs your key. paste it under settings → engine."
-        case .keyRefused: return "sarvam did not accept the key. check it under settings → engine."
+        case .noKey: return "sarvam needs your key. paste it under settings → account."
+        case .keyRefused: return "sarvam did not accept the key. check it under settings → account."
         case .outOfCredits: return "sarvam says this key is out of credits (dashboard.sarvam.ai)."
         case .busy: return "sarvam is busy. try again in a moment."
         case let .refused(status, message): return "sarvam refused (\(status)): \(message)"

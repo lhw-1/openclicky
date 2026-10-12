@@ -2,7 +2,8 @@
 //  OpenAIAudioTranscriptionProvider.swift
 //  OpenClicky
 //
-//  AI transcription provider backed by OpenAI's audio transcription API.
+//  Upload transcription on OpenAI's audio transcription API: the take is buffered and sent as one
+//  WAV on release, straight to OpenAI on the person's own key or through the OpenClicky backend.
 //
 
 import AVFoundation
@@ -17,8 +18,9 @@ struct OpenAIAudioTranscriptionProviderError: LocalizedError {
 }
 
 final class OpenAIAudioTranscriptionProvider: BuddyTranscriptionProvider {
-    // Transcription goes through the OpenClicky backend (POST /agent/transcribe), which holds the
-    // OpenAI key and picks the model. The app only needs the user's OpenClicky token.
+    // `ProviderRouter` decides where each upload goes: with the person's own OpenAI key, straight to
+    // OpenAI's /audio/transcriptions; otherwise through the OpenClicky backend (POST
+    // /agent/transcribe) on the account's token, where OpenClicky's key and model choice are used.
     let displayName = "OpenClicky"
     let requiresSpeechRecognitionPermission = false
     /// The language to transcribe in (a bare code such as "hi"); nil lets the model detect it. Read
@@ -108,9 +110,8 @@ private final class OpenAIAudioTranscriptionSession: BuddyStreamingTranscription
 
     private var bufferedPCM16AudioData = Data()
     /// Loudest sample magnitude seen (0…32767): audio that never rises above the noise floor is
-    /// not uploaded, because the model answers silence with its prompt or a made-up phrase.
+    /// not uploaded (`PCM16SilenceGate`), because the model answers silence with its prompt or a made-up phrase.
     private var peakSampleMagnitude: Int16 = 0
-    private static let silencePeakThreshold: Int16 = 400
     private var hasRequestedFinalTranscript = false
     private var hasDeliveredFinalTranscript = false
     private var isCancelled = false
@@ -142,11 +143,7 @@ private final class OpenAIAudioTranscriptionSession: BuddyStreamingTranscription
             return
         }
 
-        let bufferPeak = audioPCM16Data.withUnsafeBytes { rawBuffer -> Int16 in
-            rawBuffer.bindMemory(to: Int16.self).reduce(Int16(0)) { peak, sample in
-                max(peak, sample == Int16.min ? Int16.max : abs(sample))
-            }
-        }
+        let bufferPeak = PCM16SilenceGate.peakMagnitude(of: audioPCM16Data)
         stateQueue.async {
             guard !self.hasRequestedFinalTranscript, !self.isCancelled else { return }
             self.bufferedPCM16AudioData.append(audioPCM16Data)
@@ -163,7 +160,7 @@ private final class OpenAIAudioTranscriptionSession: BuddyStreamingTranscription
             let recordedSeconds = Double(bufferedPCM16AudioData.count) / Double(Self.targetSampleRate * MemoryLayout<Int16>.size)
             let peakSampleMagnitude = self.peakSampleMagnitude
             print("[OpenAI Transcription] recorded \(String(format: "%.1f", recordedSeconds)) s, peak \(peakSampleMagnitude)/32767")
-            if peakSampleMagnitude < Self.silencePeakThreshold {
+            if PCM16SilenceGate.isSilent(peakMagnitude: peakSampleMagnitude) {
                 print("[OpenAI Transcription] audio is silent (the microphone may be held by another engine); not uploading")
                 AppLog.append("transcription (openclicky): audio is silent (peak \(peakSampleMagnitude)/32767); not uploading")
                 self.transcriptionUploadTask = Task { [weak self] in

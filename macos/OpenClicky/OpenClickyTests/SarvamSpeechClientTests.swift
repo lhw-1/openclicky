@@ -116,7 +116,16 @@ struct SarvamSpeechClientTests {
     @Test func peakSeesTheLoudestSample() {
         var pcm = Data()
         for sample in [Int16(12), Int16(-900), Int16(300)] { withUnsafeBytes(of: sample.littleEndian) { pcm.append(contentsOf: $0) } }
-        #expect(SarvamUploadSession.peak(of: pcm) == 900)
+        #expect(PCM16SilenceGate.peakMagnitude(of: pcm) == 900)
+    }
+
+    /// One gate for every upload engine (OpenAI's and Sarvam's): below 400 the take is silence.
+    @Test func theSilenceGateSharedByTheUploadEngines() {
+        #expect(PCM16SilenceGate.isSilent(peakMagnitude: 399))
+        #expect(!PCM16SilenceGate.isSilent(peakMagnitude: 400))
+        var pcm = Data()
+        withUnsafeBytes(of: Int16.min.littleEndian) { pcm.append(contentsOf: $0) }
+        #expect(PCM16SilenceGate.peakMagnitude(of: pcm) == Int16.max)
     }
 }
 
