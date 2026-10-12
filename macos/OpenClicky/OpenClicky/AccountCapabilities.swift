@@ -68,7 +68,7 @@ enum AccountLimitError: String, Equatable {
         case .accountsFull: return "openclicky's free accounts are full right now, you can use your own key instead."
         case .blocked: return "this account is paused. dictation still works."
         case .ttsBudget: return ""
-        case .confirmEmail: return "confirm your email to keep going, you can resend the link in settings."
+        case .confirmEmail: return "confirm your email to keep going: type the code from the email in settings, account."
         case .deviceLimit: return "this mac already has two openclicky accounts, sign in with one of them."
         }
     }

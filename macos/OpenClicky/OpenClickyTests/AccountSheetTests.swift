@@ -68,7 +68,7 @@ struct AccountSheetTests {
     }
 
     @Test func confirmEmailAndDeviceLimitHaveSentences() {
-        #expect(AccountLimitError.confirmEmail.message == "confirm your email to keep going, you can resend the link in settings.")
+        #expect(AccountLimitError.confirmEmail.message == "confirm your email to keep going: type the code from the email in settings, account.")
         #expect(AccountLimitError.deviceLimit.message == "this mac already has two openclicky accounts, sign in with one of them.")
         #expect(AccountLimitError.from(status: 402, body: Data(#"{"error":"confirm_email"}"#.utf8)) == .confirmEmail)
     }
