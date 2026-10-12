@@ -20,7 +20,9 @@ nonisolated enum ProviderCapability: String, CaseIterable, Sendable {
     case claude
     /// OpenAI chat completions: the take clean-up on an own key. OpenAI key.
     case openAIChat
-    /// Spoken answers (/tts): OpenAI speech on an own key, ElevenLabs on an account.
+    /// OpenAI speech on an own key, else the account's /tts. No call asks the router for it any
+    /// more: who speaks the answers is `SpeechVoiceChoice` (SpeechVoices.swift), which also covers
+    /// the other voice keys, Kokoro and this Mac. Kept because the route table is tested per key.
     case speech
     /// Upload speech-to-text (/agent/transcribe). OpenAI key.
     case transcription
