@@ -34,7 +34,9 @@ const integer = (value: string | undefined, fallback: number) => (Number.isFinit
 export function limitsFromEnv(env: Env): Limits {
   return {
     monthlyMicro: usd(env.ACCOUNT_MONTHLY_USD, 10),
-    dailyMicro: usd(env.ACCOUNT_DAILY_USD, 2),
+    // No daily limit by default: people asked to use the month's allowance as fast as they like.
+    // ACCOUNT_DAILY_USD still sets one; 0 (or unset) means none.
+    dailyMicro: usd(env.ACCOUNT_DAILY_USD, 0),
     globalMonthlyMicro: usd(env.GLOBAL_MONTHLY_BUDGET_USD, 1000),
     ttsCharsMonthly: integer(env.ACCOUNT_MONTHLY_TTS_CHARS, 20_000),
     guestTotalMicro: usd(env.GUEST_TOTAL_USD, 1),
@@ -44,6 +46,13 @@ export function limitsFromEnv(env: Env): Limits {
     guestTtsChars: integer(env.GUEST_TTS_CHARS, 10_000),
   };
 }
+
+/** What the Postgres functions get for "no daily limit": they compare against a number, never null. */
+export const NO_DAILY_LIMIT_MICRO = 9_000_000_000_000_000;
+/** The daily limit to enforce: the configured one, or one that never binds when it is 0. */
+export const enforcedDailyMicro = (dailyMicro: number) => (dailyMicro > 0 ? dailyMicro : NO_DAILY_LIMIT_MICRO);
+/** The daily limit to report: 0 (none) when it never binds. */
+export const reportedDailyMicro = (dailyMicro: number) => (dailyMicro > 0 && dailyMicro < NO_DAILY_LIMIT_MICRO ? dailyMicro : 0);
 
 export const HOLD_TTL_MS = 10 * 60_000;
 export const monthStart = (now: Date) => new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1));
@@ -114,7 +123,7 @@ export class MemorySpendLedger implements SpendLedger {
     const today = this.sum((e) => e.userId === userId && e.at >= day, "micro");
     const thisMonth = this.sum((e) => e.userId === userId && e.at >= month, "micro");
     const everyone = this.sum((e) => e.at >= month, "micro");
-    if (today + estimateMicro > mine.daily) return { ok: false, error: "daily_limit", resetsAt: dayEnd(now).toISOString() };
+    if (today + estimateMicro > enforcedDailyMicro(mine.daily)) return { ok: false, error: "daily_limit", resetsAt: dayEnd(now).toISOString() };
     if (thisMonth + estimateMicro > mine.monthly) return { ok: false, error: "personal_limit", resetsAt: monthEnd(now).toISOString() };
     if (everyone + estimateMicro > limits.globalMonthlyMicro) return { ok: false, error: "monthly_budget", resetsAt: monthEnd(now).toISOString() };
     const id = String(this.nextId++);
@@ -156,7 +165,7 @@ export class MemorySpendLedger implements SpendLedger {
     return {
       spentMonthMicro: this.sum((e) => e.userId === userId && e.at >= month, "micro"),
       spentTodayMicro: this.sum((e) => e.userId === userId && e.at >= day, "micro"),
-      monthlyLimitMicro: mine.monthly, dailyLimitMicro: mine.daily,
+      monthlyLimitMicro: mine.monthly, dailyLimitMicro: reportedDailyMicro(mine.daily),
       globalSpentMicro: this.sum((e) => e.at >= month, "micro"), globalLimitMicro: limits.globalMonthlyMicro,
       ttsCharsMonth: this.sum((e) => e.userId === userId && e.at >= month, "chars"), ttsCharsLimit: limits.ttsCharsMonthly,
       monthEnd: monthEnd(now).toISOString(), dayEnd: dayEnd(now).toISOString(), blocked: mine.blocked,
@@ -174,7 +183,7 @@ export class SupabaseSpendLedger implements SpendLedger {
 
   reserve(userId: string, estimateMicro: number, limits: Limits): Promise<ReserveResult> {
     return this.db.rpc<ReserveResult>("oc_reserve", {
-      p_user: userId, p_estimate: estimateMicro, p_monthly: limits.monthlyMicro, p_daily: limits.dailyMicro, p_global: limits.globalMonthlyMicro,
+      p_user: userId, p_estimate: estimateMicro, p_monthly: limits.monthlyMicro, p_daily: enforcedDailyMicro(limits.dailyMicro), p_global: limits.globalMonthlyMicro,
       p_guest_total: limits.guestTotalMicro, p_guest_days: limits.guestDays,
     });
   }
@@ -190,10 +199,11 @@ export class SupabaseSpendLedger implements SpendLedger {
       p_guest_chars: limits.guestTtsChars, p_guest_days: limits.guestDays,
     });
   }
-  summary(userId: string, limits: Limits): Promise<SpendSummary> {
-    return this.db.rpc<SpendSummary>("oc_spend_summary", {
-      p_user: userId, p_monthly: limits.monthlyMicro, p_daily: limits.dailyMicro, p_global: limits.globalMonthlyMicro, p_tts: limits.ttsCharsMonthly,
+  async summary(userId: string, limits: Limits): Promise<SpendSummary> {
+    const summary = await this.db.rpc<SpendSummary>("oc_spend_summary", {
+      p_user: userId, p_monthly: limits.monthlyMicro, p_daily: enforcedDailyMicro(limits.dailyMicro), p_global: limits.globalMonthlyMicro, p_tts: limits.ttsCharsMonthly,
       p_guest_total: limits.guestTotalMicro,
     });
+    return { ...summary, dailyLimitMicro: reportedDailyMicro(summary.dailyLimitMicro) };
   }
 }

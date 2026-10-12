@@ -6,9 +6,9 @@ import Testing
 struct AccountSheetTests {
     private func summary(
         spentMonth: Double = 1, spentToday: Double = 0, budgetExhausted: Bool = false, blocked: Bool = false,
-        monthEnd: String = "2026-11-01T00:00:00.000Z", byok: Bool = false
+        monthEnd: String = "2026-11-01T00:00:00.000Z", byok: Bool = false, dailyLimit: Double = 2
     ) -> BillingSummary {
-        BillingSummary(byok: byok, spentMonthUsd: spentMonth, monthlyLimitUsd: 10, spentTodayUsd: spentToday, dailyLimitUsd: 2,
+        BillingSummary(byok: byok, spentMonthUsd: spentMonth, monthlyLimitUsd: 10, spentTodayUsd: spentToday, dailyLimitUsd: dailyLimit,
                        ttsCharsMonth: 1234, ttsCharsLimit: 20000, monthEnd: monthEnd, dayEnd: "2026-10-11T00:00:00.000Z",
                        budgetExhausted: budgetExhausted, blocked: blocked)
     }
@@ -40,6 +40,12 @@ struct AccountSheetTests {
     @Test func detailsSpellOutTheNumbers() {
         let line = summary(spentMonth: 4.5, spentToday: 0.2).usageDetails(locale: Locale(identifier: "en_US"))
         #expect(line == "$4.50 of $10 this month · $0.20 of $2 today · 1,234 spoken characters of 20,000")
+    }
+
+    @Test func withNoDailyLimitOnlyTheMonthCounts() {
+        let monthOnly = summary(spentMonth: 3, spentToday: 3, dailyLimit: 0)
+        #expect(monthOnly.allowanceStanding == .plenty)
+        #expect(monthOnly.usageDetails(locale: Locale(identifier: "en_US")) == "$3 of $10 this month · 1,234 spoken characters of 20,000")
     }
 
     @Test func aClosedSheetIsACancellationNotAFailure() {

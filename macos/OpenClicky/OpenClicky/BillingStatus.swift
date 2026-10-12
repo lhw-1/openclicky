@@ -83,13 +83,15 @@ extension BillingSummary {
         return date.formatted(style).lowercased()
     }
 
-    /// The "details" line: "$4.50 of $10 this month · $0.20 of $2 today · 300 spoken characters of 20,000".
+    /// The "details" line: "$4.50 of $10 this month · 300 spoken characters of 20,000" (with "· $0.20 of $2 today" when a daily limit is set).
     func usageDetails(locale: Locale = .current) -> String {
         func dollars(_ amount: Double) -> String {
             amount == amount.rounded() ? "$\(Int(amount))" : String(format: "$%.2f", amount)
         }
         func count(_ number: Int) -> String { number.formatted(.number.locale(locale)) }
-        return "\(dollars(spentMonthUsd)) of \(dollars(monthlyLimitUsd)) this month · \(dollars(spentTodayUsd)) of \(dollars(dailyLimitUsd)) today · \(count(ttsCharsMonth)) spoken characters of \(count(ttsCharsLimit))"
+        // No daily limit (0) is the norm since 2026-10-12: only the month is shown then.
+        let todayPart = dailyLimitUsd > 0 ? " · \(dollars(spentTodayUsd)) of \(dollars(dailyLimitUsd)) today" : ""
+        return "\(dollars(spentMonthUsd)) of \(dollars(monthlyLimitUsd)) this month\(todayPart) · \(count(ttsCharsMonth)) spoken characters of \(count(ttsCharsLimit))"
     }
 }
 

@@ -33,7 +33,7 @@ The app asks for an email and nothing else, and sends it with this Mac's device 
   can spend `GUEST_TOTAL_USD` (default $1) and `GUEST_TTS_CHARS` spoken characters **per Mac**, shared
   by every guest that Mac has made, for `GUEST_DAYS`. Past that, metered calls answer
   `402 confirm_email`. Clicking the link flips the user's `is_anonymous` to false; from the next
-  request on the account is confirmed and gets the normal monthly and daily limits.
+  request on the account is confirmed and gets the normal monthly limit (no daily limit unless ACCOUNT_DAILY_USD sets one).
 - **New email, but no room for another guest:** at most `max_guests_per_ip` (2) live guests per
   address (an IPv4 host, or an IPv6 /64) and `max_guests_per_net` (6) per network (an IPv4 /24, or
   an IPv6 /48), and `max_guests` in all. Guests already on the asking Mac don't count against its

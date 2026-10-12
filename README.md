@@ -119,7 +119,7 @@ The hosted backend is only for people without keys, and the backend's own keys n
 
 **Free accounts.** OpenClicky's hosted backend runs on a research grant, so anyone can use it for
 free while the grant lasts: type your email during setup and it works at once, with a $1 starter
-allowance per Mac; click the link in the email and it becomes $10 of use a month ($2 a day). There are
+allowance per Mac; click the link in the email and it becomes $10 of use a month, to use as fast as you like. There are
 no passwords: on another Mac you sign in with your email and a 6-digit code. Places are limited (100
 confirmed accounts); when they are full, use your own key instead — that never needs an account.
 

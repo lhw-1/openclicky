@@ -7,12 +7,29 @@ const now = new Date("2026-10-08T10:00:00Z");
 
 describe("limitsFromEnv", () => {
   it("reads dollars and defaults to the spec's numbers", () => {
-    expect(limitsFromEnv({})).toEqual({ ...limits, guestTtsChars: 10_000 });
+    expect(limitsFromEnv({})).toEqual({ ...limits, dailyMicro: 0, guestTtsChars: 10_000 });
     expect(limitsFromEnv({ ACCOUNT_DAILY_USD: "5" }).dailyMicro).toBe(5_000_000);
   });
   it("falls back to 20000 for invalid ACCOUNT_MONTHLY_TTS_CHARS", () => {
     expect(limitsFromEnv({ ACCOUNT_MONTHLY_TTS_CHARS: "abc" }).ttsCharsMonthly).toBe(20_000);
     expect(limitsFromEnv({ ACCOUNT_MONTHLY_TTS_CHARS: "" }).ttsCharsMonthly).toBe(20_000);
+  });
+});
+
+describe("no daily limit", () => {
+  const monthlyOnly = { ...limits, dailyMicro: 0 };
+  it("lets someone use the whole month's allowance in one day", async () => {
+    const ledger = new MemorySpendLedger();
+    for (let hold = 0; hold < 9; hold++) {
+      const reservation = await ledger.reserve("u1", 1_000_000, monthlyOnly, now);
+      expect(reservation.ok).toBe(true);
+      if (reservation.ok) await ledger.settle(reservation.reservationId, "u1", 1_000_000, event, now);
+    }
+    expect(await ledger.reserve("u1", 2_000_000, monthlyOnly, now)).toMatchObject({ ok: false, error: "personal_limit" });
+  });
+  it("reports no daily limit", async () => {
+    const summary = await new MemorySpendLedger().summary("u1", monthlyOnly, now);
+    expect(summary.dailyLimitMicro).toBe(0);
   });
 });
 

@@ -92,7 +92,7 @@ describe("requireAccount", () => {
 
   it("billing/me reports dollars and resets", async () => {
     const body = await (await appWith(new MemorySpendLedger()).request("/billing/me")).json();
-    expect(body).toMatchObject({ byok: false, spentMonthUsd: 0, monthlyLimitUsd: 10, dailyLimitUsd: 2, budgetExhausted: false, blocked: false });
+    expect(body).toMatchObject({ byok: false, spentMonthUsd: 0, monthlyLimitUsd: 10, dailyLimitUsd: 0, budgetExhausted: false, blocked: false });
   });
 });
 

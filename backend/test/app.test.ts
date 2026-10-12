@@ -410,7 +410,7 @@ describe("app", () => {
 
       const me = await billed.request("/billing/me", { headers: { authorization: `Bearer ${token}` } }, grantEnv);
       expect(me.status).toBe(200);
-      expect(await me.json()).toMatchObject({ byok: false, spentMonthUsd: 0, monthlyLimitUsd: 10, spentTodayUsd: 0, dailyLimitUsd: 2, budgetExhausted: false, blocked: false });
+      expect(await me.json()).toMatchObject({ byok: false, spentMonthUsd: 0, monthlyLimitUsd: 10, spentTodayUsd: 0, dailyLimitUsd: 0, budgetExhausted: false, blocked: false });
     });
 
     it("sends /v1/messages on the grant through the ledger with the gate model", async () => {
