@@ -628,6 +628,7 @@ final class CompanionManager: ObservableObject {
     /// working. The realtime session is left alone: its next turn cancels its own reply, and only
     /// the stop button silences it outright.
     private func interruptCurrentAnswer(includingAgentWork: Bool) {
+        stopWatchingForGuidedStep()
         stopActiveAnswer()
         currentResponseTask?.cancel()
         if includingAgentWork { openClickyAgentClient.cancel() }
@@ -1472,7 +1473,7 @@ final class CompanionManager: ObservableObject {
 
     rules:
     - keep it short: one or two short sentences, about thirty words at most. people listen to this, and a long answer is hard to follow by ear.
-    - for a task with several steps, say only the next step or two, then stop. they will do it and ask again for the rest, and you'll see their screen when they do.
+    - for a task with several steps on screen, guide them one step at a time (see guided steps below).
     - if they ask you to explain more or go deeper, say more, but still keep it under about eighty words.
     - all lowercase, casual, warm. no emojis.
     - write for the ear, not the eye. short sentences. no lists, bullet points, markdown, em dashes, or formatting. just natural speech.
@@ -1502,6 +1503,10 @@ final class CompanionManager: ObservableObject {
     - user asks how to commit in xcode: "[POINT:285,11:source control] see that source control menu up top? click that and hit commit, or you can use command option c as a shortcut."
     - element is on screen 2 (not where cursor is): "[POINT:400,300:terminal:screen2] that's over on your other monitor, see the terminal window?"
 
+    guided steps:
+    when they ask how to do something that takes more than one step on screen, give only the first step, point at it, and end your reply with \(GuidedStepMarker.marker). a step is one click, or one thing to type, nothing more. openclicky then waits for them to do it (a click, or return or tab after typing) and asks you on its own with "\(GuidedStepRules.nextStepRequestOpening) …" and a fresh screenshot. look at the new screen and give the next step the same way: one step, pointed at, ending with \(GuidedStepMarker.marker) while more steps remain. leave \(GuidedStepMarker.marker) off the last step, and off any answer that isn't a step. if the new screen shows they clicked something else or went somewhere unexpected, gently help them back, still ending with \(GuidedStepMarker.marker). if the screen hasn't changed the way that step should change it, it didn't work yet: point at the same thing again and say to try once more. if you can't tell whether the step worked, say what they should see and what to do then, and end with \(GuidedStepMarker.marker) so you keep waiting with them. never end a step with a question. for a step that is typing, say what to type and to press tab or click the next thing when they're done.
+    example: user asks how to attach a file in mail: "[POINT:612,88:attach button] click the paperclip at the top of your message. \(GuidedStepMarker.marker)"
+
     keep your first sentence short: it is spoken while the rest of your answer is still being written.
     """
 
@@ -1512,8 +1517,13 @@ final class CompanionManager: ObservableObject {
     /// the spinner/processing state until TTS audio begins playing.
     /// Claude's response may include a [POINT:x,y:label] tag which triggers
     /// the buddy to fly to that element on screen.
-    private func sendTranscriptToClaudeWithScreenshot(transcript: String) {
+    private func sendTranscriptToClaudeWithScreenshot(transcript: String, isGuidedStepContinuation: Bool = false) {
         interruptCurrentAnswer(includingAgentWork: false)
+        // Anything the person asks starts afresh; only OpenClicky's own "what's next?" continues a guide.
+        if !isGuidedStepContinuation {
+            guidedStepsGivenSoFar = 0
+            guidedStepGoal = transcript
+        }
 
         currentResponseTask = Task {
             // Stay in processing (spinner) state — no streaming text displayed
@@ -1625,8 +1635,9 @@ final class CompanionManager: ObservableObject {
                 }
                 answerSpeaker.finish(closingSentences: toolOutcomes)
 
-                // The tag is stripped so it doesn't confuse future context.
-                let parseResult = Self.parsePointingCoordinates(from: fullResponseText)
+                // The tag and the guide's marker are stripped so they don't confuse future context.
+                let replyIsAGuidedStep = GuidedStepMarker.containsMarker(fullResponseText)
+                let parseResult = Self.parsePointingCoordinates(from: GuidedStepMarker.removingMarkers(from: fullResponseText))
                 let spokenText = Self.spokenReply(text: parseResult.spokenText, toolOutcomes: toolOutcomes)
                 if parseResult.coordinate == nil {
                     print("🎯 Element pointing: \(parseResult.elementLabel ?? "no element")")
@@ -1643,6 +1654,7 @@ final class CompanionManager: ObservableObject {
                     }
                 } else {
                     rememberExchange(userTranscript: transcript, assistantResponse: spokenText)
+                    if replyIsAGuidedStep { waitForTheGuidedStepToBeDone() }
                 }
 
                 print("🧠 Conversation history: \(conversationHistory.count) exchanges")
@@ -1719,6 +1731,50 @@ final class CompanionManager: ObservableObject {
                 scheduleTransientHideIfNeeded()
             }
         }
+    }
+
+    // MARK: - Guided steps
+
+    /// Steps given in the guide under way (0 when none is), so a runaway guide ends (`GuidedStepRules.maximumSteps`).
+    private var guidedStepsGivenSoFar = 0
+    /// Watches for the person doing the step just given; nil when no step is waiting.
+    private var guidedStepWatcher: GuidedStepWatcher?
+    /// What the person asked that started the guide, repeated in every "what's next?".
+    private var guidedStepGoal = ""
+
+    /// The reply was one step of a guide: once the person does it, ask for the next step on a fresh screenshot.
+    private func waitForTheGuidedStepToBeDone() {
+        guidedStepsGivenSoFar += 1
+        guard guidedStepsGivenSoFar < GuidedStepRules.maximumSteps else {
+            AppLog.append("guide: stopped after \(guidedStepsGivenSoFar) steps")
+            return
+        }
+        stopWatchingForGuidedStep()
+        AppLog.append("guide: step \(guidedStepsGivenSoFar) given, waiting for a click or return")
+        let watcher = GuidedStepWatcher(
+            onStepDone: { [weak self] in
+                guard let self else { return }
+                AppLog.append("guide: step \(self.guidedStepsGivenSoFar) done, asking for the next")
+                self.guidedStepWatcher = nil
+                self.sendTranscriptToClaudeWithScreenshot(
+                    transcript: GuidedStepRules.nextStepRequest(forGoal: self.guidedStepGoal), isGuidedStepContinuation: true)
+            },
+            onEnded: { [weak self] reason in
+                guard let self else { return }
+                AppLog.append("guide: ended (\(reason.rawValue)) after \(self.guidedStepsGivenSoFar) steps")
+                self.guidedStepWatcher = nil
+                self.guidedStepsGivenSoFar = 0
+                // Esc means stop: the step still being said goes quiet too.
+                if reason == .escape { self.stopSpeaking() }
+            }
+        )
+        guidedStepWatcher = watcher
+        watcher.start()
+    }
+
+    private func stopWatchingForGuidedStep() {
+        guidedStepWatcher?.stop()
+        guidedStepWatcher = nil
     }
 
     /// The screenshot for a question could not be taken (Screen Recording off, or ScreenCaptureKit

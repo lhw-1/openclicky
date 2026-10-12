@@ -16,7 +16,9 @@
 //
 //  The [POINT:…] tag is never spoken. The ask prompt puts it first, so the chunker holds the text
 //  back until the tag is complete and records it in `pointTag`; a tag at the end (older prompts,
-//  or a model that ignores the instruction) is found when the stream finishes.
+//  or a model that ignores the instruction) is found when the stream finishes. The guide's [NEXT]
+//  marker (`GuidedStepMarker`) is never spoken either: it holds no sentence end, so it only ever
+//  arrives whole inside a piece, and is taken out of every piece.
 //
 
 import Foundation
@@ -48,8 +50,9 @@ struct SpokenChunker {
 
         var readyChunks: [String] = []
         while let chunk = nextCompleteChunk(in: accumulatedText) {
-            // An empty chunk is only whitespace that was passed over.
-            if !chunk.isEmpty { readyChunks.append(chunk) }
+            // An empty chunk is only whitespace that was passed over (or a lone [NEXT] marker).
+            let spokenChunk = GuidedStepMarker.removingMarkers(from: chunk)
+            if !spokenChunk.isEmpty { readyChunks.append(spokenChunk) }
         }
         return readyChunks
     }
@@ -62,7 +65,8 @@ struct SpokenChunker {
             // The answer ended while still looking like an unfinished tag: speak it as text.
             leadingTagResolved = true
         }
-        var remainingText = String(accumulatedText.dropFirst(consumedCharacterCount))
+        // Without the marker first, so "… [POINT:10,20:x] [NEXT]" still finds the trailing tag.
+        var remainingText = GuidedStepMarker.removingMarkers(from: String(accumulatedText.dropFirst(consumedCharacterCount)))
         consumedCharacterCount = accumulatedText.count
 
         // A trailing tag is never spoken, even after a leading one ("[POINT:none] [POINT:10,20:x]");
@@ -81,7 +85,7 @@ struct SpokenChunker {
             unspokenText = unspokenText[cut...]
         }
         lastChunks.append(unspokenText.trimmingCharacters(in: .whitespacesAndNewlines))
-        return lastChunks.filter { !$0.isEmpty }
+        return lastChunks.map { GuidedStepMarker.removingMarkers(from: $0) }.filter { !$0.isEmpty }
     }
 
     // MARK: - Private
