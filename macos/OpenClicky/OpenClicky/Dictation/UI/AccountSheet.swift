@@ -3,7 +3,7 @@
 //  OpenClicky
 //
 //  The account sheet: a heading, the one email form (EmailAccountForm), and "not now".
-//  Also the work slot the form runs its requests in, and the usage bar the settings page shows for a signed-in account.
+//  Also the work slot the form runs its requests in.
 //
 
 import SwiftUI
@@ -15,16 +15,17 @@ struct AccountSheet: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
-            PaperHeading(text: "your free openclicky account", size: 26)
+            Text("your free openclicky account")
+                .font(SettingsLook.body(20, weight: .semibold))
             Text("polished dictation and spoken answers, on us — up to $10 of use a month once your email is confirmed.")
-                .font(Paper.caption).foregroundStyle(Paper.inkSecondary).fixedSize(horizontal: false, vertical: true)
+                .font(SettingsLook.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
             EmailAccountForm(onSignedIn: onDone, onUseOwnKey: onUseOwnKey)
             Button("not now", action: onDone)
-                .buttonStyle(PaperPillButtonStyle(quiet: true)).keyboardShortcut(.cancelAction)
+                .keyboardShortcut(.cancelAction)
+                .pointerCursor()
         }
         .padding(28)
         .frame(width: 440, alignment: .leading)
-        .background(Paper.background)
     }
 }
 
@@ -47,27 +48,4 @@ final class AccountWorkSlot {
     }
 
     func cancel() { task?.cancel() }
-}
-
-/// "plenty left this month · resets on nov 1", over a thin bar of the month used.
-struct AccountUsageBar: View {
-    let summary: BillingSummary
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            GeometryReader { geometry in
-                ZStack(alignment: .leading) {
-                    Capsule().fill(Paper.lineSoft)
-                    Capsule().fill(summary.allowanceStanding == .plenty ? Paper.success : Paper.accent)
-                        .frame(width: max(4, geometry.size.width * summary.fractionUsed))
-                }
-            }
-            .frame(height: 6)
-            .accessibilityHidden(true)
-            Text(summary.allowanceSentence(resetDay: summary.monthResetDay()))
-                .font(Paper.caption).foregroundStyle(Paper.inkSecondary)
-                .fixedSize(horizontal: false, vertical: true)
-        }
-        .accessibilityElement(children: .combine)
-    }
 }

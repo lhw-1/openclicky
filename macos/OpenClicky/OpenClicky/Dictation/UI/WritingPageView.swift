@@ -467,7 +467,7 @@ private struct WritingStyleRow: View {
                 ForEach(Array(apps.enumerated()), id: \.element.id) { index, app in
                     if index > 0 { Divider() }
                     HStack(spacing: 8) {
-                        WritingAppIcon(bundleID: app.bundleID, size: 16)
+                        AppIconView(bundleID: app.bundleID, size: 16).accessibilityHidden(true)
                         Text(app.name).font(SettingsLook.rowTitle).lineLimit(1)
                         Spacer(minLength: 4)
                         if app.takeCount > 0 {
@@ -684,7 +684,7 @@ private struct WritingStyleEditorSheet: View {
                     }
                     ForEach(draft.appBundleIDs, id: \.self) { bundleID in
                         HStack(spacing: 8) {
-                            WritingAppIcon(bundleID: bundleID, size: 16)
+                            AppIconView(bundleID: bundleID, size: 16).accessibilityHidden(true)
                             Text(AppIconCache.shared.name(for: bundleID) ?? bundleID).font(SettingsLook.rowTitle).lineLimit(1)
                             Spacer()
                             Button(action: { draft.appBundleIDs.removeAll { $0 == bundleID } }) {
@@ -752,7 +752,7 @@ private struct WritingAppPickerSheet: View {
                     dismiss()
                 }) {
                     HStack(spacing: 10) {
-                        WritingAppIcon(bundleID: runningApp.bundleIdentifier, size: 20)
+                        AppIconView(bundleID: runningApp.bundleIdentifier, size: 20).accessibilityHidden(true)
                         Text(runningApp.localizedName ?? runningApp.bundleIdentifier ?? "")
                         Spacer()
                     }
@@ -780,25 +780,6 @@ private struct WritingAppPickerSheet: View {
         }
         .padding(20)
         .frame(width: 420)
-    }
-}
-
-/// An app's icon from the system, or a quiet placeholder for an app that is not on this Mac
-/// (`AppIconView` draws that placeholder in the Paper look's beige).
-private struct WritingAppIcon: View {
-    let bundleID: String?
-    var size: CGFloat = 18
-
-    var body: some View {
-        Group {
-            if let image = AppIconCache.shared.icon(for: bundleID) {
-                Image(nsImage: image).resizable().interpolation(.high)
-            } else {
-                RoundedRectangle(cornerRadius: size * 0.22, style: .continuous).fill(Color(nsColor: .quaternaryLabelColor))
-            }
-        }
-        .frame(width: size, height: size)
-        .accessibilityHidden(true)
     }
 }
 

@@ -105,18 +105,20 @@ struct EmailAccountFormContent: View {
                     .textFieldStyle(.roundedBorder).textContentType(.emailAddress)
                     .onSubmit(onSubmitEmail)
                 Button(isSending ? "one moment…" : "continue", action: onSubmitEmail)
-                    .buttonStyle(PaperPillButtonStyle(prominent: true))
+                    .buttonStyle(.borderedProminent)
+                    .tint(SettingsLook.accent)
                     .keyboardShortcut(.defaultAction)
                     .disabled(isSending || !EmailAccountForm.canSubmitEmail(email))
+                    .pointerCursor()
             }
             Text("no password — we'll send a link to confirm it's you.")
-                .font(Paper.caption).foregroundStyle(Paper.inkSecondary)
+                .font(SettingsLook.caption).foregroundStyle(.secondary)
             if case .failed(let message) = state {
-                Text(message).font(Paper.caption).foregroundStyle(Paper.danger).fixedSize(horizontal: false, vertical: true)
+                Text(message).font(SettingsLook.caption).foregroundStyle(SettingsLook.danger).fixedSize(horizontal: false, vertical: true)
             }
             if let onUseOwnKey {
                 Button("use my own key instead", action: onUseOwnKey)
-                    .buttonStyle(.plain).font(Paper.caption).foregroundStyle(Paper.accentFill).pointerCursor()
+                    .buttonStyle(.plain).font(SettingsLook.caption).foregroundStyle(SettingsLook.accent).pointerCursor()
             }
         }
     }
@@ -124,25 +126,27 @@ struct EmailAccountFormContent: View {
     private func codeStep(_ address: String) -> some View {
         VStack(alignment: .leading, spacing: 10) {
             Text("you already have an account — we sent a 6-digit code to \(address).")
-                .font(Paper.body(13)).foregroundStyle(Paper.ink).fixedSize(horizontal: false, vertical: true)
+                .font(SettingsLook.body(13)).foregroundStyle(.primary).fixedSize(horizontal: false, vertical: true)
             HStack(spacing: 8) {
                 TextField("123456", text: $code)
                     .textFieldStyle(.roundedBorder).textContentType(.oneTimeCode).frame(width: 120)
                     .onSubmit(onSubmitCode)
                 Button(isChecking ? "checking…" : "sign in", action: onSubmitCode)
-                    .buttonStyle(PaperPillButtonStyle(prominent: true))
+                    .buttonStyle(.borderedProminent)
+                    .tint(SettingsLook.accent)
                     .keyboardShortcut(.defaultAction)
                     .disabled(isChecking || !EmailAccountForm.canSubmitCode(code))
+                    .pointerCursor()
             }
             if let codeError {
-                Text(codeError).font(Paper.caption).foregroundStyle(Paper.danger).fixedSize(horizontal: false, vertical: true)
+                Text(codeError).font(SettingsLook.caption).foregroundStyle(SettingsLook.danger).fixedSize(horizontal: false, vertical: true)
             }
             HStack(spacing: 14) {
                 Button(isSending ? "sending…" : "send a new code", action: onSendNewCode)
-                    .buttonStyle(.plain).font(Paper.caption).foregroundStyle(Paper.accentFill).pointerCursor()
+                    .buttonStyle(.plain).font(SettingsLook.caption).foregroundStyle(SettingsLook.accent).pointerCursor()
                     .disabled(isSending || isChecking)
                 Button("use a different email", action: onDifferentEmail)
-                    .buttonStyle(.plain).font(Paper.caption).foregroundStyle(Paper.accentFill).pointerCursor()
+                    .buttonStyle(.plain).font(SettingsLook.caption).foregroundStyle(SettingsLook.accent).pointerCursor()
             }
         }
     }
@@ -167,11 +171,11 @@ struct GuestConfirmationCodeField: View {
                         .textFieldStyle(.roundedBorder).textContentType(.oneTimeCode).frame(width: 150)
                         .onSubmit(confirm)
                     Button(isChecking ? "checking…" : "confirm", action: confirm)
-                        .buttonStyle(PaperPillButtonStyle()).pointerCursor()
+                        .pointerCursor()
                         .disabled(isChecking || !EmailAccountForm.canSubmitCode(code))
                 }
                 if let errorText {
-                    Text(errorText).font(Paper.caption).foregroundStyle(Paper.danger).fixedSize(horizontal: false, vertical: true)
+                    Text(errorText).font(SettingsLook.caption).foregroundStyle(SettingsLook.danger).fixedSize(horizontal: false, vertical: true)
                 }
             }
             .onDisappear { work.cancel() }
