@@ -98,11 +98,12 @@ final class UITour {
             await shootWindow(named: String(format: "window-%@-%02d-%@", appearanceName, index, section.rawValue), window: mainWindow, scrolls: scrolls)
         }
         if scrolls, let window = mainWindow {
-            // The record page at the window's narrowest: its two columns stack.
+            // The Account page at the window's narrowest: its "Add a key" row is the widest there
+            // is, and the reason for the minimum width.
             let fullFrame = window.frame
             window.setContentSize(DictationWindowController.minimumSize)
-            companionManager.showDictationWindow(section: .words)
-            await shoot("window-\(appearanceName)-00-record-narrow", window: window)
+            companionManager.showSettings(.account)
+            await shoot("window-\(appearanceName)-00-account-narrow", window: window)
             window.setFrame(fullFrame, display: true)
         }
         for page in DictationSettingsPage.allCases {

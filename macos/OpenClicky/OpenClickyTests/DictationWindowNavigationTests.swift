@@ -61,6 +61,13 @@ struct DictationWindowNavigationTests {
         #expect(DictationWindowModel().destination == .section(.words))
     }
 
+    @Test func theSidebarListsYourPagesAfterClickyAndBeforeTheOrb() {
+        let sidebarTitles = DictationSettingsPage.pagesBeforeYourPages.map(\.title)
+            + DictationSection.allCases.map(\.sidebarTitle)
+            + DictationSettingsPage.pagesAfterYourPages.map(\.title)
+        #expect(sidebarTitles == ["General", "Dictation", "Clicky", "Your words", "How it writes", "The Orb", "Keyboard", "Privacy & Security", "Account", "About"])
+    }
+
     @Test func thereAreEightSettingsPages() {
         #expect(DictationSettingsPage.allCases.map(\.title) == ["General", "Dictation", "Clicky", "The Orb", "Keyboard", "Privacy & Security", "Account", "About"])
     }

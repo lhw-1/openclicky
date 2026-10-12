@@ -12,10 +12,26 @@ import AppKit
 import Combine
 import SwiftUI
 
-/// The eight pages, in sidebar order.
+/// The eight pages, in sidebar order. Your two pages (Your words, How it writes) sit among them,
+/// after the pages that say `showsBeforeYourPages`.
 enum DictationSettingsPage: String, CaseIterable, Identifiable {
     case general, dictation, clicky, orb, keyboard, privacy, account, about
     var id: String { rawValue }
+
+    /// True for the pages the sidebar lists above your two pages: what you set up first (General,
+    /// Dictation, Clicky) comes before what you dictated; the rest follows it.
+    var showsBeforeYourPages: Bool {
+        switch self {
+        case .general, .dictation, .clicky: return true
+        case .orb, .keyboard, .privacy, .account, .about: return false
+        }
+    }
+
+    /// The settings pages above your two pages in the sidebar, in order.
+    static var pagesBeforeYourPages: [DictationSettingsPage] { allCases.filter(\.showsBeforeYourPages) }
+
+    /// The settings pages below your two pages in the sidebar, in order.
+    static var pagesAfterYourPages: [DictationSettingsPage] { allCases.filter { !$0.showsBeforeYourPages } }
 
     var title: String {
         switch self {

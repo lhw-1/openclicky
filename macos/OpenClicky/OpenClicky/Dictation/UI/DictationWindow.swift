@@ -2,11 +2,11 @@
 //  DictationWindow.swift
 //  OpenClicky
 //
-//  OpenClicky's one window. A native sidebar lists one group, Settings: your words (what you
-//  dictated: try it, this week, every take), how it writes (dictionary, snippets, styles), then the
-//  eight settings pages (general, dictation, keyboard, clicky, the orb, privacy & security,
-//  account, about), every page drawn the same native way, with a search field that filters every
-//  setting; incognito and the account sit at its foot. Every way in (⌘,, the menu
+//  OpenClicky's one window. A native sidebar lists one group, Settings, in this order: General,
+//  Dictation, Clicky, Your words (what you dictated: try it, this week, every take), How it writes
+//  (dictionary, snippets, styles), The Orb, Keyboard, Privacy & Security, Account, About. Every
+//  page is drawn the same native way, a search field filters every setting, and incognito and the
+//  account sit at the sidebar's foot. Every way in (⌘,, the menu
 //  bar, the island, the orb's menu, the Dock) opens this window at the page it asks for. It is
 //  reopened rather than recreated, and remembers its frame.
 //
@@ -115,8 +115,10 @@ final class DictationWindowController: NSWindowController, NSWindowDelegate {
     @available(*, unavailable)
     required init?(coder: NSCoder) { nil }
 
-    /// The sidebar (240 pt) plus a page that still lays out (the record page stacks its two
-    /// columns below about 720 pt); narrower, the split view squeezed the sidebar off its edge.
+    /// The sidebar (240 pt) plus 540 pt for a page. Every page is a grouped form that reflows, so
+    /// the widest fixed row decides: Account's "Add a key" (provider menu, 130 pt key field, Add)
+    /// still leaves its title a readable column at 540 pt and squeezes it to one letter a line by
+    /// 480 pt. Narrower windows also let the split view push the sidebar off its edge.
     static let minimumSize = NSSize(width: 780, height: 560)
 
     /// Tall enough that the whole sidebar shows without scrolling, and no wider than a settings
@@ -196,12 +198,10 @@ struct DictationRootView: View {
             )) {
                 Section("Settings") {
                     // General, Dictation, Clicky, then your two pages, then the rest.
-                    let pages = DictationSettingsPage.allCases
-                    let split = (pages.firstIndex(of: .clicky) ?? pages.count - 1) + 1
-                    ForEach(pages[..<split]) { page in pageRow(page, matches: matches) }
+                    ForEach(DictationSettingsPage.pagesBeforeYourPages) { page in pageRow(page, matches: matches) }
                     sectionRow(.words, count: historyCount)
                     sectionRow(.writing)
-                    ForEach(pages[split...]) { page in pageRow(page, matches: matches) }
+                    ForEach(DictationSettingsPage.pagesAfterYourPages) { page in pageRow(page, matches: matches) }
                 }
             }
             .listStyle(.sidebar)
