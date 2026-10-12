@@ -195,13 +195,13 @@ struct DictationRootView: View {
                 set: { chosen in if let chosen { model.select(chosen) } }
             )) {
                 Section("Settings") {
+                    // General, Dictation, Clicky, then your two pages, then the rest.
+                    let pages = DictationSettingsPage.allCases
+                    let split = (pages.firstIndex(of: .clicky) ?? pages.count - 1) + 1
+                    ForEach(pages[..<split]) { page in pageRow(page, matches: matches) }
                     sectionRow(.words, count: historyCount)
                     sectionRow(.writing)
-                    ForEach(DictationSettingsPage.allCases) { page in
-                        SidebarIconLabel(title: page.title, symbol: page.symbol, tint: page.tint)
-                            .opacity(model.isSearching && !matches.contains { $0.page == page } ? 0.35 : 1)
-                            .tag(DictationDestination.settings(page))
-                    }
+                    ForEach(pages[split...]) { page in pageRow(page, matches: matches) }
                 }
             }
             .listStyle(.sidebar)
@@ -263,6 +263,12 @@ struct DictationRootView: View {
         case .words: WordsPageView(model: model, companionManager: companionManager)
         case .writing: WritingPageView(companionManager: companionManager)
         }
+    }
+
+    private func pageRow(_ page: DictationSettingsPage, matches: [SettingsItem]) -> some View {
+        SidebarIconLabel(title: page.title, symbol: page.symbol, tint: page.tint)
+            .opacity(model.isSearching && !matches.contains { $0.page == page } ? 0.35 : 1)
+            .tag(DictationDestination.settings(page))
     }
 
     private func sectionRow(_ section: DictationSection, count: Int? = nil) -> some View {

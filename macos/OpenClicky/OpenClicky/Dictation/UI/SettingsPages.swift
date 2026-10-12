@@ -14,7 +14,7 @@ import SwiftUI
 
 /// The eight pages, in sidebar order.
 enum DictationSettingsPage: String, CaseIterable, Identifiable {
-    case general, dictation, keyboard, clicky, orb, privacy, account, about
+    case general, dictation, clicky, orb, keyboard, privacy, account, about
     var id: String { rawValue }
 
     var title: String {

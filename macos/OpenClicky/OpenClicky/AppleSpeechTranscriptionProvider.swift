@@ -39,7 +39,7 @@ final class AppleSpeechTranscriptionProvider: BuddyTranscriptionProvider {
         // macOS 26's dictation model where the system has it for this language: the model behind
         // the system's own dictation, far more accurate than SFSpeechRecognizer — which, in the
         // sibling app Saathi, typed "12245" for a spoken sentence. Both are on-device.
-        if #available(macOS 26, *) {
+        if #available(macOS 26, *), !Self.forcesOlderRecognizer {
             do {
                 return try await SpeechAnalyzerDictationSession.start(
                     preferredLocale: preferredLocale,
@@ -61,6 +61,16 @@ final class AppleSpeechTranscriptionProvider: BuddyTranscriptionProvider {
             onFinalTranscriptReady: onFinalTranscriptReady,
             onError: onError
         )
+    }
+
+    /// Debug: `OPENCLICKY_FORCE_SFSPEECH=1` uses SFSpeechRecognizer on macOS 26 too, which is what
+    /// every Mac before macOS 26 runs.
+    private static var forcesOlderRecognizer: Bool {
+        #if DEBUG
+        return ProcessInfo.processInfo.environment["OPENCLICKY_FORCE_SFSPEECH"] == "1"
+        #else
+        return false
+        #endif
     }
 
     private static func makeBestAvailableSpeechRecognizer(preferredLocale: Locale?) -> SFSpeechRecognizer? {
@@ -93,6 +103,8 @@ private final class AppleSpeechTranscriptionSession: NSObject, BuddyStreamingTra
     private let onError: (Error) -> Void
 
     private var latestRecognizedText = ""
+    /// Every stretch the recogniser has closed so far in this take, joined.
+    private var finishedStretchesText = ""
     private var hasRequestedFinalTranscript = false
     private var hasDeliveredFinalTranscript = false
 
@@ -143,7 +155,14 @@ private final class AppleSpeechTranscriptionSession: NSObject, BuddyStreamingTra
         error: Error?
     ) {
         if let result {
-            latestRecognizedText = result.bestTranscription.formattedString
+            let stretchText = result.bestTranscription.formattedString
+            latestRecognizedText = SpokenStretches.joined(finishedStretchesText, stretchText)
+            // After a pause the recogniser closes the stretch (it attaches metadata) and starts the
+            // next one from nothing; without keeping the closed ones, a take of three sentences
+            // pasted only the last (macOS before 26, where this recogniser is the offline engine).
+            if result.speechRecognitionMetadata != nil, !result.isFinal {
+                finishedStretchesText = latestRecognizedText
+            }
             onTranscriptUpdate(latestRecognizedText)
 
             if result.isFinal {
@@ -330,4 +349,20 @@ private final class SpeechAnalyzerDictationSession: BuddyStreamingTranscriptionS
 private final class AudioBufferBox: @unchecked Sendable {
     let buffer: AVAudioPCMBuffer
     init(_ buffer: AVAudioPCMBuffer) { self.buffer = buffer }
+}
+
+/// Joining the recogniser's stretches into one take.
+enum SpokenStretches {
+    /// `finished` then `current`. A stretch ends on a pause, and the recogniser often leaves its
+    /// full stop off; one goes in when the next stretch starts with a capital, as a new sentence.
+    static func joined(_ finished: String, _ current: String) -> String {
+        let finishedTrimmed = finished.trimmingCharacters(in: .whitespacesAndNewlines)
+        let currentTrimmed = current.trimmingCharacters(in: .whitespacesAndNewlines)
+        if finishedTrimmed.isEmpty { return currentTrimmed }
+        if currentTrimmed.isEmpty { return finishedTrimmed }
+        let finishedEndsASentence = finishedTrimmed.last.map { ".!?,;:…".contains($0) } ?? false
+        let currentStartsASentence = currentTrimmed.first?.isUppercase ?? false
+        let separator = !finishedEndsASentence && currentStartsASentence ? ". " : " "
+        return finishedTrimmed + separator + currentTrimmed
+    }
 }

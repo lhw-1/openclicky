@@ -62,6 +62,6 @@ struct DictationWindowNavigationTests {
     }
 
     @Test func thereAreEightSettingsPages() {
-        #expect(DictationSettingsPage.allCases.map(\.title) == ["General", "Dictation", "Keyboard", "Clicky", "The Orb", "Privacy & Security", "Account", "About"])
+        #expect(DictationSettingsPage.allCases.map(\.title) == ["General", "Dictation", "Clicky", "The Orb", "Keyboard", "Privacy & Security", "Account", "About"])
     }
 }
