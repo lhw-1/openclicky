@@ -1035,10 +1035,6 @@ class OverlayWindowManager {
             }
         })
     }
-
-    func isShowingOverlay() -> Bool {
-        return !overlayWindows.isEmpty
-    }
 }
 
 // MARK: - Onboarding Video Player

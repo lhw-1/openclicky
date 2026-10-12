@@ -13,11 +13,10 @@ import AppKit
 import Combine
 import SwiftUI
 
-/// "OpenClicky 0.8.1 (285)", from the bundle.
+/// The version ("0.8.1") and build number ("285"), from the bundle.
 enum AppVersion {
     static var shortVersion: String { Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "" }
     static var buildNumber: String { Bundle.main.infoDictionary?["CFBundleVersion"] as? String ?? "" }
-    static var displayString: String { "OpenClicky \(shortVersion) (\(buildNumber))" }
 }
 
 // MARK: - The catalog

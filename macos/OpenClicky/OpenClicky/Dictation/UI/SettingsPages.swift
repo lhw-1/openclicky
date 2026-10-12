@@ -85,7 +85,7 @@ struct SettingsFormView: View {
 // MARK: - Look
 
 /// The settings window's colours and type: the system's own, so the window reads as part of
-/// macOS in light and dark. Named like `Paper`'s tokens so the rows read the same way.
+/// macOS in light and dark.
 enum SettingsLook {
     /// The proposal's orange accent: #D24E2A in light, #E8653F in dark.
     static let accent = Color(nsColor: NSColor(name: nil) { appearance in
@@ -97,29 +97,20 @@ enum SettingsLook {
     static let rowTitle = Font.system(size: 13)
     static let caption = Font.system(size: 11)
     static let micro = Font.system(size: 10)
-    static let cardTitle = Font.system(size: 15, weight: .semibold)
     static let key = Font.system(size: 12, design: .monospaced)
     static func body(_ size: CGFloat, weight: Font.Weight = .regular) -> Font { .system(size: size, weight: weight) }
 
-    static let ink = Color.primary
-    static let inkSecondary = Color.secondary
     static let inkTertiary = Color(nsColor: .tertiaryLabelColor)
-    static let accentFill = accent
-    static let accentSoft = accent.opacity(0.2)
     static let success = Color(nsColor: .systemGreen)
     static let danger = Color(nsColor: .systemRed)
     static let selection = accent.opacity(0.12)
     static let highlighter = Color.yellow.opacity(0.35)
     static let hairline = Color(nsColor: .separatorColor)
-    static let card = Color(nsColor: .controlBackgroundColor)
-    static let cardRaised = Color(nsColor: .controlBackgroundColor)
     static let warning = Color(nsColor: .systemOrange)
 
     enum Metric {
-        /// The form gives every row its insets; rows add none of their own.
-        static let rowHorizontal: CGFloat = 0
+        /// The form gives every row its horizontal insets; rows add only this vertical breathing room.
         static let rowVertical: CGFloat = 2
-        static let cardRadius: CGFloat = 8
         static let controlRadius: CGFloat = 5
     }
 }

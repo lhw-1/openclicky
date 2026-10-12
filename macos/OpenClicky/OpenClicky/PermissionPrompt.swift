@@ -28,15 +28,6 @@ enum PermissionStep: String, CaseIterable, Identifiable {
 
     var id: String { rawValue }
 
-    var iconName: String {
-        switch self {
-        case .microphone: return "mic"
-        case .accessibility: return "hand.raised"
-        case .screenRecording: return "rectangle.dashed.badge.record"
-        case .screenContent: return "eye"
-        }
-    }
-
     /// What the permission is for, in the card's own words (lowercase, one sentence).
     var headline: String {
         switch self {
@@ -96,8 +87,6 @@ struct PermissionStatus: Equatable {
         case .screenContent: return screenContent
         }
     }
-
-    var allGranted: Bool { PermissionStep.allCases.allSatisfy(isGranted) }
 }
 
 struct PermissionPrompt: Equatable {
