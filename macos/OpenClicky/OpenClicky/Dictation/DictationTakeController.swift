@@ -59,14 +59,19 @@ enum DictationEngineResolver {
     }
 
     /// The model that polishes takes and answers Hey Clicky: Sarvam with a key, else the person's
-    /// own OpenAI or Anthropic key, else the backend with an account, else none.
+    /// own OpenAI, Anthropic, Groq, Gemini, Mistral, OpenRouter or xAI key, else the backend with
+    /// an account, else none.
     static func makePolisher() -> (any TakePolisher)? {
         let sarvamKey = OpenClickyConfiguration.settings.sarvamKey?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         if !sarvamKey.isEmpty { return SarvamTakePolisher(client: SarvamSpeechClient(key: sarvamKey)) }
         // Own keys first: an OpenAI key polishes on OpenAI (BackendTakePolisher routes it there),
-        // an Anthropic key alone polishes on Claude Haiku at Anthropic. No account needed for either.
+        // an Anthropic key alone polishes on Claude Haiku at Anthropic, any other answer key on its
+        // own vendor. No account needed for any of them.
         let credentials = ProviderRouter.currentCredentials()
-        if credentials.openAIKey == nil, let anthropicKey = credentials.anthropicKey { return AnthropicTakePolisher(anthropicKey: anthropicKey) }
+        if credentials.openAIKey == nil {
+            if let anthropicKey = credentials.anthropicKey { return AnthropicTakePolisher(anthropicKey: anthropicKey) }
+            if let answerKeyPolisher = AnswerKeyTakePolisher.firstAvailable(credentials: credentials) { return answerKeyPolisher }
+        }
         switch AccountCapabilities.current().kind {
         case .account: return AccountTakePolisher()
         case .ownKeys: return BackendTakePolisher()

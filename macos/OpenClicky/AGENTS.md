@@ -41,7 +41,7 @@ Every model call asks `ProviderRouter` (`ProviderRoute.swift`) where to go: the 
 | Spoken answers (`ElevenLabsTTSClient`, `SpeechVoices.swift`) | The voice picked in Settings → Clicky → Voice, or Automatic's order: OpenAI, ElevenLabs, Google Cloud, Amazon Polly, Sarvam, Gemini keys; Kokoro and this Mac are local | `POST /tts` (ElevenLabs) |
 | Upload transcription (`OpenAIAudioTranscriptionProvider`) | OpenAI `/audio/transcriptions`, multipart | `POST /agent/transcribe` |
 | Realtime voice (`RealtimeVoiceClient`) | OpenAI `/realtime/client_secrets` | `POST /agent/realtime/session` |
-| Dictation clean-up (`BackendTakePolisher`, `AnthropicTakePolisher`) | OpenAI chat; Claude Haiku with only an Anthropic key | `POST /v1/polish` (`AccountTakePolisher`) |
+| Dictation clean-up (`BackendTakePolisher`, `AnthropicTakePolisher`, `AnswerKeyTakePolisher`) | A Sarvam key first; then OpenAI chat; Claude Haiku with only an Anthropic key; otherwise Groq, Gemini, Mistral, OpenRouter or xAI through the ask lane's provider (quick models for OpenRouter and Mistral; the plans' CLIs are too slow for the 3 s limit). Debug: `OPENCLICKY_SMOKE_POLISH=1` with `--openclicky-smoke-transcribe` forces the clean-up on | `POST /v1/polish` (`AccountTakePolisher`) |
 | Teach a skill (`SkillLibraryStore`) | OpenAI chat with the backend's drafting prompt | `POST /skills/create` |
 | AssemblyAI dictation | — (minted on OpenClicky's key) | `POST /transcribe-token`, account only |
 | `openclicky` CLI | Agent mode: `do --gate-only` (lane) and `run --events` (Codex thread) via `OpenClickyAgentClient.swift`; the CLI routes the same way (`agent/src/providerRoute.ts`) | |

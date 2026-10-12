@@ -246,7 +246,7 @@ struct WritingPageView: View {
     /// what the takes will actually do with the engine in use.
     private var cleanUpRow: some View {
         let hasModel = DictationEngineResolver.makePolisher() != nil
-        let needsModelNote = hasModel ? "" : " Needs a Sarvam key or a free OpenClicky account."
+        let needsModelNote = hasModel ? "" : " Needs an AI key (Settings → Account) or a free OpenClicky account."
         let cleanUpIsOn = Binding<Bool>(
             get: { Self.cleanUpSwitchShowsOn(settings: settings) },
             set: { isOn in

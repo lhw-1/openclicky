@@ -88,12 +88,18 @@ enum DictationSmokeRun {
         }
         print("smoke: heard in \(Int(Date().timeIntervalSince(started) * 1000)) ms: \(raw)")
         let space = DictationSpaceStore().space
-        let context = TakeFormattingContext(style: space.style(forAppBundleID: nil), dictionary: space.dictionary, shortcuts: space.shortcuts, appName: "smoke", language: settings.language, script: settings.script)
+        var style = space.style(forAppBundleID: nil)
+        // OPENCLICKY_SMOKE_POLISH=1: the clean-up runs whatever the switch and the style say.
+        if ProcessInfo.processInfo.environment["OPENCLICKY_SMOKE_POLISH"] == "1" { style.polishWithModel = true }
+        let context = TakeFormattingContext(style: style, dictionary: space.dictionary, shortcuts: space.shortcuts, appName: "smoke", language: settings.language, script: settings.script)
         let polisher: (any TakePolisher)? = {
             if let key = ProcessInfo.processInfo.environment["OPENCLICKY_SARVAM_KEY"], !key.isEmpty { return SarvamTakePolisher(client: SarvamSpeechClient(key: key)) }
             return DictationEngineResolver.makePolisher()
         }()
-        let formatted = await TakeFormatter.format(raw, context: context, polisher: polisher, wantsModel: DictationEngineResolver.wantsModelPolish(settings: settings, engine: engine))
+        let forcesPolish = ProcessInfo.processInfo.environment["OPENCLICKY_SMOKE_POLISH"] == "1"
+        let wantsModel = forcesPolish || DictationEngineResolver.wantsModelPolish(settings: settings, engine: engine)
+        print("smoke: clean-up \(TakeFormatter.modelPassWanted(context: context, wantsModel: wantsModel) ? "on" : "off"), polisher \(polisher?.displayName ?? "none")")
+        let formatted = await TakeFormatter.format(raw, context: context, polisher: polisher, wantsModel: wantsModel)
         print("smoke: formatted (\(formatted.formattingDegraded ? "local rules" : "model")): \(formatted.text)")
         return raw.isEmpty ? 1 : 0
     }
