@@ -13,6 +13,7 @@ when it is more than a question, hand the task to a Codex agent. MIT licensed.
   <a href="docs/architecture.md"><img alt="How it works" src="https://img.shields.io/badge/How_it_works-5E5A52?style=for-the-badge"></a>
   <a href="CONTRIBUTING.md"><img alt="Contributing" src="https://img.shields.io/badge/Contributing-5E5A52?style=for-the-badge"></a>
 </p>
+<p align="center">Or with Homebrew: <code>brew install --cask prasanthsasikumar/tap/openclicky</code></p>
 <p align="center">
   <a href="https://github.com/prasanthsasikumar/openclicky/releases/latest"><img alt="Latest release" src="https://img.shields.io/github/v/release/prasanthsasikumar/openclicky?label=release&color=F0452B"></a>
   <img alt="macOS 14.2 or later" src="https://img.shields.io/badge/macOS-14.2%2B-22201C?logo=apple">
