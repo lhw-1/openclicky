@@ -30,7 +30,9 @@ struct FormattedTake: Equatable {
     var formattingDegraded: Bool
 }
 
-/// A model that can rewrite a take; Sarvam chat or the OpenClicky backend behind it.
+/// A model that can rewrite a take. `DictationEngineResolver.makePolisher` picks one: Apple's
+/// on-device model (`AppleModelTakePolisher`), else Sarvam, OpenAI, Anthropic or another answer key
+/// of the person's own, else the OpenClicky backend on an account (all but Apple's in `TakePolishers.swift`).
 protocol TakePolisher: Sendable {
     var displayName: String { get }
     func polish(system: String, user: String) async throws -> String
@@ -276,77 +278,5 @@ enum TakeFormatter {
             group.cancelAll()
             return first
         }
-    }
-}
-
-/// Polishes through Sarvam's chat completions with the user's key.
-struct SarvamTakePolisher: TakePolisher {
-    let client: SarvamSpeechClient
-    var displayName: String { "Sarvam" }
-    func polish(system: String, user: String) async throws -> String {
-        try await client.complete(system: system, user: user)
-    }
-}
-
-/// Why the backend's chat route did not polish a take. Its own type: these are OpenClicky's
-/// answers, and logging them as Sarvam's ("sarvam refused (401)") sent people to the wrong key.
-enum BackendPolishError: LocalizedError, Equatable {
-    case invalidBackendURL
-    case refused(status: Int, message: String)
-    case unreadable
-
-    var errorDescription: String? {
-        switch self {
-        case .invalidBackendURL: return "the openclicky backend address in settings isn't a valid url."
-        case .refused(let status, let message): return "openclicky refused the clean-up (\(status)): \(message)"
-        case .unreadable: return "openclicky's clean-up answer had no text in it."
-        }
-    }
-}
-
-/// Polishes through the OpenClicky backend's OpenAI-shaped chat route.
-struct BackendTakePolisher: TakePolisher {
-    var displayName: String { "OpenClicky" }
-    func polish(system: String, user: String) async throws -> String {
-        let body: [String: Any] = [
-            "model": "gpt-4o-mini",
-            "messages": [["role": "system", "content": system], ["role": "user", "content": user]],
-            "temperature": 0.2,
-        ]
-        let data: Data
-        let response: URLResponse
-        switch ProviderRouter.current(for: .openAIChat) {
-        case .openAIDirect:
-            // The person's own OpenAI key: the same chat completion, sent to OpenAI itself.
-            guard let openAIKey = ProviderRouter.currentCredentials().openAIKey else { throw BackendPolishError.refused(status: 0, message: ProviderRouter.needsOpenAIKeySentence) }
-            var request = DirectProviderRequests.openAIChatCompletions(key: openAIKey)
-            request.timeoutInterval = 20
-            request.httpBody = try JSONSerialization.data(withJSONObject: body)
-            (data, response) = try await URLSession.shared.data(for: request)
-        case .unavailable(let sentence):
-            throw BackendPolishError.refused(status: 0, message: sentence)
-        case .backend, .anthropicDirect, .answerProvider:
-            guard let url = URL(string: "\(OpenClickyConfiguration.backendBaseURL)/v1/chat/completions") else {
-                throw BackendPolishError.invalidBackendURL
-            }
-            var request = URLRequest(url: url)
-            request.httpMethod = "POST"
-            request.timeoutInterval = 20
-            request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-            OpenClickyConfiguration.authorize(&request)
-            request.httpBody = try JSONSerialization.data(withJSONObject: body)
-            // A refused sign-in is refreshed once and sent again (BackendSignIn); what is left here is the backend's answer.
-            (data, response) = try await BackendSignIn.send(request) { try await URLSession.shared.data(for: $0) }
-        }
-        guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode) else {
-            throw BackendPolishError.refused(status: (response as? HTTPURLResponse)?.statusCode ?? 0, message: String(decoding: data.prefix(200), as: UTF8.self))
-        }
-        guard let answer = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any],
-              let choices = answer["choices"] as? [[String: Any]],
-              let message = choices.first?["message"] as? [String: Any],
-              let content = message["content"] as? String else {
-            throw BackendPolishError.unreadable
-        }
-        return content
     }
 }

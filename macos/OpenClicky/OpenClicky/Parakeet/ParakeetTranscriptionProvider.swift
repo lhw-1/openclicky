@@ -5,7 +5,8 @@
 //  The Parakeet engine as a transcription provider. Parakeet is not a streaming model, so the take
 //  is collected as 16 kHz PCM16 and, while the key is held, the audio so far is read again about
 //  once a second for the orb's live words (a few tenths of a second each on an M-series CPU); on
-//  release the whole take is read once more for the final words.
+//  release the whole take is read once more for the final words. Live words stop once a take
+//  passes 30 seconds, since every live read re-reads the whole take; the final read is unaffected.
 //
 
 import AVFoundation
@@ -14,8 +15,13 @@ import Foundation
 struct ParakeetTranscriptionProvider: BuddyTranscriptionProvider {
     let displayName = "Parakeet (on this Mac)"
     let requiresSpeechRecognitionPermission = false
-    var isConfigured: Bool { ParakeetDictation.isInstalled }
-    var unavailableExplanation: String? { ParakeetDictation.isInstalled ? nil : ParakeetError.notInstalled.localizedDescription }
+    var isConfigured: Bool { unavailableExplanation == nil }
+    /// The resolver's rule (downloaded, and a language Parakeet hears), so the provider and the
+    /// island never disagree about whether Parakeet can run.
+    var unavailableExplanation: String? {
+        DictationEngineResolver.parakeetUnavailableReason(
+            isInstalled: ParakeetDictation.isInstalled, bareLanguageCode: DictationSettings.storedLanguage().bareCode)
+    }
 
     func startStreamingSession(
         keyterms: [String],
@@ -40,6 +46,10 @@ final class ParakeetTranscriptionSession: BuddyStreamingTranscriptionSession, @u
     private static let partialIntervalNanoseconds: UInt64 = 1_000_000_000
     /// New audio needed before another live read is worth it: half a second.
     private static let partialMinimumNewBytes = sampleRate
+    /// Past this much audio the live words stop: each live read re-reads the whole take, so a long
+    /// take would keep the helper busy (and the CPU hot) for longer with every second spoken.
+    static let liveWordsAudioLimitSeconds = 30
+    static let liveWordsAudioLimitBytes = sampleRate * MemoryLayout<Int16>.size * liveWordsAudioLimitSeconds
 
     private let onTranscriptUpdate: (String) -> Void
     private let onFinalTranscriptReady: (String) -> Void
@@ -64,7 +74,20 @@ final class ParakeetTranscriptionSession: BuddyStreamingTranscriptionSession, @u
         self.onFinalTranscriptReady = onFinalTranscriptReady
         self.onError = onError
         self.transcribe = transcribe
-        partialTask = Task { [weak self] in await self?.readPartialsUntilReleased() }
+        // The loop holds the session only weakly, and strongly only for the length of one live
+        // read: a session nobody uses any more goes away instead of being kept alive by its own
+        // loop until a cancel that may never come.
+        partialTask = Task { [weak self] in
+            while !Task.isCancelled {
+                try? await Task.sleep(nanoseconds: Self.partialIntervalNanoseconds)
+                guard let session = self else { return }
+                if await session.readLiveWordsOnce() == .stopReading { return }
+            }
+        }
+    }
+
+    deinit {
+        partialTask?.cancel()
     }
 
     func appendAudioBuffer(_ audioBuffer: AVAudioPCMBuffer) {
@@ -109,20 +132,29 @@ final class ParakeetTranscriptionSession: BuddyStreamingTranscriptionSession, @u
 
     private var cancelled: Bool { stateQueue.sync { isCancelled } }
 
-    /// Reads the audio so far about once a second while the key is held; a read still running
-    /// when the next is due simply delays it (the helper answers one request at a time).
-    private func readPartialsUntilReleased() async {
-        while !Task.isCancelled {
-            try? await Task.sleep(nanoseconds: Self.partialIntervalNanoseconds)
-            let snapshot: Data? = stateQueue.sync {
-                guard !hasRequestedFinal, !isCancelled, pcm16.count - bytesAtLastPartial >= Self.partialMinimumNewBytes else { return nil }
-                bytesAtLastPartial = pcm16.count
-                return pcm16
-            }
-            guard let snapshot, !Task.isCancelled else { continue }
-            guard let text = try? await transcribe(snapshot), !Task.isCancelled else { continue }
+    private enum LiveReadOutcome { case keepReading, stopReading }
+
+    /// One live read of the audio so far, when enough new audio arrived. A read still running when
+    /// the next is due simply delays it (the helper answers one request at a time).
+    private func readLiveWordsOnce() async -> LiveReadOutcome {
+        enum Snapshot { case notYet, tooLong, audio(Data) }
+        let snapshot: Snapshot = stateQueue.sync {
+            if pcm16.count > Self.liveWordsAudioLimitBytes { return .tooLong }
+            guard !hasRequestedFinal, !isCancelled, pcm16.count - bytesAtLastPartial >= Self.partialMinimumNewBytes else { return .notYet }
+            bytesAtLastPartial = pcm16.count
+            return .audio(pcm16)
+        }
+        switch snapshot {
+        case .tooLong:
+            AppLog.append("transcription (parakeet): live words stop past \(Self.liveWordsAudioLimitSeconds) s; the whole take is read on release")
+            return .stopReading
+        case .notYet:
+            return .keepReading
+        case .audio(let audioSoFar):
+            guard !Task.isCancelled, let text = try? await transcribe(audioSoFar), !Task.isCancelled else { return .keepReading }
             let stillListening = stateQueue.sync { !hasRequestedFinal && !isCancelled }
             if stillListening, !text.isEmpty { onTranscriptUpdate(text) }
+            return .keepReading
         }
     }
 }

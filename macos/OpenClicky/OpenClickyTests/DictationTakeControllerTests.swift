@@ -112,6 +112,8 @@ private struct Harness {
         var heldModifierFlags: CGEventFlags = []
         /// What reading the field back after a paste finds.
         var landing: PasteLanding = .verified
+        /// How many times the controller asked the host to build a polisher.
+        var polisherBuilds = 0
     }
 
     init(polisher: (any TakePolisher)? = nil, field: FocusedFieldSnapshot? = nil) throws {
@@ -143,7 +145,7 @@ private struct Harness {
         host.now = { pasted.now }
         host.readFocusedTextTarget = { pasted.focusedTarget }
         host.heldModifierFlags = { pasted.heldModifierFlags }
-        host.makePolisher = { polisher }
+        host.makePolisher = { pasted.polisherBuilds += 1; return polisher }
         host.engineUnavailableReason = { _ in nil }
         let spaceStore = DictationSpaceStore(directoryURL: FileManager.default.temporaryDirectory.appendingPathComponent("space-\(UUID().uuidString)"))
         let audioStore = TakeAudioStore(directoryURL: FileManager.default.temporaryDirectory.appendingPathComponent("audio-\(UUID().uuidString)"))
@@ -845,6 +847,44 @@ struct DictationTakeControllerTests {
         #expect(h.capture.providerReplacements == 1)
         h.controller.handle(.dictationPressed)
         #expect(h.capture.providerReplacements == 1)
+    }
+
+    /// Live typing's decision, the clean-up and the box's chips all read one polisher per take.
+    @Test @MainActor func aTakeBuildsItsPolisherOnce() async throws {
+        let h = try Harness(polisher: CountingPolisher())
+        h.controller.handle(.dictationPressed)
+        await h.waitUntil { h.controller.state == .listening }
+        h.controller.handle(.dictationReleased(wasTap: false))
+        h.capture.deliverFinal("hello there")
+        await h.waitUntil { h.controller.state == .idle }
+        #expect(h.pasted.texts == ["Polished."])
+        #expect(h.pasted.polisherBuilds == 1)
+    }
+
+    /// A failed take's audio is kept for a retry only when a network engine heard it (the rule in
+    /// TakeAudioStore's header): an engine on this Mac has no key, credits or network to wait for.
+    @Test @MainActor func onlyANetworkEnginesFailedTakeKeepsItsAudio() async throws {
+        for engine in [DictationEngineChoice.offline, .parakeet, .sarvam] {
+            let h = try Harness()
+            h.settings.engine = engine
+            await h.settle()
+            h.controller.handle(.dictationPressed)
+            await h.waitUntil { h.controller.state == .listening }
+            h.capture.audioRetentionSink?(try Self.oneSecondOfSound())
+            h.capture.errors.send("the network went away")
+            await h.waitUntil { h.controller.state == .idle }
+            #expect((h.controller.retryableTakeID != nil) == !engine.isOnDevice, "engine \(engine.rawValue)")
+        }
+    }
+
+    /// One second of a quiet tone at 16 kHz, as the microphone tap would hand it over.
+    private static func oneSecondOfSound() throws -> AVAudioPCMBuffer {
+        let format = try #require(AVAudioFormat(standardFormatWithSampleRate: 16_000, channels: 1))
+        let buffer = try #require(AVAudioPCMBuffer(pcmFormat: format, frameCapacity: 16_000))
+        buffer.frameLength = 16_000
+        let samples = try #require(buffer.floatChannelData?[0])
+        for sampleIndex in 0..<16_000 { samples[sampleIndex] = 0.1 * sin(Float(sampleIndex) * 0.05) }
+        return buffer
     }
 }
 

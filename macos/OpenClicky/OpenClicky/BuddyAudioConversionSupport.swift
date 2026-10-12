@@ -106,3 +106,28 @@ enum BuddyWAVFileBuilder {
         return Data(bytes: &littleEndianValue, count: MemoryLayout<T>.size)
     }
 }
+
+/// The silence check the upload engines share before they send a take. A take whose loudest
+/// sample never rises above the room's noise floor is not uploaded: the models answer silence with
+/// their own prompt or a made-up phrase, and a microphone held by another engine records only zeros.
+enum PCM16SilenceGate {
+    /// Loudest sample magnitude (0…32767) below which the whole take counts as silence.
+    static let silentTakePeakMagnitude: Int16 = 400
+
+    /// The loudest sample magnitude in 16-bit mono PCM (`Int16.min` counts as `Int16.max`).
+    static func peakMagnitude(of pcm16: Data) -> Int16 {
+        var loudestMagnitude: Int16 = 0
+        pcm16.withUnsafeBytes { rawBuffer in
+            for sample in rawBuffer.bindMemory(to: Int16.self) {
+                let magnitude = sample == Int16.min ? Int16.max : abs(sample)
+                if magnitude > loudestMagnitude { loudestMagnitude = magnitude }
+            }
+        }
+        return loudestMagnitude
+    }
+
+    /// Whether a take whose loudest sample was `peakMagnitude` should be treated as silence.
+    static func isSilent(peakMagnitude: Int16) -> Bool {
+        peakMagnitude < silentTakePeakMagnitude
+    }
+}

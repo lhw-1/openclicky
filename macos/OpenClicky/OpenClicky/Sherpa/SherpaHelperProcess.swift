@@ -80,11 +80,6 @@ nonisolated final class SherpaHelperClient: @unchecked Sendable {
         }
     }
 
-    /// Starts the helper now if it isn't running, so the model can load before it is needed.
-    func start() {
-        queue.async { try? self.startIfNeeded() }
-    }
-
     /// Ends the helper; tells `completion`, on the main queue, whether one was running.
     func unload(completion: @escaping @Sendable (Bool) -> Void = { _ in }) {
         queue.async {

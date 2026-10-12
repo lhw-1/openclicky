@@ -54,7 +54,7 @@ struct NotchBandRow: View {
                 .frame(maxWidth: sideWidth, alignment: .leading)
             Spacer(minLength: 8)
             HStack(spacing: 6) {
-                VoiceDestinationPill(companionManager: companionManager, settings: companionManager.dictationSettings, length: .glyphOnly)
+                VoiceDestinationPill(companionManager: companionManager, settings: companionManager.dictationSettings)
                 // Settings live in the window only: an island page of switches was a second,
                 // smaller settings that stayed open behind the pointer.
                 bandIconButton(systemImage: "gearshape.fill", help: "settings") {
@@ -114,42 +114,27 @@ struct NotchPointerStatus: View {
     }
 }
 
-/// Where dictated words go, as the band's pill says it: "voice stays on this mac", "sarvam hears
-/// you", "openai hears you", "assemblyai hears you". When the chosen engine cannot run it says what
-/// is missing in orange instead ("set up backend ›", "add sarvam key ›"). A tap opens the voice
-/// settings, or what the blocked engine needs.
+/// Where dictated words go, as the band's round pill shows it: a green microphone while the chosen
+/// engine can run, an orange "!" when it can't (its hover text and spoken label say what is
+/// missing). A tap opens the voice settings, or what the blocked engine needs.
 private struct VoiceDestinationPill: View {
-    enum Length { case full, short, glyphOnly }
-
     @ObservedObject var companionManager: CompanionManager
     @ObservedObject var settings: DictationSettings
-    let length: Length
 
     var body: some View {
         let engine = settings.engine
         let blockedLabel = NotchVoiceDestination.blockedPillLabel(for: engine)
         return Button(action: { NotchVoiceDestination.openSetup(for: engine, companionManager: companionManager) }) {
             HStack(spacing: 5) {
-                if let blockedLabel {
-                    if length == .glyphOnly {
-                        Image(systemName: "exclamationmark").font(.system(size: 10, weight: .bold))
-                    } else {
-                        Text(blockedLabel).font(.system(size: 12, weight: .semibold)).lineLimit(1)
-                    }
+                if blockedLabel != nil {
+                    Image(systemName: "exclamationmark").font(.system(size: 10, weight: .bold))
                 } else {
                     Image(systemName: "mic.fill")
                         .font(.system(size: 9, weight: .semibold))
                         .foregroundColor(DS.HUD.live)
-                    if length != .glyphOnly {
-                        Text(length == .full ? NotchVoiceDestination.pillLabel(for: engine) : NotchVoiceDestination.shortPillLabel(for: engine))
-                            .font(.system(size: 12, weight: .medium))
-                            .foregroundColor(Color(hex: "#E5E5E5"))
-                            .lineLimit(1)
-                    }
                 }
             }
             .foregroundColor(blockedLabel == nil ? DS.HUD.text : .black)
-            .padding(.horizontal, length == .glyphOnly ? 0 : 10)
             .frame(minWidth: DS.HUD.pillHeight, minHeight: DS.HUD.pillHeight, maxHeight: DS.HUD.pillHeight)
             .background(Capsule().fill(blockedLabel == nil ? DS.HUD.bandControl : DS.HUD.pointer))
             .fixedSize()
@@ -159,68 +144,63 @@ private struct VoiceDestinationPill: View {
         .help(blockedLabel == nil
               ? "dictation is heard by \(engine.displayName.lowercased()). click to change."
               : DictationEngineResolver.unavailableReason(for: engine) ?? "")
+        // The pill shows only a glyph, so its words are what VoiceOver says.
+        .accessibilityLabel(blockedLabel ?? "dictation is heard by \(engine.listenerName)")
     }
 }
 
-/// The words the HUD uses for where the voice goes, shared by the pill, the Home warning card and
-/// the Settings summary.
+/// What the island says about the dictation engine: the pill's call to action and where it leads.
 enum NotchVoiceDestination {
-    static func pillLabel(for engine: DictationEngineChoice) -> String {
-        switch engine {
-        case .offline, .parakeet: return "voice stays on this mac"
-        case .sarvam: return "sarvam hears you"
-        case .openclicky: return "openai hears you"
-        case .assemblyai: return "assemblyai hears you"
-        }
-    }
-
-    static func shortPillLabel(for engine: DictationEngineChoice) -> String {
-        switch engine {
-        case .offline, .parakeet: return "on this mac"
-        case .sarvam: return "sarvam"
-        case .openclicky: return "openai"
-        case .assemblyai: return "assemblyai"
-        }
-    }
-
-    /// Who hears the voice, for the Settings summary ("hears you: this mac").
-    static func listenerName(for engine: DictationEngineChoice) -> String {
-        switch engine {
-        case .offline, .parakeet: return "this mac"
-        case .sarvam: return "sarvam"
-        case .openclicky: return "openai"
-        case .assemblyai: return "assemblyai"
-        }
-    }
-
-    /// The speech-to-text model behind the engine, for the Settings summary.
-    static func speechToTextName(for engine: DictationEngineChoice) -> String {
-        switch engine {
-        case .offline: return "apple"
-        case .parakeet: return "parakeet"
-        case .sarvam: return "saaras v4"
-        case .openclicky: return "openai, via openclicky"
-        case .assemblyai: return "assemblyai streaming"
-        }
-    }
-
-    /// Nil when the engine can run; otherwise the pill's orange call to action.
+    /// Nil when the engine can run; otherwise the pill's call to action, naming what is missing.
     static func blockedPillLabel(for engine: DictationEngineChoice) -> String? {
-        guard DictationEngineResolver.unavailableReason(for: engine) != nil else { return nil }
+        guard let reason = DictationEngineResolver.unavailableReason(for: engine) else { return nil }
         switch engine {
-        case .sarvam: return "add sarvam key ›"
-        case .parakeet: return "download parakeet ›"
-        default: return "set up backend ›"
+        case .sarvam:
+            return "add sarvam key ›"
+        case .parakeet:
+            // Downloaded but pinned to a language it doesn't hear: downloading again would not help.
+            return reason == DictationEngineResolver.parakeetLanguageNotHeardReason ? "pick a language parakeet hears ›" : "download parakeet ›"
+        case .offline, .openclicky, .assemblyai:
+            return "set up backend ›"
         }
     }
 
-    /// Where the pill (and the Home warning card) sends the user: Settings → Account when the
-    /// engine still needs a key or a sign-in, Settings → Dictation when nothing is missing.
+    /// The place in the window that fixes the engine.
+    enum SetupDestination: Equatable {
+        /// Settings → Account: a key or a sign-in is missing.
+        case accountSettings
+        /// Settings → Dictation: the engines, and Parakeet's download next to its option.
+        case dictationSettings
+        /// "How it writes", where the dictation language is chosen.
+        case languageSettings
+
+        /// The warning's button, named for the page it really opens.
+        var buttonTitle: String {
+            switch self {
+            case .accountSettings: return "open account settings"
+            case .dictationSettings: return "open dictation settings"
+            case .languageSettings: return "open language settings"
+            }
+        }
+    }
+
+    /// Where the engine is fixed, given why it can't run (nil: it can, and the pill opens the
+    /// engines). An engine on this Mac needs no key or account: what it can miss is its download
+    /// (Settings → Dictation) or, for Parakeet, a language it hears.
+    static func setupDestination(for engine: DictationEngineChoice, unavailableReason: String?) -> SetupDestination {
+        guard let unavailableReason else { return .dictationSettings }
+        if unavailableReason == DictationEngineResolver.parakeetLanguageNotHeardReason { return .languageSettings }
+        return engine.isOnDevice ? .dictationSettings : .accountSettings
+    }
+
+    /// Where the pill (and the warning in the panel's body) sends the user.
     @MainActor
     static func openSetup(for engine: DictationEngineChoice, companionManager: CompanionManager) {
-        let isMissingSomething = DictationEngineResolver.unavailableReason(for: engine) != nil
-        // Parakeet's download lives on the Dictation page, next to the engine.
-        companionManager.showSettings(isMissingSomething && engine != .parakeet ? .account : .dictation)
+        switch setupDestination(for: engine, unavailableReason: DictationEngineResolver.unavailableReason(for: engine)) {
+        case .accountSettings: companionManager.showSettings(.account)
+        case .dictationSettings: companionManager.showSettings(.dictation)
+        case .languageSettings: companionManager.showDictationWindow(section: .writing)
+        }
     }
 }
 
@@ -365,19 +345,25 @@ struct NotchEngineWarning: Equatable {
     let buttonTitle: String
     let engine: DictationEngineChoice
 
+    /// Nil when the engine can run. Otherwise the resolver's own reason, so the island says what is
+    /// really missing (Parakeet's download or its language, a key, an account) rather than one
+    /// "needs the backend" for everything, and a button named for the page it opens.
     init?(engine: DictationEngineChoice) {
-        guard DictationEngineResolver.unavailableReason(for: engine) != nil else { return nil }
+        self.init(engine: engine, unavailableReason: DictationEngineResolver.unavailableReason(for: engine))
+    }
+
+    /// The same, for a reason already known (the tests give their own).
+    init?(engine: DictationEngineChoice, unavailableReason: String?) {
+        guard let unavailableReason else { return nil }
         self.engine = engine
-        if engine == .sarvam {
-            heading = "SARVAM NEEDS A KEY"
-            message = "you picked sarvam to hear you, but no key is saved. dictation stays off until it is."
-            buttonTitle = "add key in settings"
+        heading = "\(engine.displayName.uppercased()) CAN'T HEAR YOU YET"
+        // The resolver's reasons are either "needs …" (said of the engine) or a whole sentence.
+        if unavailableReason.hasPrefix("needs") {
+            message = "\(engine.displayName.lowercased()) \(unavailableReason). dictation stays off until then."
         } else {
-            let listener = NotchVoiceDestination.listenerName(for: engine)
-            heading = "\(listener.uppercased()) NEEDS THE BACKEND"
-            message = "you picked \(listener) to hear you, which goes through openclicky. sign in or add your own key."
-            buttonTitle = "open shell.json"
+            message = "\(unavailableReason). dictation stays off until then."
         }
+        buttonTitle = NotchVoiceDestination.setupDestination(for: engine, unavailableReason: unavailableReason).buttonTitle
     }
 }
 

@@ -99,13 +99,6 @@ struct StableWordCommitter {
         return newlyCommittedWords
     }
 
-    /// The words of a partial that are not committed yet (what the orb still shows).
-    func uncommittedTail(of partial: String) -> String {
-        let partialWords = Self.words(of: partial)
-        let alignment = TranscriptAlignment.align(finalWords: partialWords, committedWords: committedWords)
-        return alignment.remainingWords(of: partialWords).joined(separator: " ")
-    }
-
     static func words(of text: String) -> [String] {
         text.split(whereSeparator: { $0.isWhitespace }).map(String.init)
     }

@@ -15,8 +15,8 @@ extension SettingsCatalog {
         let engineItems = DictationEngineChoice.allCases.map { choice in
             SettingsItem(
                 id: "dictation.engine.\(choice.rawValue)", page: .dictation, section: "Who hears you",
-                title: VoiceProviderCopy.title(for: choice), detail: VoiceProviderCopy.detail(for: choice),
-                keywords: VoiceProviderCopy.keywords(for: choice),
+                title: choice.settingsTitle, detail: choice.settingsDetail,
+                keywords: choice.searchKeywords,
                 view: AnyView(VoiceProviderOption(choice: choice, settings: settings, companionManager: companionManager)))
         }
         return engineItems + [
@@ -47,63 +47,10 @@ extension SettingsCatalog {
     }
 }
 
-/// What each engine is called and where its audio goes.
-enum VoiceProviderCopy {
-    static func title(for choice: DictationEngineChoice) -> String {
-        switch choice {
-        case .offline: return "This Mac"
-        case .parakeet: return "Parakeet, on this Mac"
-        case .sarvam: return "Sarvam"
-        case .openclicky: return "OpenAI, via OpenClicky"
-        case .assemblyai: return "AssemblyAI, via OpenClicky"
-        }
-    }
-
-    static func tag(for choice: DictationEngineChoice) -> String {
-        switch choice {
-        case .offline, .parakeet: return "Private · offline"
-        case .sarvam: return "Audio goes to Sarvam"
-        case .openclicky: return "Audio goes to OpenAI"
-        case .assemblyai: return "Audio goes to AssemblyAI"
-        }
-    }
-
-    static func detail(for choice: DictationEngineChoice) -> String {
-        switch choice {
-        case .offline: return "Apple’s on-device recogniser. Nothing leaves this Mac. No key, no account."
-        case .parakeet: return ParakeetDictation.isRecommendedForThisMac
-            ? "Far more accurate than Apple’s recogniser on this Mac, and offline too. English and 24 European languages. A \(ParakeetDictation.downloadSizeText) download."
-            : "NVIDIA’s open model, offline. English and 24 European languages. A \(ParakeetDictation.downloadSizeText) download."
-        case .sarvam: return "Saaras hears eleven Indian languages. Billed by Sarvam to your key."
-        case .openclicky: return "Needs an OpenClicky account or your own OpenAI key."
-        case .assemblyai: return "Words appear as you speak. Needs the OpenClicky backend."
-        }
-    }
-
-    /// The short note on the right while the engine can't be used yet.
-    static func unavailableBadge(for choice: DictationEngineChoice) -> String {
-        switch choice {
-        case .offline: return ""
-        case .parakeet: return "Not downloaded"
-        case .sarvam: return "Needs a key"
-        case .openclicky: return "Needs account"
-        case .assemblyai: return "Needs backend"
-        }
-    }
-
-    static func keywords(for choice: DictationEngineChoice) -> [String] {
-        let common = ["engine", "provider", "transcription", "speech", "who hears you", tag(for: choice)]
-        switch choice {
-        case .offline: return common + ["offline", "local", "apple", "private", "on device"]
-        case .parakeet: return common + ["offline", "local", "parakeet", "nvidia", "private", "on device", "download", "model"]
-        case .sarvam: return common + ["sarvam", "saaras", "key", "api key", "indian", "hindi"]
-        case .openclicky: return common + ["openai", "openclicky", "account", "backend", "cloud"]
-        case .assemblyai: return common + ["assemblyai", "streaming", "backend", "cloud"]
-        }
-    }
-}
-
 // MARK: - who hears you
+//
+// Each engine's name, tag, detail, badge and search words are properties of
+// `DictationEngineChoice` (DictationSettings.swift), so this page and the island read one copy.
 
 /// One engine as a radio option: the button, its name and tag, what it does, and on the right
 /// what it still needs. The chosen engine that can't run yet says why, with the way to fix it.
@@ -130,16 +77,16 @@ private struct VoiceProviderOption: View {
                     SettingsRadioDot(isSelected: isSelected).padding(.top, 1)
                     VStack(alignment: .leading, spacing: 2) {
                         HStack(spacing: 8) {
-                            Text(settingsHighlighted(VoiceProviderCopy.title(for: choice), query: searchQuery)).font(SettingsLook.rowTitle)
-                            SettingsTag(text: VoiceProviderCopy.tag(for: choice), isPositive: choice == .offline || choice == .parakeet)
+                            Text(settingsHighlighted(choice.settingsTitle, query: searchQuery)).font(SettingsLook.rowTitle)
+                            SettingsTag(text: choice.audioDestinationTag, isPositive: choice.isOnDevice)
                         }
-                        Text(settingsHighlighted(VoiceProviderCopy.detail(for: choice), query: searchQuery))
+                        Text(settingsHighlighted(choice.settingsDetail, query: searchQuery))
                             .font(SettingsLook.caption).foregroundStyle(.secondary)
                             .fixedSize(horizontal: false, vertical: true)
                     }
                     Spacer(minLength: 12)
                     if unavailableReason != nil {
-                        Text(VoiceProviderCopy.unavailableBadge(for: choice))
+                        Text(choice.unavailableBadge)
                             .font(SettingsLook.caption).foregroundStyle(isSelected ? SettingsLook.danger : .secondary)
                             .help(unavailableReason ?? "")
                     }
@@ -147,8 +94,8 @@ private struct VoiceProviderOption: View {
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
-            .accessibilityLabel("\(VoiceProviderCopy.title(for: choice)), \(VoiceProviderCopy.tag(for: choice))")
-            .accessibilityHint(unavailableReason ?? VoiceProviderCopy.detail(for: choice))
+            .accessibilityLabel("\(choice.settingsTitle), \(choice.audioDestinationTag)")
+            .accessibilityHint(unavailableReason ?? choice.settingsDetail)
             .accessibilityAddTraits(isSelected ? .isSelected : [])
 
             if choice == .parakeet, isSelected || parakeet.state.isBusy || parakeet.state == .installed {

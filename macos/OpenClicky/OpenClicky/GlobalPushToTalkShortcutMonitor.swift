@@ -30,20 +30,14 @@ final class GlobalPushToTalkShortcutMonitor: ObservableObject {
 
     private var globalEventTap: CFMachPort?
     private var globalEventTapRunLoopSource: CFRunLoopSource?
-    /// Mutated exclusively from the CGEvent tap callback, which runs on
-    /// `CFRunLoopGetMain()` and therefore always executes on the main thread.
-    /// Published so the overlay can hide immediately on key release without
-    /// waiting for the async dictation state pipeline to catch up.
-    @Published private(set) var isShortcutCurrentlyPressed = false
 
     deinit {
         stop()
     }
 
     func start() {
-        // If the event tap is already running, don't restart it.
-        // Restarting resets isShortcutCurrentlyPressed, which would kill
-        // the waveform overlay mid-press when the permission poller calls
+        // If the event tap is already running, don't restart it: restarting resets the shortcut
+        // recogniser, which would drop a press in progress when the permission poller calls
         // refreshAllPermissions → start() every few seconds.
         guard globalEventTap == nil else { return }
 
@@ -97,7 +91,6 @@ final class GlobalPushToTalkShortcutMonitor: ObservableObject {
     }
 
     func stop() {
-        isShortcutCurrentlyPressed = false
         shortcutRecognizer.reset()
 
         if let globalEventTapRunLoopSource {
@@ -149,10 +142,8 @@ final class GlobalPushToTalkShortcutMonitor: ObservableObject {
         for shortcutEvent in shortcutEvents {
             switch shortcutEvent {
             case .talkPressed:
-                isShortcutCurrentlyPressed = true
                 shortcutTransitionPublisher.send(.pressed)
             case .talkReleased:
-                isShortcutCurrentlyPressed = false
                 shortcutTransitionPublisher.send(.released)
             case .dictationPressed, .dictationEditPressed, .dictationEditModifierJoined, .dictationReleased, .dictationDoubleTapped,
                  .escapePressed, .textComposerRequested, .handsFreeToggleRequested:
