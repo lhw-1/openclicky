@@ -37,23 +37,107 @@ enum DictationEngineChoice: String, CaseIterable, Identifiable {
         }
     }
 
-    /// The word in the notch HUD's pill: where the dictated words come from.
-    var sourceBadge: String {
+    /// The engines whose audio never leaves this Mac. Every rule that follows from "nothing leaves
+    /// the Mac" reads this one property instead of naming the engines again: no model clean-up
+    /// unless it was allowed by name, no failed take's audio kept for a retry (a local engine that
+    /// failed has no key, credits or network to wait for), the "private · offline" tag.
+    var isOnDevice: Bool {
         switch self {
-        case .offline, .parakeet: return "local"
-        case .sarvam: return "Sarvam"
-        case .openclicky: return "OpenAI"
-        case .assemblyai: return "AssemblyAI"
+        case .offline, .parakeet: return true
+        case .sarvam, .openclicky, .assemblyai: return false
+        }
+    }
+}
+
+// MARK: - What each engine is called and where its audio goes
+
+/// Every per-engine sentence the windows and the island show, in one place: adding an engine means
+/// adding its words here, and the views read these properties rather than switching themselves.
+extension DictationEngineChoice {
+    /// Who hears the voice, lower case, for the island ("this mac", "sarvam").
+    var listenerName: String {
+        switch self {
+        case .offline, .parakeet: return "this mac"
+        case .sarvam: return "sarvam"
+        case .openclicky: return "openai"
+        case .assemblyai: return "assemblyai"
         }
     }
 
-    var detail: String {
+    /// The engine's name in Settings → Dictation's "Who hears you".
+    var settingsTitle: String {
         switch self {
-        case .offline: return "apple's recogniser, offline. your voice never leaves this mac."
-        case .parakeet: return "parakeet, offline. your voice never leaves this mac."
-        case .sarvam: return "saaras hears eleven indian languages. audio goes to sarvam with your key."
-        case .openclicky: return "transcribed by the openclicky backend with your account or your openai key."
-        case .assemblyai: return "streaming transcription through the openclicky backend."
+        case .offline: return "This Mac"
+        case .parakeet: return "Parakeet, on this Mac"
+        case .sarvam: return "Sarvam"
+        case .openclicky: return "OpenAI, via OpenClicky"
+        case .assemblyai: return "AssemblyAI, via OpenClicky"
+        }
+    }
+
+    /// The title of the "how to dictate" row on the Your words page.
+    var howToDictateTitle: String {
+        switch self {
+        case .offline: return "On this Mac"
+        case .sarvam: return "Sarvam hears you"
+        case .parakeet, .openclicky, .assemblyai: return settingsTitle
+        }
+    }
+
+    /// The tag beside the engine's name in Settings: where the audio goes.
+    var audioDestinationTag: String {
+        switch self {
+        case .offline, .parakeet: return "Private · offline"
+        case .sarvam: return "Audio goes to Sarvam"
+        case .openclicky: return "Audio goes to OpenAI"
+        case .assemblyai: return "Audio goes to AssemblyAI"
+        }
+    }
+
+    /// Where a take's audio goes, as one sentence for the Your words page.
+    var audioDestinationSentence: String {
+        switch self {
+        case .offline, .parakeet: return "Your voice stays on this Mac."
+        case .sarvam: return "Audio goes to Sarvam with your key."
+        case .openclicky: return "Audio goes to OpenAI through the OpenClicky backend."
+        case .assemblyai: return "Audio goes to AssemblyAI through the OpenClicky backend."
+        }
+    }
+
+    /// What the engine does and what it needs, under its name in Settings.
+    var settingsDetail: String {
+        switch self {
+        case .offline: return "Apple’s on-device recogniser. Nothing leaves this Mac. No key, no account."
+        case .parakeet: return ParakeetDictation.isRecommendedForThisMac
+            ? "Far more accurate than Apple’s recogniser on this Mac, and offline too. English and 24 European languages. A \(ParakeetDictation.downloadSizeText) download."
+            : "NVIDIA’s open model, offline. English and 24 European languages. A \(ParakeetDictation.downloadSizeText) download."
+        case .sarvam: return "Saaras hears eleven Indian languages. Billed by Sarvam to your key."
+        case .openclicky: return "Needs an OpenClicky account or your own OpenAI key."
+        case .assemblyai: return "Words appear as you speak. Needs the OpenClicky backend."
+        }
+    }
+
+    /// The short note on the right of the engine in Settings while it can't be used yet.
+    var unavailableBadge: String {
+        switch self {
+        case .offline: return ""
+        case .parakeet: return "Not downloaded"
+        case .sarvam: return "Needs a key"
+        case .openclicky: return "Needs account"
+        case .assemblyai: return "Needs backend"
+        }
+    }
+
+    /// The words the settings search finds the engine by, besides its title and detail.
+    var searchKeywords: [String] {
+        let common = ["engine", "provider", "transcription", "speech", "who hears you", audioDestinationTag]
+        let onDeviceKeywords = isOnDevice ? ["offline", "local", "private", "on device"] : ["cloud"]
+        switch self {
+        case .offline: return common + onDeviceKeywords + ["apple"]
+        case .parakeet: return common + onDeviceKeywords + ["parakeet", "nvidia", "download", "model"]
+        case .sarvam: return common + ["sarvam", "saaras", "key", "api key", "indian", "hindi"]
+        case .openclicky: return common + onDeviceKeywords + ["openai", "openclicky", "account", "backend"]
+        case .assemblyai: return common + onDeviceKeywords + ["assemblyai", "streaming", "backend"]
         }
     }
 }
@@ -258,6 +342,12 @@ final class DictationSettings: ObservableObject {
     }
 
     var language: DictationLanguage { DictationLanguage.named(languageCode) }
+
+    /// The stored dictation language, readable off the main actor: the polisher and the engine
+    /// checks are built from background tasks too, and they read the same key `languageCode` writes.
+    nonisolated static func storedLanguage(defaults: UserDefaults = .standard) -> DictationLanguage {
+        DictationLanguage.named(defaults.string(forKey: Keys.language) ?? DictationLanguage.auto.code)
+    }
 
     // MARK: keys
 

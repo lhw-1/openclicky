@@ -108,7 +108,7 @@ struct WordsPageView: View {
                             .fill(unavailableReason == nil ? SettingsLook.success : SettingsLook.danger)
                             .frame(width: 7, height: 7)
                             .accessibilityHidden(true)
-                        Text(engineTitle).font(SettingsLook.rowTitle)
+                        Text(settings.engine.howToDictateTitle).font(SettingsLook.rowTitle)
                     }
                     if let unavailableReason {
                         Text(Self.sentenceCased(unavailableReason) + ".")
@@ -130,17 +130,6 @@ struct WordsPageView: View {
         }
     }
 
-    /// Who hears you, as the row's title.
-    private var engineTitle: String {
-        switch settings.engine {
-        case .offline: return "On this Mac"
-        case .parakeet: return "Parakeet, on this Mac"
-        case .sarvam: return "Sarvam hears you"
-        case .openclicky: return "OpenAI, via OpenClicky"
-        case .assemblyai: return "AssemblyAI, via OpenClicky"
-        }
-    }
-
     /// Where a take's voice and words go, in lower case. The polish half reads the same rule the
     /// take does. Kept for the tests that pin that rule down; the page shows the sentence-case
     /// version, of which this is exactly the lower-cased form.
@@ -151,16 +140,13 @@ struct WordsPageView: View {
     /// Where a take's voice and words go, as the page shows it.
     static func engineSentenceInSentenceCase(settings: DictationSettings, hasPolisher: Bool) -> String {
         let history = settings.incognito ? "Incognito: nothing is saved." : "Your history stays on this Mac."
-        switch settings.engine {
-        case .offline, .parakeet:
-            if DictationEngineResolver.wantsModelPolish(settings: settings) && hasPolisher {
-                return "Your voice stays on this Mac; the words go to a model for polish. " + history
-            }
-            return settings.incognito ? "Your voice stays on this Mac, and nothing is saved." : "Your voice and your history stay on this Mac."
-        case .sarvam: return "Audio goes to Sarvam with your key. " + history
-        case .openclicky: return "Audio goes to OpenAI through the OpenClicky backend. " + history
-        case .assemblyai: return "Audio goes to AssemblyAI through the OpenClicky backend. " + history
+        guard settings.engine.isOnDevice else {
+            return settings.engine.audioDestinationSentence + " " + history
         }
+        if DictationEngineResolver.wantsModelPolish(settings: settings) && hasPolisher {
+            return "Your voice stays on this Mac; the words go to a model for polish. " + history
+        }
+        return settings.incognito ? "Your voice stays on this Mac, and nothing is saved." : "Your voice and your history stay on this Mac."
     }
 
     /// The resolver's reasons are written in lower case ("needs your sarvam key") for the orb;

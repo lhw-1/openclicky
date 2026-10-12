@@ -74,6 +74,33 @@ struct ParakeetDictationTests {
         #expect(heard.partials.contains("so far"))
         session.cancel()
     }
+
+    /// Every live read re-reads the whole take, so past 30 s of audio the live words stop; the
+    /// final words still read all of it.
+    @Test func liveWordsStopPastThirtySecondsButTheFinalReadsEverything() async {
+        let heard = HeardLog()
+        let session = ParakeetTranscriptionSession(
+            onTranscriptUpdate: { heard.partial($0) }, onFinalTranscriptReady: { heard.final($0) }, onError: { _ in },
+            transcribe: { audio in "\(audio.count) bytes" })
+        let longTakeBytes = ParakeetTranscriptionSession.liveWordsAudioLimitBytes + 32_000
+        session.appendPCM16(Data(count: longTakeBytes))
+        try? await Task.sleep(nanoseconds: 1_400_000_000)
+        #expect(heard.partials.isEmpty)
+        session.requestFinalTranscript()
+        #expect(await heard.waitForFinal() == "\(longTakeBytes) bytes")
+    }
+
+    /// The live-words loop holds the session only weakly: a session nobody keeps goes away.
+    @Test func theLiveWordsLoopDoesNotKeepTheSessionAlive() {
+        weak var releasedSession: ParakeetTranscriptionSession?
+        do {
+            let session = ParakeetTranscriptionSession(
+                onTranscriptUpdate: { _ in }, onFinalTranscriptReady: { _ in }, onError: { _ in },
+                transcribe: { _ in "words" })
+            releasedSession = session
+        }
+        #expect(releasedSession == nil)
+    }
 }
 
 /// What a session reported, from whichever thread it reported on.

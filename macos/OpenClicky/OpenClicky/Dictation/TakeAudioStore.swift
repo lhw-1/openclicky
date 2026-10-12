@@ -92,13 +92,42 @@ final class TakeAudioStore: @unchecked Sendable {
         }
     }
 
-    /// Feeds a retained WAV to a provider as if it were the microphone and returns the final text.
-    static func transcribe(fileURL: URL, provider: any BuddyTranscriptionProvider, keyterms: [String]) async throws -> String {
-        let file = try AVAudioFile(forReading: fileURL)
-        guard let buffer = AVAudioPCMBuffer(pcmFormat: file.processingFormat, frameCapacity: AVAudioFrameCount(file.length)) else {
-            throw TakeStoreError(message: "could not read the retained audio")
+    /// Why feeding a recording to an engine gave no words; the smoke run says each differently.
+    enum RecordedAudioTranscriptionError: LocalizedError {
+        /// The file could not be opened or decoded.
+        case unreadableRecording(String)
+        /// The engine refused to open a session (no key, no account, not downloaded).
+        case engineDidNotOpen(String)
+        /// The engine took the audio but sent no final words in time.
+        case engineDidNotAnswer
+
+        var errorDescription: String? {
+            switch self {
+            case .unreadableRecording(let reason): return reason
+            case .engineDidNotOpen(let reason): return reason
+            case .engineDidNotAnswer: return "the engine did not answer in time"
+            }
         }
-        try file.read(into: buffer)
+    }
+
+    /// Feeds a recording (a retained take's WAV, or the smoke run's file) to a provider as if it
+    /// were the microphone and returns the final text. Slices are paced like a microphone for the
+    /// streaming engines; a retry goes faster than real time, the smoke run at real time.
+    static func transcribe(fileURL: URL, provider: any BuddyTranscriptionProvider, keyterms: [String],
+                           sliceSeconds: Double = 0.25, pauseBetweenSlicesNanoseconds: UInt64 = 60_000_000,
+                           onTranscriptUpdate: @escaping @Sendable (String) -> Void = { _ in }) async throws -> String {
+        let file: AVAudioFile
+        let buffer: AVAudioPCMBuffer
+        do {
+            file = try AVAudioFile(forReading: fileURL)
+            guard let readBuffer = AVAudioPCMBuffer(pcmFormat: file.processingFormat, frameCapacity: AVAudioFrameCount(file.length)) else {
+                throw TakeStoreError(message: "could not read the recorded audio")
+            }
+            try file.read(into: readBuffer)
+            buffer = readBuffer
+        } catch {
+            throw RecordedAudioTranscriptionError.unreadableRecording(error.localizedDescription)
+        }
         return try await withCheckedThrowingContinuation { continuation in
             let resumed = OSAllocatedUnfairLock(initialState: false)
             let openSession = OSAllocatedUnfairLock<(any BuddyStreamingTranscriptionSession)?>(initialState: nil)
@@ -110,37 +139,38 @@ final class TakeAudioStore: @unchecked Sendable {
                 continuation.resume(with: result)
             }
             Task {
+                let session: any BuddyStreamingTranscriptionSession
                 do {
-                    let session = try await provider.startStreamingSession(
+                    session = try await provider.startStreamingSession(
                         keyterms: keyterms,
-                        onTranscriptUpdate: { _ in },
+                        onTranscriptUpdate: onTranscriptUpdate,
                         onFinalTranscriptReady: { text in finish(.success(text)) },
                         onError: { error in finish(.failure(error)) })
-                    openSession.withLock { $0 = session }
-                    // Paced like a microphone for the streaming engines.
-                    let sliceFrames = AVAudioFrameCount(file.processingFormat.sampleRate / 4)
-                    var offset: AVAudioFrameCount = 0
-                    while offset < buffer.frameLength {
-                        let count = min(sliceFrames, buffer.frameLength - offset)
-                        guard let slice = AVAudioPCMBuffer(pcmFormat: buffer.format, frameCapacity: count) else { break }
-                        for channel in 0..<Int(buffer.format.channelCount) {
-                            if let from = buffer.floatChannelData?[channel], let to = slice.floatChannelData?[channel] {
-                                to.update(from: from + Int(offset), count: Int(count))
-                            } else if let from = buffer.int16ChannelData?[channel], let to = slice.int16ChannelData?[channel] {
-                                to.update(from: from + Int(offset), count: Int(count))
-                            }
-                        }
-                        slice.frameLength = count
-                        session.appendAudioBuffer(slice)
-                        offset += count
-                        try? await Task.sleep(nanoseconds: 60_000_000)
-                    }
-                    session.requestFinalTranscript()
-                    try? await Task.sleep(nanoseconds: UInt64((session.finalTranscriptFallbackDelaySeconds + 20) * 1_000_000_000))
-                    finish(.failure(TakeStoreError(message: "the engine did not answer in time")))
                 } catch {
-                    finish(.failure(error))
+                    finish(.failure(RecordedAudioTranscriptionError.engineDidNotOpen(error.localizedDescription)))
+                    return
                 }
+                openSession.withLock { $0 = session }
+                let sliceFrames = AVAudioFrameCount(file.processingFormat.sampleRate * sliceSeconds)
+                var offset: AVAudioFrameCount = 0
+                while offset < buffer.frameLength {
+                    let count = min(sliceFrames, buffer.frameLength - offset)
+                    guard let slice = AVAudioPCMBuffer(pcmFormat: buffer.format, frameCapacity: count) else { break }
+                    for channel in 0..<Int(buffer.format.channelCount) {
+                        if let from = buffer.floatChannelData?[channel], let to = slice.floatChannelData?[channel] {
+                            to.update(from: from + Int(offset), count: Int(count))
+                        } else if let from = buffer.int16ChannelData?[channel], let to = slice.int16ChannelData?[channel] {
+                            to.update(from: from + Int(offset), count: Int(count))
+                        }
+                    }
+                    slice.frameLength = count
+                    session.appendAudioBuffer(slice)
+                    offset += count
+                    try? await Task.sleep(nanoseconds: pauseBetweenSlicesNanoseconds)
+                }
+                session.requestFinalTranscript()
+                try? await Task.sleep(nanoseconds: UInt64((session.finalTranscriptFallbackDelaySeconds + 20) * 1_000_000_000))
+                finish(.failure(RecordedAudioTranscriptionError.engineDidNotAnswer))
             }
         }
     }

@@ -20,20 +20,18 @@ final class SarvamTranscriptionProvider: BuddyTranscriptionProvider {
     /// The key from shell.json; the streaming socket needs the language too.
     private let key: () -> String?
     private let language: () -> DictationLanguage
-    private let preferStreaming: Bool
 
     init(key: @escaping () -> String? = { OpenClickyConfiguration.settings.sarvamKey },
-         language: @escaping () -> DictationLanguage,
-         preferStreaming: Bool = true) {
+         language: @escaping () -> DictationLanguage) {
         self.key = key
         self.language = language
-        self.preferStreaming = preferStreaming
     }
 
-    var isConfigured: Bool { !(key()?.trimmingCharacters(in: .whitespacesAndNewlines) ?? "").isEmpty }
+    var isConfigured: Bool { unavailableExplanation == nil }
 
+    /// The resolver's rule, so the provider and Settings never disagree about the key.
     var unavailableExplanation: String? {
-        isConfigured ? nil : "sarvam needs your key: paste it under settings → engine."
+        DictationEngineResolver.sarvamUnavailableReason(sarvamKey: key())
     }
 
     func startStreamingSession(
@@ -46,25 +44,23 @@ final class SarvamTranscriptionProvider: BuddyTranscriptionProvider {
             throw SarvamSpeechError.noKey
         }
         let language = language()
-        if preferStreaming {
-            // The realtime socket gives words while the key is held; the chunked socket gives them
-            // at the end; the upload is the last resort. Each is tried in turn.
-            for model in [SarvamSpeechClient.RealtimeModel.v4, .v3] {
-                do {
-                    return try await SarvamStreamingSession.open(
-                        key: key, language: language, keyterms: keyterms, flavour: .realtime, realtimeModel: model,
-                        onTranscriptUpdate: onTranscriptUpdate, onFinalTranscriptReady: onFinalTranscriptReady, onError: onError)
-                } catch {
-                    AppLog.append("sarvam realtime socket (\(model.rawValue)) could not open (\(error.localizedDescription)); trying the next")
-                }
-            }
+        // The realtime socket gives words while the key is held; the chunked socket gives them
+        // at the end; the upload is the last resort. Each is tried in turn.
+        for model in [SarvamSpeechClient.RealtimeModel.v4, .v3] {
             do {
                 return try await SarvamStreamingSession.open(
-                    key: key, language: language, keyterms: keyterms, flavour: .chunked,
+                    key: key, language: language, keyterms: keyterms, flavour: .realtime, realtimeModel: model,
                     onTranscriptUpdate: onTranscriptUpdate, onFinalTranscriptReady: onFinalTranscriptReady, onError: onError)
             } catch {
-                AppLog.append("sarvam streaming could not open (\(error.localizedDescription)); uploading the take instead")
+                AppLog.append("sarvam realtime socket (\(model.rawValue)) could not open (\(error.localizedDescription)); trying the next")
             }
+        }
+        do {
+            return try await SarvamStreamingSession.open(
+                key: key, language: language, keyterms: keyterms, flavour: .chunked,
+                onTranscriptUpdate: onTranscriptUpdate, onFinalTranscriptReady: onFinalTranscriptReady, onError: onError)
+        } catch {
+            AppLog.append("sarvam streaming could not open (\(error.localizedDescription)); uploading the take instead")
         }
         return SarvamUploadSession(
             client: SarvamSpeechClient(key: key), language: language, keyterms: keyterms,
@@ -350,7 +346,6 @@ final class SarvamUploadSession: BuddyStreamingTranscriptionSession, @unchecked 
 
     /// Saaras takes about thirty seconds a request; longer takes go up in pieces, in order.
     static let pieceSeconds = 28.0
-    private static let silencePeak: Int16 = 400
 
     private struct State {
         var pcm = Data()
@@ -381,7 +376,7 @@ final class SarvamUploadSession: BuddyStreamingTranscriptionSession, @unchecked 
 
     func appendAudioBuffer(_ audioBuffer: AVAudioPCMBuffer) {
         guard let pcm = converter.convertToPCM16Data(from: audioBuffer) else { return }
-        let peak = Self.peak(of: pcm)
+        let peak = PCM16SilenceGate.peakMagnitude(of: pcm)
         state.withLock { box in
             guard !box.hasRequestedFinal else { return }
             box.pcm.append(pcm)
@@ -397,7 +392,7 @@ final class SarvamUploadSession: BuddyStreamingTranscriptionSession, @unchecked 
         }
         guard let captured else { return }
         let pcm = captured.pcm
-        guard captured.peak >= Self.silencePeak, !pcm.isEmpty else {
+        guard !PCM16SilenceGate.isSilent(peakMagnitude: captured.peak), !pcm.isEmpty else {
             onFinalTranscriptReady("")
             return
         }
@@ -438,16 +433,5 @@ final class SarvamUploadSession: BuddyStreamingTranscriptionSession, @unchecked 
             offset = end
         }
         return pieces
-    }
-
-    static func peak(of pcm16: Data) -> Int16 {
-        var peak: Int16 = 0
-        pcm16.withUnsafeBytes { raw in
-            for sample in raw.bindMemory(to: Int16.self) {
-                let magnitude = sample == Int16.min ? Int16.max : abs(sample)
-                if magnitude > peak { peak = magnitude }
-            }
-        }
-        return peak
     }
 }

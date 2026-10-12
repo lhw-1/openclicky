@@ -47,16 +47,14 @@ enum DictationEngineResolver {
     /// free account's grant covers.
     static func unavailableReason(for choice: DictationEngineChoice, kind: AccountKind, isConfigured: Bool, signedIn: Bool, sarvamKey: String?,
                                   parakeetInstalled: Bool = ParakeetDictation.isInstalled,
-                                  bareLanguageCode: String? = UserDefaults.standard.string(forKey: "dictation.language").flatMap { DictationLanguage.named($0).bareCode }) -> String? {
+                                  bareLanguageCode: String? = DictationSettings.storedLanguage().bareCode) -> String? {
         switch choice {
         case .offline:
             return nil
         case .parakeet:
-            if !ParakeetDictation.hears(bareLanguageCode: bareLanguageCode) { return "parakeet doesn't hear this language; pick auto-detect or a european language" }
-            return parakeetInstalled ? nil : "needs its \(ParakeetDictation.downloadSizeText) download"
+            return parakeetUnavailableReason(isInstalled: parakeetInstalled, bareLanguageCode: bareLanguageCode)
         case .sarvam:
-            let key = sarvamKey?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-            return key.isEmpty ? "needs your sarvam key" : nil
+            return sarvamUnavailableReason(sarvamKey: sarvamKey)
         case .openclicky, .assemblyai:
             guard isConfigured else { return "needs an openclicky account or your openai key" }
             if kind == .account { return "needs your own key" }
@@ -65,6 +63,26 @@ enum DictationEngineResolver {
         }
     }
 
+    /// Parakeet's half of `unavailableReason`. Its provider reads the same function, so the provider
+    /// and the resolver can never disagree about whether Parakeet can run.
+    static func parakeetUnavailableReason(isInstalled: Bool, bareLanguageCode: String?) -> String? {
+        if !ParakeetDictation.hears(bareLanguageCode: bareLanguageCode) { return parakeetLanguageNotHeardReason }
+        return isInstalled ? nil : "needs its \(ParakeetDictation.downloadSizeText) download"
+    }
+
+    /// Installed but pinned to a language Parakeet does not hear: the island says this, not "download".
+    static let parakeetLanguageNotHeardReason = "parakeet doesn't hear this language; pick auto-detect or a european language"
+
+    /// Sarvam's half of `unavailableReason`; its provider reads the same function.
+    static func sarvamUnavailableReason(sarvamKey: String?) -> String? {
+        let trimmedSarvamKey = sarvamKey?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        return trimmedSarvamKey.isEmpty ? "needs your sarvam key" : nil
+    }
+
+    /// The ways to get a model, for a Hey Clicky edit or a history question asked with none set up.
+    /// Apple's model comes first because it is free and needs nothing but the Mac.
+    static let howToGetAModelSentence = "apple intelligence on this mac, one of your own keys (settings → account), or an openclicky account"
+
     /// The model that polishes takes and answers Hey Clicky: Apple's on-device model where the Mac
     /// has it, else Sarvam with a key, else the person's
     /// own OpenAI, Anthropic, Groq, Gemini, Mistral, OpenRouter or xAI key, else the backend with
@@ -72,7 +90,7 @@ enum DictationEngineResolver {
     static func makePolisher() -> (any TakePolisher)? {
         // Apple's on-device model first: free, private and already on the Mac where it exists.
         #if canImport(FoundationModels)
-        if #available(macOS 26, *), AppleModelTakePolisherAvailability.isAvailable(languageCode: UserDefaults.standard.string(forKey: "dictation.language")) {
+        if #available(macOS 26, *), AppleModelTakePolisherAvailability.isAvailable(languageCode: DictationSettings.storedLanguage().code) {
             return AppleModelTakePolisher()
         }
         #endif
@@ -106,7 +124,7 @@ enum DictationEngineResolver {
     @MainActor
     static func wantsModelPolish(settings: DictationSettings, engine: DictationEngineChoice) -> Bool {
         guard settings.polishWithModel else { return false }
-        if engine == .offline || engine == .parakeet { return settings.polishOfflineTakes }
+        if engine.isOnDevice { return settings.polishOfflineTakes }
         return true
     }
 }
@@ -196,6 +214,10 @@ final class DictationTakeController: ObservableObject {
     private var nearbyTermsAtPress: [String] = []
     /// Set when this take's words are typed as they settle (no model polish will run); nil otherwise.
     private var liveTyping: LiveTypingSession?
+    /// The model that may polish this take, chosen once when the key goes down: live typing's
+    /// decision, the clean-up and the box's rewrite chips all read the same answer, and building a
+    /// polisher (Apple's model checks its availability) is not repeated for every step of a take.
+    private var polisherForThisTake: (any TakePolisher)?
     /// A history write that failed is logged every time but said on the orb only once per run.
     private var hasShownHistoryWriteFailure = false
 
@@ -236,10 +258,7 @@ final class DictationTakeController: ObservableObject {
         boxCloseWork?.cancel()
         orb.isRewriting = true
         defer { orb.isRewriting = false }
-        let space = spaceStore.space
-        let context = TakeFormattingContext(
-            style: space.style(forAppBundleID: lastTake?.appBundleID), dictionary: space.dictionary, shortcuts: space.shortcuts,
-            appName: lastTake?.appName, language: settings.language, script: settings.script)
+        let context = makeFormattingContext(appBundleID: lastTake?.appBundleID, appName: lastTake?.appName)
         do {
             let rewritten = try await HeyClickyEditor.edit(selection: text, instruction: rewrite.instruction, context: context, polisher: polisher)
             orb.boxText = rewritten
@@ -498,6 +517,7 @@ final class DictationTakeController: ObservableObject {
         fieldAtPress = host.readFocusedField()
         focusedTargetAtPress = host.readFocusedTextTarget()
         nearbyTermsAtPress = []
+        polisherForThisTake = host.makePolisher()
         liveTyping = makeLiveTypingSessionIfWanted(mode: mode, focusedTarget: focusedTargetAtPress)
         audioStore.beginCapture()
         boxCloseWork?.cancel()
@@ -618,16 +638,19 @@ final class DictationTakeController: ObservableObject {
             if let historyNote { failureLine += " · \(historyNote)" }
             orb.phase = .failed(failureLine)
         } else if !settings.incognito, !message.hasPrefix("didn't catch") {
-            let record = TakeRecord(id: failedTakeID, createdAt: takeStartedAt, mode: takeMode == .edit ? .edit : .dictate, status: .failed,
-                                    rawText: orb.liveTranscript, formattedText: "", appBundleID: fieldAtPress.appBundleID,
-                                    appName: fieldAtPress.appName, language: settings.language.bareCode, engine: settings.engine.rawValue,
-                                    durationSeconds: Date().timeIntervalSince(takeStartedAt), failureReason: message)
+            let record = makeRecord(
+                takeID: failedTakeID, createdAt: takeStartedAt, mode: takeMode == .edit ? .edit : .dictate, status: .failed,
+                rawText: orb.liveTranscript, formattedText: "", appBundleID: fieldAtPress.appBundleID, appName: fieldAtPress.appName,
+                durationSeconds: Date().timeIntervalSince(takeStartedAt), failureReason: message)
             if let historyNote = writeToHistory("failed take", takeID: failedTakeID, { try $0.insert(record) }) {
                 orb.phase = .failed("\(message) · \(historyNote)")
             }
             historyVersion += 1
-            // The words are still in the audio: keep it so the take can be heard again.
-            if settings.retainFailedTakeAudio, settings.engine != .offline, pcm.count > 16_000 {
+            // The words are still in the audio: keep it so the take can be heard again once the key,
+            // the credits or the network are back. Only a network engine's take is kept (the rule in
+            // `TakeAudioStore`'s header): an engine on this Mac has none of those to wait for, and a
+            // retry would hear the same audio the same way.
+            if settings.retainFailedTakeAudio, !settings.engine.isOnDevice, pcm.count > 16_000 {
                 do {
                     try audioStore.retain(takeID: failedTakeID, pcm16: pcm)
                     retryableTakeID = failedTakeID
@@ -645,6 +668,7 @@ final class DictationTakeController: ObservableObject {
         state = .idle
         takeIsToggle = false
         liveTyping = nil
+        polisherForThisTake = nil
         afterMicrophoneCloses?()
     }
 
@@ -678,12 +702,9 @@ final class DictationTakeController: ObservableObject {
             return
         }
         let duration = Date().timeIntervalSince(takeStartedAt)
-        let space = spaceStore.space
-        let style = space.style(forAppBundleID: fieldAtPress.appBundleID)
-        let context = TakeFormattingContext(
-            style: style, dictionary: space.dictionary, shortcuts: space.shortcuts, appName: fieldAtPress.appName,
-            language: settings.language, script: settings.script, nearbyTerms: nearbyTermsAtPress)
-        let polisher = host.makePolisher()
+        let context = makeFormattingContext(appBundleID: fieldAtPress.appBundleID, appName: fieldAtPress.appName, nearbyTerms: nearbyTermsAtPress)
+        // Read into locals: a new take can begin while a model is at work below.
+        let polisher = polisherForThisTake
         let mode = takeMode
         let field = fieldAtPress
 
@@ -695,29 +716,8 @@ final class DictationTakeController: ObservableObject {
         let outputText: String
         var formattingDegraded = false
         if mode == .edit {
-            orb.phase = .working("finishing your edit")
-            // The selection would go to a model: only with "clean up my words with ai" on, the
-            // switch the privacy page names as what keeps words on this mac.
-            guard DictationEngineResolver.wantsModelPolish(settings: settings) else {
-                failTake(Self.heyClickyNeedsCleanUpMessage, takeID: thisTakeID)
-                return
-            }
-            guard let polisher else {
-                failTake("hey clicky needs a model: add a sarvam key or sign in", takeID: thisTakeID)
-                return
-            }
-            let selection = field.selectedText ?? lastTake?.displayText ?? ""
-            guard !selection.isEmpty else {
-                failTake("select some text first, or dictate something to edit", takeID: thisTakeID)
-                return
-            }
-            do {
-                outputText = try await HeyClickyEditor.edit(selection: selection, instruction: raw, context: context, polisher: polisher)
-            } catch {
-                guard isCurrent(thisTakeID) else { return }
-                failTake("couldn't finish your edit — \(error.localizedDescription)", takeID: thisTakeID)
-                return
-            }
+            guard let editedText = await applyHeyClickyEdit(instruction: raw, field: field, context: context, polisher: polisher, takeID: thisTakeID) else { return }
+            outputText = editedText
         } else {
             let formatted = await TakeFormatter.format(raw, context: context, polisher: polisher, wantsModel: DictationEngineResolver.wantsModelPolish(settings: settings))
             outputText = formatted.text
@@ -729,56 +729,18 @@ final class DictationTakeController: ObservableObject {
             return
         }
 
-        // Paste where the cursor was when the key went down — and only there.
-        let frontNow = host.frontAppBundleID()
-        var pasteOutcome = TakeRecord.PasteOutcome.none
-        var pasteMessage = "moved to text box"
-        if holdsTakesOnTheIsland {
-            // The tour's practice take: shown on the island, never typed into the app in front
-            // (a new user's first words went into their terminal).
-            pasteOutcome = .leftInOrb
-            pasteMessage = "practice take, kept here"
-        } else if field.isSecure || host.isSecureInputOn() {
-            // Not copied either: a password should not sit on the clipboard (it can sync to other
-            // devices). It stays in history only.
-            pasteOutcome = .leftInOrb
-            pasteMessage = "not pasting into a password field"
-        } else if let target = field.appBundleID, let frontNow, target != frontNow {
-            pasteOutcome = .leftOnPasteboard
-            pasteMessage = "the app changed — copied, press ⌘V"
-        } else if focusMovedSincePress() {
-            pasteOutcome = .leftOnPasteboard
-            pasteMessage = "the focus moved — copied, press ⌘V"
-        } else if field.isEditable || !host.isAccessibilityTrusted() || field.role == nil {
-            // Editable, or unknown (no permission / the app exposes nothing): try the paste.
-            switch host.paste(outputText) {
-            case .typed:
-                let landing = await host.verifyPaste(outputText, field)
-                switch landing {
-                case .verified: pasteOutcome = .verified
-                case .posted: pasteOutcome = .posted
-                case .noTarget:
-                    pasteOutcome = .leftOnPasteboard
-                    pasteMessage = "couldn't see it land — copied, press ⌘V"
-                case .leftOnPasteboard: pasteOutcome = .leftOnPasteboard
-                }
-            case .leftOnPasteboard:
-                pasteOutcome = .leftOnPasteboard
-                pasteMessage = "copied — press ⌘V (allow accessibility to paste for you)"
-            }
-        } else {
-            pasteOutcome = .leftOnPasteboard
-            pasteMessage = "no text box — copied, press ⌘V"
-        }
+        let delivery = await deliverWhereTheTakeBegan(outputText, field: field)
+        let pasteOutcome = delivery.outcome
+        var pasteMessage = delivery.message
         guard takeID == thisTakeID else { return }
         // Words with nowhere to go are put on the clipboard and the orb says so in one line; the
         // big box only opens when the person asked for it ("rest with the box open").
         if pasteOutcome == .leftOnPasteboard { host.copyToPasteboard(outputText) }
 
-        let record = TakeRecord(id: thisTakeID, createdAt: takeStartedAt, mode: mode == .edit ? .edit : .dictate, status: .complete,
-                                rawText: raw, formattedText: outputText, appBundleID: field.appBundleID,
-                                appName: field.appName, language: settings.language.bareCode, engine: settings.engine.rawValue,
-                                durationSeconds: duration, pasteOutcome: pasteOutcome)
+        let record = makeRecord(
+            takeID: thisTakeID, createdAt: takeStartedAt, mode: mode == .edit ? .edit : .dictate, status: .complete,
+            rawText: raw, formattedText: outputText, appBundleID: field.appBundleID, appName: field.appName,
+            durationSeconds: duration, pasteOutcome: pasteOutcome)
         lastTake = record
         var historyNote: String?
         if !settings.incognito {
@@ -791,8 +753,7 @@ final class DictationTakeController: ObservableObject {
         orb.liveTranscript = ""
         let showBox = (pasteOutcome == .posted && settings.orbOpensBoxWhenPasteUnverified) || settings.orbRestsExpanded
         orb.boxReason = pasteOutcome == .verified || pasteOutcome == .posted ? "your last take" : pasteMessage
-        // The box's AI rewrites only when the AI clean-up is switched on: off means nothing goes online.
-        orb.quickRewrites = host.makePolisher() == nil || !DictationEngineResolver.wantsModelPolish(settings: settings) ? [] : Self.quickRewrites.map(\.label)
+        orb.quickRewrites = quickRewriteLabels(polisher: polisher)
         orb.isBoxOpen = showBox
         scheduleBoxClose()
         earcons.play(pasteOutcome == .verified || pasteOutcome == .posted ? .complete : .notify)
@@ -803,6 +764,105 @@ final class DictationTakeController: ObservableObject {
         AppLog.append("take \(thisTakeID.uuidString.prefix(8)) done: \(outputText.count) chars, paste=\(pasteOutcome.rawValue), engine=\(settings.engine.rawValue), degraded=\(formattingDegraded)")
         endTake()
         scheduleIdle(after: 1.8)
+    }
+
+    /// A Hey Clicky take's words are an instruction for the selection (or the last take): the model
+    /// rewrites that text. Nil when the edit could not be made; the take has already failed then,
+    /// with the reason on the orb.
+    private func applyHeyClickyEdit(instruction: String, field: FocusedFieldSnapshot, context: TakeFormattingContext,
+                                    polisher: (any TakePolisher)?, takeID thisTakeID: UUID) async -> String? {
+        orb.phase = .working("finishing your edit")
+        // The selection would go to a model: only with "clean up my words with ai" on, the
+        // switch the privacy page names as what keeps words on this mac.
+        guard DictationEngineResolver.wantsModelPolish(settings: settings) else {
+            failTake(Self.heyClickyNeedsCleanUpMessage, takeID: thisTakeID)
+            return nil
+        }
+        guard let polisher else {
+            failTake("hey clicky needs a model: \(DictationEngineResolver.howToGetAModelSentence)", takeID: thisTakeID)
+            return nil
+        }
+        let selection = field.selectedText ?? lastTake?.displayText ?? ""
+        guard !selection.isEmpty else {
+            failTake("select some text first, or dictate something to edit", takeID: thisTakeID)
+            return nil
+        }
+        do {
+            return try await HeyClickyEditor.edit(selection: selection, instruction: instruction, context: context, polisher: polisher)
+        } catch {
+            if isCurrent(thisTakeID) {
+                failTake("couldn't finish your edit — \(error.localizedDescription)", takeID: thisTakeID)
+            }
+            return nil
+        }
+    }
+
+    /// Where a finished take's words go, and the orb's line about it. They are pasted where the
+    /// cursor was when the key went down — and only there: never into a password field, another
+    /// app, or another element of the same app; otherwise they are left on the pasteboard (the
+    /// caller puts them there) or, for the tour's practice and a password field, only in the orb.
+    private func deliverWhereTheTakeBegan(_ outputText: String, field: FocusedFieldSnapshot) async -> (outcome: TakeRecord.PasteOutcome, message: String) {
+        let pastedMessage = "moved to text box"
+        if holdsTakesOnTheIsland {
+            // The tour's practice take: shown on the island, never typed into the app in front
+            // (a new user's first words went into their terminal).
+            return (.leftInOrb, "practice take, kept here")
+        }
+        if field.isSecure || host.isSecureInputOn() {
+            // Not copied either: a password should not sit on the clipboard (it can sync to other
+            // devices). It stays in history only.
+            return (.leftInOrb, "not pasting into a password field")
+        }
+        if let appAtPress = field.appBundleID, let appInFrontNow = host.frontAppBundleID(), appAtPress != appInFrontNow {
+            return (.leftOnPasteboard, "the app changed — copied, press ⌘V")
+        }
+        if focusMovedSincePress() {
+            return (.leftOnPasteboard, "the focus moved — copied, press ⌘V")
+        }
+        // Editable, or unknown (no permission / the app exposes nothing): try the paste.
+        guard field.isEditable || !host.isAccessibilityTrusted() || field.role == nil else {
+            return (.leftOnPasteboard, "no text box — copied, press ⌘V")
+        }
+        switch host.paste(outputText) {
+        case .leftOnPasteboard:
+            return (.leftOnPasteboard, "copied — press ⌘V (allow accessibility to paste for you)")
+        case .typed:
+            switch await host.verifyPaste(outputText, field) {
+            case .verified: return (.verified, pastedMessage)
+            case .posted: return (.posted, pastedMessage)
+            case .noTarget: return (.leftOnPasteboard, "couldn't see it land — copied, press ⌘V")
+            case .leftOnPasteboard: return (.leftOnPasteboard, pastedMessage)
+            }
+        }
+    }
+
+    // MARK: a take's context, record and rewrite chips
+
+    /// The formatting context for words going into an app: its style, the dictionary, the spoken
+    /// shortcuts, the language and script; captions read near the cursor when there are any.
+    private func makeFormattingContext(appBundleID: String?, appName: String?, nearbyTerms: [String] = []) -> TakeFormattingContext {
+        let space = spaceStore.space
+        return TakeFormattingContext(
+            style: space.style(forAppBundleID: appBundleID), dictionary: space.dictionary, shortcuts: space.shortcuts,
+            appName: appName, language: settings.language, script: settings.script, nearbyTerms: nearbyTerms)
+    }
+
+    /// A history row, stamped with the language and engine the settings name, so every kind of
+    /// take (finished, failed, live-typed, interrupted, retried) records them the same way.
+    private func makeRecord(takeID recordTakeID: UUID, createdAt: Date, mode: TakeRecord.Mode, status: TakeRecord.Status,
+                            rawText: String, formattedText: String, appBundleID: String?, appName: String?,
+                            durationSeconds: Double, pasteOutcome: TakeRecord.PasteOutcome = .none, failureReason: String? = nil) -> TakeRecord {
+        TakeRecord(id: recordTakeID, createdAt: createdAt, mode: mode, status: status,
+                   rawText: rawText, formattedText: formattedText, appBundleID: appBundleID, appName: appName,
+                   language: settings.language.bareCode, engine: settings.engine.rawValue,
+                   durationSeconds: durationSeconds, pasteOutcome: pasteOutcome, failureReason: failureReason)
+    }
+
+    /// The rewrite chips under the box. They only show when the AI clean-up is switched on (off
+    /// means nothing goes online) and there is a model to rewrite with.
+    private func quickRewriteLabels(polisher: (any TakePolisher)?) -> [String] {
+        guard polisher != nil, DictationEngineResolver.wantsModelPolish(settings: settings) else { return [] }
+        return Self.quickRewrites.map(\.label)
     }
 
     // MARK: live typing
@@ -820,11 +880,9 @@ final class DictationTakeController: ObservableObject {
             return nil
         }
         let space = spaceStore.space
-        let context = TakeFormattingContext(
-            style: space.style(forAppBundleID: fieldAtPress.appBundleID), dictionary: space.dictionary, shortcuts: space.shortcuts,
-            appName: fieldAtPress.appName, language: settings.language, script: settings.script)
+        let context = makeFormattingContext(appBundleID: fieldAtPress.appBundleID, appName: fieldAtPress.appName)
         let modelWillPolish = TakeFormatter.modelPassWillRun(
-            context: context, polisher: host.makePolisher(), wantsModel: DictationEngineResolver.wantsModelPolish(settings: settings))
+            context: context, polisher: polisherForThisTake, wantsModel: DictationEngineResolver.wantsModelPolish(settings: settings))
         guard !modelWillPolish else { return nil }
         let splitIntoNormalizedWords: (String) -> [String] = { phrase in
             TakeFormatter.normalizedForMatching(phrase).split(separator: " ").map(String.init)
@@ -855,13 +913,7 @@ final class DictationTakeController: ObservableObject {
         if !session.editKeyJoinedAfterTyping { session.latestPartial = partial }
         let takeIsStillListening = state == .starting || state == .listening
         if session.stoppedReason == nil, takeIsStillListening {
-            _ = session.committer.observe(partial: partial, at: host.now())
-            // Everything committed but not typed yet: the words that settled now, plus any that
-            // waited for a held modifier to be let go.
-            let pendingWords = Array(session.committer.committedWords.dropFirst(session.typedRawWords.count))
-            if !pendingWords.isEmpty {
-                typeLivePhrase(pendingWords, session: &session, takeID: thisTakeID)
-            }
+            commitAndTypeSettledWords(of: partial, personPaused: false, session: &session, takeID: thisTakeID)
         }
         liveTyping = session
         if session.stoppedReason == nil, takeIsStillListening { scheduleLiveTypingPauseCheck(after: partial, takeID: thisTakeID) }
@@ -880,12 +932,18 @@ final class DictationTakeController: ObservableObject {
             guard !Task.isCancelled, let self, self.takeID == thisTakeID,
                   self.state == .starting || self.state == .listening,
                   var session = self.liveTyping, session.stoppedReason == nil, session.latestPartial == partial else { return }
-            _ = session.committer.observe(partial: partial, at: self.host.now(), personPaused: true)
-            let pendingWords = Array(session.committer.committedWords.dropFirst(session.typedRawWords.count))
-            if !pendingWords.isEmpty {
-                self.typeLivePhrase(pendingWords, session: &session, takeID: thisTakeID)
-            }
+            self.commitAndTypeSettledWords(of: partial, personPaused: true, session: &session, takeID: thisTakeID)
             self.liveTyping = session
+        }
+    }
+
+    /// Shows the partial to the committer, then types every word that is committed but not typed
+    /// yet: the words that settled now, plus any that waited for a held modifier to be let go.
+    private func commitAndTypeSettledWords(of partial: String, personPaused: Bool, session: inout LiveTypingSession, takeID thisTakeID: UUID) {
+        _ = session.committer.observe(partial: partial, at: host.now(), personPaused: personPaused)
+        let committedButUntypedWords = Array(session.committer.committedWords.dropFirst(session.typedRawWords.count))
+        if !committedButUntypedWords.isEmpty {
+            typeLivePhrase(committedButUntypedWords, session: &session, takeID: thisTakeID)
         }
     }
 
@@ -1002,10 +1060,10 @@ final class DictationTakeController: ObservableObject {
 
         // What reached the app, plus (when typing had to stop) the words left on the pasteboard.
         let formattedText = session.typedText + untypedText
-        let record = TakeRecord(id: thisTakeID, createdAt: takeStartedAt, mode: .dictate, status: .complete,
-                                rawText: raw, formattedText: formattedText, appBundleID: fieldAtPress.appBundleID,
-                                appName: fieldAtPress.appName, language: settings.language.bareCode, engine: settings.engine.rawValue,
-                                durationSeconds: duration, pasteOutcome: pasteOutcome)
+        let record = makeRecord(
+            takeID: thisTakeID, createdAt: takeStartedAt, mode: .dictate, status: .complete,
+            rawText: raw, formattedText: formattedText, appBundleID: fieldAtPress.appBundleID, appName: fieldAtPress.appName,
+            durationSeconds: duration, pasteOutcome: pasteOutcome)
         lastTake = record
         if !settings.incognito {
             if let historyNote = writeToHistory("live-typed take", takeID: thisTakeID, { try $0.insert(record) }) {
@@ -1019,8 +1077,7 @@ final class DictationTakeController: ObservableObject {
         orb.boxText = untypedForBox.isEmpty ? session.typedText : untypedForBox
         orb.liveTranscript = ""
         orb.boxReason = pasteOutcome == .posted ? "your last take" : message
-        // The box's AI rewrites only when the AI clean-up is switched on: off means nothing goes online.
-        orb.quickRewrites = host.makePolisher() == nil || !DictationEngineResolver.wantsModelPolish(settings: settings) ? [] : Self.quickRewrites.map(\.label)
+        orb.quickRewrites = quickRewriteLabels(polisher: polisherForThisTake)
         // The rest is on the clipboard and the orb says so; the box opens only when asked for.
         orb.isBoxOpen = settings.orbRestsExpanded
         scheduleBoxClose()
@@ -1036,12 +1093,12 @@ final class DictationTakeController: ObservableObject {
     /// Returns the orb's note when that write failed (see `writeToHistory`).
     private func recordInterruptedLiveTypedTake(_ session: LiveTypingSession, takeID thisTakeID: UUID, status: TakeRecord.Status, reason: String) -> String? {
         guard !settings.incognito else { return nil }
-        let record = TakeRecord(id: thisTakeID, createdAt: takeStartedAt, mode: .dictate, status: status,
-                                rawText: session.typedRawWords.joined(separator: " "), formattedText: session.typedText,
-                                appBundleID: fieldAtPress.appBundleID, appName: fieldAtPress.appName,
-                                language: settings.language.bareCode, engine: settings.engine.rawValue,
-                                durationSeconds: Date().timeIntervalSince(takeStartedAt), pasteOutcome: .posted,
-                                failureReason: "\(reason) · words typed before it stay")
+        let record = makeRecord(
+            takeID: thisTakeID, createdAt: takeStartedAt, mode: .dictate, status: status,
+            rawText: session.typedRawWords.joined(separator: " "), formattedText: session.typedText,
+            appBundleID: fieldAtPress.appBundleID, appName: fieldAtPress.appName,
+            durationSeconds: Date().timeIntervalSince(takeStartedAt), pasteOutcome: .posted,
+            failureReason: "\(reason) · words typed before it stay")
         let historyNote = writeToHistory("interrupted take", takeID: thisTakeID, { try $0.insert(record) })
         historyVersion += 1
         return historyNote
@@ -1117,7 +1174,7 @@ final class DictationTakeController: ObservableObject {
     /// Asks the configured model a question over the takes that match it (history → "press enter to ask").
     func askHistory(_ question: String) async -> String {
         guard let polisher = host.makePolisher() else {
-            return "asking needs a model: add a sarvam key or sign in under settings."
+            return "asking needs a model: \(DictationEngineResolver.howToGetAModelSentence)."
         }
         var candidates = historyMatches(for: question)
         if candidates.isEmpty { candidates = (try? takeStore?.recent(limit: 60)) ?? [] }
@@ -1160,15 +1217,12 @@ final class DictationTakeController: ObservableObject {
                 scheduleIdle(after: 2.5)
                 return
             }
-            let space = spaceStore.space
-            let context = TakeFormattingContext(
-                style: space.style(forAppBundleID: original?.appBundleID), dictionary: space.dictionary, shortcuts: space.shortcuts,
-                appName: original?.appName, language: settings.language, script: settings.script)
+            let context = makeFormattingContext(appBundleID: original?.appBundleID, appName: original?.appName)
             let formatted = await TakeFormatter.format(raw, context: context, polisher: host.makePolisher(), wantsModel: DictationEngineResolver.wantsModelPolish(settings: settings))
-            let record = TakeRecord(id: takeID, createdAt: original?.createdAt ?? Date(), mode: .dictate, status: .complete,
-                                    rawText: raw, formattedText: formatted.text, appBundleID: original?.appBundleID, appName: original?.appName,
-                                    language: settings.language.bareCode, engine: settings.engine.rawValue,
-                                    durationSeconds: original?.durationSeconds ?? 0, pasteOutcome: .leftInOrb)
+            let record = makeRecord(
+                takeID: takeID, createdAt: original?.createdAt ?? Date(), mode: .dictate, status: .complete,
+                rawText: raw, formattedText: formatted.text, appBundleID: original?.appBundleID, appName: original?.appName,
+                durationSeconds: original?.durationSeconds ?? 0, pasteOutcome: .leftInOrb)
             var historyNote: String?
             if !settings.incognito { historyNote = writeToHistory("retried take", takeID: takeID, { try $0.insert(record) }) }
             historyVersion += 1
@@ -1214,7 +1268,8 @@ enum HeyClickyEditor {
         let user = "Instruction: \(instruction)\n\nText:\n\(selection)"
         let answer = try await polisher.polish(system: system, user: user)
         let cleaned = TakeFormatter.unwrapModelAnswer(answer)
-        guard !cleaned.isEmpty else { throw SarvamSpeechError.unreadable("the edit came back empty") }
+        // Any model can make the edit, so the error names the one that did, not Sarvam's.
+        guard !cleaned.isEmpty else { throw TakePolishError.emptyAnswer(vendor: polisher.displayName) }
         return cleaned
     }
 }
