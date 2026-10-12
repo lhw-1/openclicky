@@ -189,33 +189,9 @@ class ClaudeAPI {
         // Another source answers (an OpenAI-compatible key, Gemini, a Claude Code or Codex plan):
         // the same question goes to its AnswerProvider, and its text streams back the same way.
         if case .answerProvider(let source) = ProviderRouter.current(for: .claude) {
-            let provider = try await AnswerProviderFactory.make(for: source, credentials: ProviderRouter.currentCredentials(),
-                                                          modelOverrides: OpenClickyConfiguration.settings.answerModels ?? [:])
-            let answerRequest = AnswerRequest(
-                images: images.map { AnswerRequest.Image(data: $0.data, label: $0.label, mediaType: detectImageMediaType(for: $0.data)) },
-                systemPrompt: systemPrompt,
-                history: conversationHistory.map { AnswerRequest.Turn(user: $0.userPlaceholder, assistant: $0.assistantResponse) },
-                userPrompt: userPrompt,
-                tools: tools.compactMap(Self.answerTool(fromAnthropicTool:)))
-            // The pieces come through a stream this call reads to the end, in order; each is handed
-            // on as the whole answer so far, like the Anthropic path below. Cancelling the question
-            // cancels the provider (a CLI process is ended).
-            let (pieces, piecesContinuation) = AsyncStream<String>.makeStream()
-            let answerTask = Task<AnswerResult, Error> {
-                defer { piecesContinuation.finish() }
-                return try await provider.answer(answerRequest) { piecesContinuation.yield($0) }
-            }
-            let result = try await withTaskCancellationHandler {
-                var answerSoFar = ""
-                for await piece in pieces {
-                    answerSoFar += piece
-                    await onTextChunk(answerSoFar)
-                }
-                return try await answerTask.value
-            } onCancel: {
-                answerTask.cancel()
-            }
-            AppLog.append("answer: \(source.displayName) answered (\(result.text.count) chars, \(result.toolCalls.count) tool calls)")
+            let result = try await answerThroughProvider(
+                source: source, images: images, systemPrompt: systemPrompt, conversationHistory: conversationHistory,
+                userPrompt: userPrompt, tools: tools, maxTokens: 1024, onTextChunk: onTextChunk)
             return (text: result.text, toolCalls: result.toolCalls, duration: Date().timeIntervalSince(startTime))
         }
 
@@ -329,7 +305,51 @@ class ClaudeAPI {
         return (text: accumulatedResponseText, toolCalls: Self.parseToolCalls(fromSSELines: sseLines), duration: duration)
     }
 
-    /// Non-streaming fallback for validation requests where we don't need progressive display.
+    /// The same question asked of another source's AnswerProvider (an OpenAI-compatible key,
+    /// Gemini, a Claude Code or Codex plan). The pieces come through a stream this call reads to the
+    /// end, in order; each is handed on as the whole answer so far, like the Anthropic path.
+    /// Cancelling the question cancels the provider (a CLI process is ended).
+    private func answerThroughProvider(
+        source: AnswerSource,
+        images: [(data: Data, label: String)],
+        systemPrompt: String,
+        conversationHistory: [(userPlaceholder: String, assistantResponse: String)],
+        userPrompt: String,
+        tools: [[String: Any]],
+        maxTokens: Int,
+        onTextChunk: @MainActor @Sendable (String) -> Void
+    ) async throws -> AnswerResult {
+        let provider = try await AnswerProviderFactory.make(for: source, credentials: ProviderRouter.currentCredentials(),
+                                                      modelOverrides: OpenClickyConfiguration.settings.answerModels ?? [:])
+        var answerRequest = AnswerRequest(
+            images: images.map { AnswerRequest.Image(data: $0.data, label: $0.label, mediaType: detectImageMediaType(for: $0.data)) },
+            systemPrompt: systemPrompt,
+            history: conversationHistory.map { AnswerRequest.Turn(user: $0.userPlaceholder, assistant: $0.assistantResponse) },
+            userPrompt: userPrompt,
+            tools: tools.compactMap(Self.answerTool(fromAnthropicTool:)))
+        answerRequest.maxTokens = maxTokens
+        let (pieces, piecesContinuation) = AsyncStream<String>.makeStream()
+        let answerTask = Task<AnswerResult, Error> {
+            defer { piecesContinuation.finish() }
+            return try await provider.answer(answerRequest) { piecesContinuation.yield($0) }
+        }
+        let result = try await withTaskCancellationHandler {
+            var answerSoFar = ""
+            for await piece in pieces {
+                answerSoFar += piece
+                await onTextChunk(answerSoFar)
+            }
+            return try await answerTask.value
+        } onCancel: {
+            answerTask.cancel()
+        }
+        AppLog.append("answer: \(source.displayName) answered (\(result.text.count) chars, \(result.toolCalls.count) tool calls)")
+        return result
+    }
+
+    /// Non-streaming request for short answers nobody watches arrive (screen grounding). Another
+    /// answer source gets the question through its AnswerProvider, as the streaming call does; it
+    /// used to throw here, so grounding silently never ran on those routes.
     func analyzeImage(
         images: [(data: Data, label: String)],
         systemPrompt: String,
@@ -337,6 +357,15 @@ class ClaudeAPI {
         userPrompt: String
     ) async throws -> (text: String, duration: TimeInterval) {
         let startTime = Date()
+
+        if case .answerProvider(let source) = ProviderRouter.current(for: .claude) {
+            let result = try await answerThroughProvider(
+                source: source, images: images, systemPrompt: systemPrompt, conversationHistory: conversationHistory,
+                // Not the 256 Anthropic gets below: a reasoning model (a Gemini 3, an OpenAI
+                // reasoning model) spends part of its limit thinking before the short answer.
+                userPrompt: userPrompt, tools: [], maxTokens: 1024, onTextChunk: { _ in })
+            return (text: result.text, duration: Date().timeIntervalSince(startTime))
+        }
 
         let apiRequest = try makeAPIRequest()
         var request = apiRequest.request
