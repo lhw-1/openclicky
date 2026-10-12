@@ -176,6 +176,9 @@ final class DictationTakeController: ObservableObject {
     /// The key went down with no text box focused: the pointer says so beside the mouse, so the
     /// person knows to click into one instead of finding out from "copied, press ⌘V" at the end.
     var onNoTextBoxAtPress: ((String) -> Void)?
+    /// How long a take that began outside any text box, and still has none when the key is let
+    /// go, waits for one to be clicked into: people let go first and click after (tested 2026-10-13).
+    var secondsToWaitForATextBoxAfterRelease: TimeInterval = 8
     /// The first-run tour's practice: takes are heard and recorded but never typed or pasted.
     var holdsTakesOnTheIsland = false
 
@@ -837,7 +840,19 @@ final class DictationTakeController: ObservableObject {
         var field = fieldAtPress
         var followsTheTextBoxClickedDuringTheTake = false
         if Self.hasNoTextBoxToPasteInto(fieldAtPress, isAccessibilityTrusted: host.isAccessibilityTrusted()) {
-            let fieldNow = host.readFocusedField()
+            var fieldNow = host.readFocusedField()
+            if !fieldNow.isEditable, !fieldNow.isSecure, secondsToWaitForATextBoxAfterRelease > 0 {
+                // Still nowhere to put them: the words wait a few seconds for a click into a box.
+                let deliveringTakeID = takeID
+                orb.phase = .working(Self.noTextBoxOrbHint)
+                AppLog.append("take \(deliveringTakeID.uuidString.prefix(8)): no text box at release; waiting \(Int(secondsToWaitForATextBoxAfterRelease)) s for one")
+                let deadline = Date().addingTimeInterval(secondsToWaitForATextBoxAfterRelease)
+                while Date() < deadline, takeID == deliveringTakeID {
+                    try? await Task.sleep(for: .milliseconds(200))
+                    fieldNow = host.readFocusedField()
+                    if fieldNow.isEditable || fieldNow.isSecure { break }
+                }
+            }
             if fieldNow.isEditable || fieldNow.isSecure {
                 field = fieldNow
                 followsTheTextBoxClickedDuringTheTake = true

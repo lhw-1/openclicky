@@ -154,6 +154,8 @@ private struct Harness {
         let audioStore = TakeAudioStore(directoryURL: FileManager.default.temporaryDirectory.appendingPathComponent("audio-\(UUID().uuidString)"))
         controller = DictationTakeController(settings: settings, spaceStore: spaceStore, takeStore: store, orb: orb, capture: capture, host: host, audioStore: audioStore)
         controller.liveTypingTiming = .algorithmTests
+        // The real wait for a text box after release is 8 s; tests that never click wait less.
+        controller.secondsToWaitForATextBoxAfterRelease = 0.4
     }
 
     static let notesProcessID: pid_t = 4242
@@ -452,6 +454,25 @@ struct DictationTakeControllerTests {
         #expect(h.pasted.texts.isEmpty)
         #expect(h.pasted.copied == ["Hello"])
         #expect(h.orb.phase == .done("no text box. copied, press ⌘V"))
+    }
+
+    @Test @MainActor func aTextBoxClickedJustAfterLettingGoGetsTheWords() async throws {
+        let h = try Harness(field: Self.finderList)
+        h.pasted.frontApp = "com.apple.finder"
+        h.controller.secondsToWaitForATextBoxAfterRelease = 3
+        h.controller.handle(.dictationPressed)
+        await h.waitUntil { h.controller.state == .listening }
+        h.controller.handle(.dictationReleased(wasTap: false))
+        h.capture.deliverFinal("hello there")
+        await h.waitUntil { h.orb.phase == .working(DictationTakeController.noTextBoxOrbHint) }
+        #expect(h.pasted.texts.isEmpty)
+        // A second after letting go, the person clicks into a note.
+        try await Task.sleep(for: .milliseconds(300))
+        h.pasted.frontApp = "com.apple.Notes"
+        h.pasted.focusedField = Self.notesBox
+        await h.waitUntil { h.controller.state == .idle }
+        #expect(h.pasted.texts == ["Hello there"])
+        #expect(h.pasted.copied.isEmpty)
     }
 
     @Test @MainActor func aTextBoxClickedDuringTheTakeGetsTheWords() async throws {

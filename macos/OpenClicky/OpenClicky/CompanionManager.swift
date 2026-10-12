@@ -1204,6 +1204,7 @@ final class CompanionManager: ObservableObject {
         controller.onNoTextBoxAtPress = { [weak self] message in
             guard let self else { return }
             // The pointer may be resting out of sight ("after a shake"): it is the one speaking.
+            AppLog.append("pointer: asked for a text box (overlay \(self.isOverlayVisible ? "shown" : "hidden"), docked \(self.isCursorDocked), presence \(self.pointerPresence.rawValue), awake \(self.isPointerAwake), voice \(self.voiceState))")
             self.wakePointer()
             self.showQuietNotice(message)
         }
