@@ -1662,7 +1662,9 @@ final class CompanionManager: ObservableObject {
                 } catch let failure as SpeechQueue.Failure {
                     // 402 is the account's voice allowance (tts_budget): the system voice is the plan, not a failure.
                     let nsError = failure.underlyingError as NSError
-                    if !(nsError.domain == "ElevenLabsTTS" && nsError.code == 402) {
+                    let voiceRefusal = failure.underlyingError as? BackendHTTPError
+                    let isVoiceAllowanceSpent = voiceRefusal?.service == .voice && voiceRefusal?.status == 402
+                    if !isVoiceAllowanceSpent {
                         ClickyAnalytics.trackTTSError(error: nsError.localizedDescription)
                     }
                     print("⚠️ TTS via backend failed (\(nsError.localizedDescription)); using the system voice")
@@ -1690,10 +1692,14 @@ final class CompanionManager: ObservableObject {
                     // Not an outage: nothing is set up to answer yet. Said in text beside the
                     // pointer, not in the system voice, which reads a setup note like an alarm.
                     showAskCaption(unavailable.sentence, holdSeconds: 8)
-                } else if Self.isSignInRejection(error) {
-                    // The backend refused the token. One refresh; a sign-in nothing can renew, or a
-                    // second 401 in a row, signs out. Either way the person hears what to do.
-                    speakWithSystemVoice(await OpenClickyAuthSession.shared.sentenceAfterBackendRejection(errorDescription: error.localizedDescription))
+                } else if let signInError = error as? BackendSignInError {
+                    // The backend refused the token and BackendSignIn has already renewed it once and
+                    // asked again: the sign-in is over, or could not be renewed right now.
+                    speakWithSystemVoice(OpenClickyAuthSession.spokenSentence(after: signInError))
+                } else if let refusal = Self.refusedQuestion(error), Self.isSignInRejection(refusal) {
+                    // A 401 BackendSignIn passed through (an own key's refusal relayed by the backend,
+                    // or a request sent with no token), or Anthropic refusing an own key directly.
+                    speakWithSystemVoice(await OpenClickyAuthSession.shared.sentenceAfterBackendRejection(responseBody: refusal.body))
                 } else if Self.isAccountNotice(error) {
                     if let notice = Self.accountNoticeToSpeak(for: error, alreadySpoken: &spokenAccountNotices) {
                         speakWithSystemVoice(notice)
@@ -1751,10 +1757,11 @@ final class CompanionManager: ObservableObject {
                 break
             }
         }
-        let nsError = error as NSError
-        if nsError.domain == "ClaudeAPI" && (nsError.code == 401 || nsError.code == 403) {
+        if let refusal = refusedQuestion(error), refusal.status == 401 || refusal.status == 403 {
             return "something went wrong talking to the openclicky backend. check the backend and your token in the settings file."
         }
+        // Not an HTTP refusal: the stream had started when Anthropic reported the failure.
+        let nsError = error as NSError
         if nsError.domain == "ClaudeAPI" && nsError.code == ClaudeAPI.midStreamErrorCode {
             return "the answer stopped partway. please ask again."
         }
@@ -2044,35 +2051,37 @@ final class CompanionManager: ObservableObject {
         return ([answer] + toolOutcomes).filter { !$0.isEmpty }.joined(separator: " ")
     }
 
+    /// The refusal of a question (ClaudeAPI's /chat, or Anthropic on an own key), as it came; nil
+    /// for anything else, including the voice's own refusals.
+    static func refusedQuestion(_ error: Error) -> BackendHTTPError? {
+        guard let refusal = error as? BackendHTTPError, refusal.service == .answers else { return nil }
+        return refusal
+    }
+
     /// The plain sentence for an account limit, when the ask lane's Claude call answered 402.
-    /// `ClaudeAPI` puts the response body after `API Error (402): `, so the JSON starts at the first `{`.
     static func limitSentence(for error: Error) -> String? {
-        let error = error as NSError
-        guard error.domain == "ClaudeAPI", error.code == 402 else { return nil }
-        let body = Data(((error.userInfo[NSLocalizedDescriptionKey] as? String) ?? "").drop { $0 != "{" }.utf8)
-        let message = AccountLimitError.from(status: 402, body: body)?.message ?? ""
+        guard let refusal = refusedQuestion(error), refusal.status == 402 else { return nil }
+        let message = AccountLimitError.from(status: 402, body: refusal.body)?.message ?? ""
         return message.isEmpty ? AccountLimitError.personalLimit.message : message
     }
 
-    /// The account's answer to a failed ask: a 402 limit, or the free service's 503 trouble.
-    /// The backend answered 401: the token was refused (expired, or issued before a move).
+    /// The question was refused with a 401: the account's token (expired, or issued before a move),
+    /// or the person's own key, refused by Anthropic or relayed by the backend.
     static func isSignInRejection(_ error: Error) -> Bool {
-        let error = error as NSError
-        return error.domain == "ClaudeAPI" && error.code == 401
+        refusedQuestion(error)?.status == 401
     }
 
+    /// The account's answer to a failed ask: a 402 limit, or the free service's 503 trouble.
     static func isAccountNotice(_ error: Error) -> Bool {
-        let error = error as NSError
-        guard error.domain == "ClaudeAPI" else { return false }
-        return error.code == 402 || (error.code == 503 && serviceTrouble(in: error))
+        guard let refusal = refusedQuestion(error) else { return false }
+        return refusal.status == 402 || isServiceTrouble(refusal)
     }
 
     /// The sentence for an account notice the first time this session; nil afterwards (and for any
     /// other error), so a lane that keeps hitting the same limit falls back silently.
     static func accountNoticeToSpeak(for error: Error, alreadySpoken: inout Set<String>) -> String? {
-        let nsError = error as NSError
         let sentence: String?
-        if nsError.domain == "ClaudeAPI", nsError.code == 503, serviceTrouble(in: nsError) {
+        if let refusal = refusedQuestion(error), isServiceTrouble(refusal) {
             sentence = AccountLimitError.serviceTroubleMessage
         } else {
             sentence = limitSentence(for: error)
@@ -2081,9 +2090,8 @@ final class CompanionManager: ObservableObject {
         return sentence
     }
 
-    private static func serviceTrouble(in error: NSError) -> Bool {
-        let body = Data(((error.userInfo[NSLocalizedDescriptionKey] as? String) ?? "").drop { $0 != "{" }.utf8)
-        return AccountLimitError.isServiceTrouble(status: error.code, body: body)
+    private static func isServiceTrouble(_ refusal: BackendHTTPError) -> Bool {
+        refusal.status == 503 && AccountLimitError.isServiceTrouble(status: refusal.status, body: refusal.body)
     }
 
     /// The screens a question carries: the cursor's screen first, and for an account at most one

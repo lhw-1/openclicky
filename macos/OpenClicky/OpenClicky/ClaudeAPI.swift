@@ -58,14 +58,18 @@ class ClaudeAPI {
 
     /// The person's own Anthropic key goes straight to Anthropic with the same Messages body /chat
     /// relays; without one, the backend's /chat on the account's token (`ProviderRouter`).
-    private func makeAPIRequest() throws -> URLRequest {
+    /// `goesToBackend` says the request carries the account's token, so a 401 is the sign-in's
+    /// and goes through `BackendSignIn` (refresh once, send again).
+    private func makeAPIRequest() throws -> (request: URLRequest, goesToBackend: Bool) {
         var request: URLRequest
+        let goesToBackend: Bool
         switch ProviderRouter.current(for: .claude) {
         case .anthropicDirect:
             guard let anthropicKey = ProviderRouter.currentCredentials().anthropicKey else {
                 throw ProviderRouteUnavailable(capability: .claude, sentence: ProviderRouter.needsAnthropicKeySentence)
             }
             request = DirectProviderRequests.anthropicMessages(key: anthropicKey)
+            goesToBackend = false
         case .unavailable(let sentence):
             throw ProviderRouteUnavailable(capability: .claude, sentence: sentence)
         case .answerProvider(let source):
@@ -76,9 +80,44 @@ class ClaudeAPI {
             request.httpMethod = "POST"
             request.setValue("application/json", forHTTPHeaderField: "Content-Type")
             OpenClickyConfiguration.authorize(&request)
+            goesToBackend = true
         }
         request.timeoutInterval = 120
-        return request
+        return (request, goesToBackend)
+    }
+
+    /// The start of a streamed answer: the byte stream of a 2xx answer, or a refusal whose body has
+    /// been read to the end (BackendSignIn needs a 401's body to tell the sign-in's from an own key's).
+    private enum StreamingAnswerStart {
+        case streaming(URLSession.AsyncBytes, status: Int)
+        case refused(status: Int, body: Data)
+
+        var statusAndBody: (status: Int, body: Data) {
+            switch self {
+            case .streaming(_, let status): return (status, Data())
+            case .refused(let status, let body): return (status, body)
+            }
+        }
+    }
+
+    private static func startStreamingAnswer(_ request: URLRequest, session: URLSession) async throws -> StreamingAnswerStart {
+        let (byteStream, response) = try await session.bytes(for: request)
+        guard let httpResponse = response as? HTTPURLResponse else {
+            throw NSError(
+                domain: "ClaudeAPI",
+                code: -1,
+                userInfo: [NSLocalizedDescriptionKey: "Invalid HTTP response"]
+            )
+        }
+        // If non-2xx status, read the full body as error text
+        guard (200...299).contains(httpResponse.statusCode) else {
+            var errorBodyChunks: [String] = []
+            for try await line in byteStream.lines {
+                errorBodyChunks.append(line)
+            }
+            return .refused(status: httpResponse.statusCode, body: Data(errorBodyChunks.joined(separator: "\n").utf8))
+        }
+        return .streaming(byteStream, status: httpResponse.statusCode)
     }
 
     /// Detects the MIME type of image data by inspecting the first bytes.
@@ -180,7 +219,9 @@ class ClaudeAPI {
             return (text: result.text, toolCalls: result.toolCalls, duration: Date().timeIntervalSince(startTime))
         }
 
-        var request = try makeAPIRequest()
+        let apiRequest = try makeAPIRequest()
+        var request = apiRequest.request
+        let goesToBackend = apiRequest.goesToBackend
 
         // Build messages array
         var messages: [[String: Any]] = []
@@ -226,29 +267,19 @@ class ClaudeAPI {
         let payloadMB = Double(bodyData.count) / 1_048_576.0
         print("🌐 Claude streaming request: \(String(format: "%.1f", payloadMB))MB, \(images.count) image(s)")
 
-        // Use bytes streaming for SSE (Server-Sent Events)
-        let (byteStream, response) = try await session.bytes(for: request)
-
-        guard let httpResponse = response as? HTTPURLResponse else {
-            throw NSError(
-                domain: "ClaudeAPI",
-                code: -1,
-                userInfo: [NSLocalizedDescriptionKey: "Invalid HTTP response"]
-            )
-        }
-
-        // If non-2xx status, read the full body as error text
-        guard (200...299).contains(httpResponse.statusCode) else {
-            var errorBodyChunks: [String] = []
-            for try await line in byteStream.lines {
-                errorBodyChunks.append(line)
-            }
-            let errorBody = errorBodyChunks.joined(separator: "\n")
-            throw NSError(
-                domain: "ClaudeAPI",
-                code: httpResponse.statusCode,
-                userInfo: [NSLocalizedDescriptionKey: "API Error (\(httpResponse.statusCode)): \(errorBody)"]
-            )
+        // Use bytes streaming for SSE (Server-Sent Events). On the account's token a refused
+        // sign-in is renewed once and the question sent again, like every other backend call.
+        let session = self.session
+        let streamingAnswerStart = goesToBackend
+            ? try await BackendSignIn.send(request, using: { try await Self.startStreamingAnswer($0, session: session) },
+                                           readingStatusAndBodyWith: { $0.statusAndBody })
+            : try await Self.startStreamingAnswer(request, session: session)
+        let byteStream: URLSession.AsyncBytes
+        switch streamingAnswerStart {
+        case .streaming(let answerByteStream, _):
+            byteStream = answerByteStream
+        case .refused(let status, let body):
+            throw BackendHTTPError(service: .answers, status: status, body: body)
         }
 
         // Parse SSE stream — each event is "data: {json}\n\n"
@@ -307,7 +338,9 @@ class ClaudeAPI {
     ) async throws -> (text: String, duration: TimeInterval) {
         let startTime = Date()
 
-        var request = try makeAPIRequest()
+        let apiRequest = try makeAPIRequest()
+        var request = apiRequest.request
+        let goesToBackend = apiRequest.goesToBackend
 
         var messages: [[String: Any]] = []
         for (userPlaceholder, assistantResponse) in conversationHistory {
@@ -349,16 +382,19 @@ class ClaudeAPI {
         let payloadMB = Double(bodyData.count) / 1_048_576.0
         print("🌐 Claude request: \(String(format: "%.1f", payloadMB))MB, \(images.count) image(s)")
 
-        let (data, response) = try await session.data(for: request)
+        let (data, response) = goesToBackend
+            ? try await BackendSignIn.send(request) { [session] in try await session.data(for: $0) }
+            : try await session.data(for: request)
 
-        guard let httpResponse = response as? HTTPURLResponse,
-              (200...299).contains(httpResponse.statusCode) else {
-            let responseString = String(data: data, encoding: .utf8) ?? "Unknown error"
+        guard let httpResponse = response as? HTTPURLResponse else {
             throw NSError(
                 domain: "ClaudeAPI",
-                code: (response as? HTTPURLResponse)?.statusCode ?? -1,
-                userInfo: [NSLocalizedDescriptionKey: "API Error: \(responseString)"]
+                code: -1,
+                userInfo: [NSLocalizedDescriptionKey: "Invalid HTTP response"]
             )
+        }
+        guard (200...299).contains(httpResponse.statusCode) else {
+            throw BackendHTTPError(service: .answers, status: httpResponse.statusCode, body: data)
         }
 
         let json = try JSONSerialization.jsonObject(with: data) as? [String: Any]

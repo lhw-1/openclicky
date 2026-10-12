@@ -160,6 +160,50 @@ struct BackendSignInTests {
         #expect(!BackendSignIn.isOwnKeyRefusal(body: Self.backendRefusal))
     }
 
+    // The ask lane's streamed answer goes through the same rule: its body is read only when it was
+    // refused, so the stream of an accepted answer is left for the caller.
+    private enum StreamedAnswer: Equatable {
+        case streaming(status: Int)
+        case refused(status: Int, body: Data)
+
+        var statusAndBody: (status: Int, body: Data) {
+            switch self {
+            case .streaming(let status): return (status, Data())
+            case .refused(let status, let body): return (status, body)
+            }
+        }
+    }
+
+    @Test func aStreamedQuestionIsAskedAgainAfterARefresh() async throws {
+        let recorder = SignInRecorder()
+        let result = try await BackendSignIn.send(request(), using: { sent in
+            await recorder.noteSent(sent)
+            let isFirstSend = await recorder.sentAuthorizations.count == 1
+            return isFirstSend ? StreamedAnswer.refused(status: 401, body: Self.backendRefusal) : StreamedAnswer.streaming(status: 200)
+        }, readingStatusAndBodyWith: { $0.statusAndBody }, signIn: signIn(recorder, outcome: .tryAgain))
+        #expect(result == .streaming(status: 200))
+        #expect(await recorder.sentAuthorizations == ["Bearer old-token", "Bearer new-token"])
+    }
+
+    @Test func aStreamedQuestionsOwnKeyRefusalComesBackAsItCame() async throws {
+        let recorder = SignInRecorder()
+        let result = try await BackendSignIn.send(request(), using: { _ in StreamedAnswer.refused(status: 401, body: Self.ownKeyRefusal) },
+                                                  readingStatusAndBodyWith: { $0.statusAndBody },
+                                                  signIn: signIn(recorder, outcome: .signedOut))
+        #expect(result == .refused(status: 401, body: Self.ownKeyRefusal))
+        #expect(await recorder.rejectionsHandled.isEmpty)
+    }
+
+    // The refusal ClaudeAPI and the voice throw keeps the body as it came and the old description,
+    // and bridges to an NSError whose code is the status (what the log lines print).
+    @Test func aRefusalKeepsItsBodyAndReadsAsBefore() {
+        let body = Data(#"{"error":"daily_limit"}"#.utf8)
+        let question = BackendHTTPError(service: .answers, status: 402, body: body)
+        #expect(question.localizedDescription == #"API Error (402): {"error":"daily_limit"}"#)
+        #expect((question as NSError).code == 402)
+        #expect(BackendHTTPError(service: .voice, status: 402, body: body).localizedDescription == #"TTS API error (402): {"error":"daily_limit"}"#)
+    }
+
     @Test func thePolisherRetriesAfterARefresh() async throws {
         let recorder = SignInRecorder()
         let polisher = AccountTakePolisher(purpose: "polish", send: { sent in

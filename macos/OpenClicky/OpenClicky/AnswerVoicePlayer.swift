@@ -78,9 +78,7 @@ final class AnswerVoicePlayer {
         }
 
         guard (200...299).contains(httpResponse.statusCode) else {
-            let errorBody = String(data: data, encoding: .utf8) ?? "Unknown error"
-            throw NSError(domain: "ElevenLabsTTS", code: httpResponse.statusCode,
-                          userInfo: [NSLocalizedDescriptionKey: "TTS API error (\(httpResponse.statusCode)): \(errorBody)"])
+            throw BackendHTTPError(service: .voice, status: httpResponse.statusCode, body: data)
         }
         return data
     }

@@ -19,10 +19,23 @@ struct SignInExpiryTests {
     }
 
     @MainActor @Test func aRefusedTokenIsASignInProblemNotABackendFailure() {
-        let refused = NSError(domain: "ClaudeAPI", code: 401, userInfo: [NSLocalizedDescriptionKey: "API Error (401): {\"error\":\"unauthorized\"}"])
+        let refused = BackendHTTPError(service: .answers, status: 401, body: Data(#"{"error":"unauthorized"}"#.utf8))
         #expect(CompanionManager.isSignInRejection(refused))
         #expect(!CompanionManager.isAccountNotice(refused))
-        #expect(!CompanionManager.isSignInRejection(NSError(domain: "ClaudeAPI", code: 402)))
-        #expect(!CompanionManager.isSignInRejection(NSError(domain: "ClaudeAPI", code: 500)))
+        #expect(!CompanionManager.isSignInRejection(BackendHTTPError(service: .answers, status: 402, body: Data())))
+        #expect(!CompanionManager.isSignInRejection(BackendHTTPError(service: .answers, status: 500, body: Data())))
+        // The voice's own 401 is not the question's.
+        #expect(!CompanionManager.isSignInRejection(BackendHTTPError(service: .voice, status: 401, body: Data())))
+    }
+
+    // BackendSignIn renews a refused token and asks again before the ask lane hears of it; what it
+    // throws after that is said with the same sentences the ask lane used when it renewed itself.
+    @Test func aSignInOneRenewalCouldNotSaveIsSaidAsBefore() {
+        #expect(OpenClickyAuthSession.spokenSentence(after: BackendSignInError.expired)
+                == OpenClickyAuthSession.spokenSentence(after: .signedOut))
+        #expect(OpenClickyAuthSession.spokenSentence(after: BackendSignInError.expired)
+                == "your openclicky sign-in has expired. sign in again in settings, account.")
+        #expect(OpenClickyAuthSession.spokenSentence(after: BackendSignInError.couldNotRenew)
+                == OpenClickyAuthSession.unreachableMessage)
     }
 }

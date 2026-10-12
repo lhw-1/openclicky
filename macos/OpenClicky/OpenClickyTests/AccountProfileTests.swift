@@ -115,8 +115,8 @@ struct AccountProfileTests {
     // MARK: §6.3 — limit sentences once per session; 503 trouble
 
     @MainActor @Test func limitSentencesAreSpokenOncePerSessionPerKind() {
-        func claudeError(_ code: Int, _ body: String) -> NSError {
-            NSError(domain: "ClaudeAPI", code: code, userInfo: [NSLocalizedDescriptionKey: "API Error (\(code)): \(body)"])
+        func claudeError(_ code: Int, _ body: String) -> BackendHTTPError {
+            BackendHTTPError(service: .answers, status: code, body: Data(body.utf8))
         }
         var spoken: Set<String> = []
         let daily = claudeError(402, #"{"error":"daily_limit"}"#)
