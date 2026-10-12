@@ -2,9 +2,10 @@
 //  BuddyDictationManager.swift
 //  OpenClicky
 //
-//  Shared push-to-talk dictation manager for the help chat and brainstorm buddy.
-//  Captures microphone audio with AVAudioEngine, routes it into the active
-//  transcription provider, and hands the final draft back to the active input bar.
+//  The microphone-and-engine side of push to talk, shared by dictation (one manager per take
+//  controller, behind `DictationCapturing`) and the companion's ⌃⌥ talk lane. Captures microphone
+//  audio with AVAudioEngine, routes it into the active transcription provider, and hands the
+//  partial and final transcripts back to the caller's draft callbacks.
 //
 
 import AppKit
@@ -14,199 +15,12 @@ import Foundation
 import Speech
 
 enum BuddyPushToTalkShortcut {
-    enum ShortcutOption {
-        case shiftFunction
-        case controlOption
-        case shiftControl
-        case controlOptionSpace
-        case shiftControlSpace
-
-        var displayText: String {
-            switch self {
-            case .shiftFunction:
-                return "shift + fn"
-            case .controlOption:
-                return "ctrl + option"
-            case .shiftControl:
-                return "shift + control"
-            case .controlOptionSpace:
-                return "ctrl + option + space"
-            case .shiftControlSpace:
-                return "shift + control + space"
-            }
-        }
-
-        var keyCapsuleLabels: [String] {
-            switch self {
-            case .shiftFunction:
-                return ["shift", "fn"]
-            case .controlOption:
-                return ["ctrl", "option"]
-            case .shiftControl:
-                return ["shift", "control"]
-            case .controlOptionSpace:
-                return ["ctrl", "option", "space"]
-            case .shiftControlSpace:
-                return ["shift", "control", "space"]
-            }
-        }
-
-        fileprivate var modifierOnlyFlags: NSEvent.ModifierFlags? {
-            switch self {
-            case .shiftFunction:
-                return [.shift, .function]
-            case .controlOption:
-                return [.control, .option]
-            case .shiftControl:
-                return [.shift, .control]
-            case .controlOptionSpace, .shiftControlSpace:
-                return nil
-            }
-        }
-
-        fileprivate var spaceShortcutModifierFlags: NSEvent.ModifierFlags? {
-            switch self {
-            case .shiftFunction:
-                return nil
-            case .controlOption:
-                return nil
-            case .shiftControl:
-                return nil
-            case .controlOptionSpace:
-                return [.control, .option]
-            case .shiftControlSpace:
-                return [.shift, .control]
-            }
-        }
-    }
-
+    /// Talk (control + option) going down or coming up, as `GlobalPushToTalkShortcutMonitor` publishes it.
     enum ShortcutTransition {
         case none
         case pressed
         case released
     }
-
-    private enum ShortcutEventType {
-        case flagsChanged
-        case keyDown
-        case keyUp
-    }
-
-    static let currentShortcutOption: ShortcutOption = .controlOption
-    static let pushToTalkKeyCode: UInt16 = 49 // Space
-    static let pushToTalkDisplayText = currentShortcutOption.displayText
-    static let pushToTalkTooltipText = "push to talk (\(pushToTalkDisplayText))"
-
-    static func shortcutTransition(
-        for event: NSEvent,
-        wasShortcutPreviouslyPressed: Bool
-    ) -> ShortcutTransition {
-        guard let shortcutEventType = shortcutEventType(for: event.type) else { return .none }
-
-        return shortcutTransition(
-            for: shortcutEventType,
-            keyCode: event.keyCode,
-            modifierFlags: event.modifierFlags.intersection(.deviceIndependentFlagsMask),
-            wasShortcutPreviouslyPressed: wasShortcutPreviouslyPressed
-        )
-    }
-
-    static func shortcutTransition(
-        for eventType: CGEventType,
-        keyCode: UInt16,
-        modifierFlagsRawValue: UInt64,
-        wasShortcutPreviouslyPressed: Bool
-    ) -> ShortcutTransition {
-        guard let shortcutEventType = shortcutEventType(for: eventType) else { return .none }
-
-        return shortcutTransition(
-            for: shortcutEventType,
-            keyCode: keyCode,
-            modifierFlags: NSEvent.ModifierFlags(rawValue: UInt(modifierFlagsRawValue))
-                .intersection(.deviceIndependentFlagsMask),
-            wasShortcutPreviouslyPressed: wasShortcutPreviouslyPressed
-        )
-    }
-
-    private static func shortcutEventType(for eventType: NSEvent.EventType) -> ShortcutEventType? {
-        switch eventType {
-        case .flagsChanged:
-            return .flagsChanged
-        case .keyDown:
-            return .keyDown
-        case .keyUp:
-            return .keyUp
-        default:
-            return nil
-        }
-    }
-
-    private static func shortcutEventType(for eventType: CGEventType) -> ShortcutEventType? {
-        switch eventType {
-        case .flagsChanged:
-            return .flagsChanged
-        case .keyDown:
-            return .keyDown
-        case .keyUp:
-            return .keyUp
-        default:
-            return nil
-        }
-    }
-
-    private static func shortcutTransition(
-        for shortcutEventType: ShortcutEventType,
-        keyCode: UInt16,
-        modifierFlags: NSEvent.ModifierFlags,
-        wasShortcutPreviouslyPressed: Bool
-    ) -> ShortcutTransition {
-        if let modifierOnlyFlags = currentShortcutOption.modifierOnlyFlags {
-            guard shortcutEventType == .flagsChanged else { return .none }
-
-            let isShortcutCurrentlyPressed = modifierFlags.contains(modifierOnlyFlags)
-
-            if isShortcutCurrentlyPressed && !wasShortcutPreviouslyPressed {
-                return .pressed
-            }
-
-            if !isShortcutCurrentlyPressed && wasShortcutPreviouslyPressed {
-                return .released
-            }
-
-            return .none
-        }
-
-        guard let pushToTalkModifierFlags = currentShortcutOption.spaceShortcutModifierFlags else {
-            return .none
-        }
-
-        let matchesModifierFlags = modifierFlags.isSuperset(of: pushToTalkModifierFlags)
-
-        if shortcutEventType == .keyDown
-            && keyCode == pushToTalkKeyCode
-            && matchesModifierFlags
-            && !wasShortcutPreviouslyPressed {
-            return .pressed
-        }
-
-        if shortcutEventType == .keyUp
-            && keyCode == pushToTalkKeyCode
-            && wasShortcutPreviouslyPressed {
-            return .released
-        }
-
-        return .none
-    }
-}
-
-enum BuddyDictationPermissionProblem {
-    case microphoneAccessDenied
-    case speechRecognitionDenied
-}
-
-private enum BuddyDictationStartSource {
-    case microphoneButton
-    case keyboardShortcut
 }
 
 private struct BuddyDictationDraftCallbacks {
@@ -214,43 +28,27 @@ private struct BuddyDictationDraftCallbacks {
     let submitDraftText: (String) -> Void
 }
 
+/// The three callbacks a transcription session reports through.
+struct BuddyTranscriptionSessionCallbacks {
+    let onTranscriptUpdate: (String) -> Void
+    let onFinalTranscriptReady: (String) -> Void
+    let onError: (Error) -> Void
+}
+
 @MainActor
 final class BuddyDictationManager: NSObject, ObservableObject {
     private static let defaultFinalTranscriptFallbackDelaySeconds: TimeInterval = 2.4
-    private static let recordedAudioPowerHistoryLength = 44
-    private static let recordedAudioPowerHistoryBaselineLevel: CGFloat = 0.02
-    private static let recordedAudioPowerHistorySampleIntervalSeconds: TimeInterval = 0.07
 
-    @Published private(set) var isRecordingFromMicrophoneButton = false
     @Published private(set) var isRecordingFromKeyboardShortcut = false
     @Published private(set) var isKeyboardShortcutSessionActiveOrFinalizing = false
     @Published private(set) var isFinalizingTranscript = false
     @Published private(set) var isPreparingToRecord = false
     @Published private(set) var currentAudioPowerLevel: CGFloat = 0
-    @Published private(set) var recordedAudioPowerHistory = Array(
-        repeating: BuddyDictationManager.recordedAudioPowerHistoryBaselineLevel,
-        count: BuddyDictationManager.recordedAudioPowerHistoryLength
-    )
-    @Published private(set) var microphoneButtonRecordingStartedAt: Date?
     @Published private(set) var transcriptionProviderDisplayName = ""
     @Published var lastErrorMessage: String?
-    @Published private(set) var currentPermissionProblem: BuddyDictationPermissionProblem?
 
     var isDictationInProgress: Bool {
-        isPreparingToRecord || isRecordingFromMicrophoneButton || isRecordingFromKeyboardShortcut || isFinalizingTranscript
-    }
-
-    var isActivelyRecordingAudio: Bool {
-        isRecordingFromMicrophoneButton || isRecordingFromKeyboardShortcut
-    }
-
-    var isMicrophoneButtonActivelyRecordingAudio: Bool {
-        isRecordingFromMicrophoneButton
-    }
-
-    var isMicrophoneButtonSessionBusy: Bool {
-        activeStartSource == .microphoneButton
-            && (isPreparingToRecord || isRecordingFromMicrophoneButton || isFinalizingTranscript)
+        isPreparingToRecord || isRecordingFromKeyboardShortcut || isFinalizingTranscript
     }
 
     var needsInitialPermissionPrompt: Bool {
@@ -265,7 +63,12 @@ final class BuddyDictationManager: NSObject, ObservableObject {
     private var transcriptionProvider: any BuddyTranscriptionProvider
     private let audioEngine = AVAudioEngine()
     private var activeTranscriptionSession: (any BuddyStreamingTranscriptionSession)?
-    private var activeStartSource: BuddyDictationStartSource?
+    /// Which session the callbacks may speak for. Each session gets a new identity before it is
+    /// opened, and it is cleared when the session ends, so a late partial, final or error from an
+    /// old session (a slow upload, a socket closing) can never reach the take that came after.
+    private(set) var activeSessionIdentity: UUID?
+    /// True from a started push-to-talk session until it is finished, cancelled or reset.
+    private var isPushToTalkSessionOpen = false
     private var draftCallbacks: BuddyDictationDraftCallbacks?
     private var draftTextBeforeCurrentDictation = ""
     private var latestRecognizedText = ""
@@ -274,7 +77,6 @@ final class BuddyDictationManager: NSObject, ObservableObject {
     private var finalizeFallbackWorkItem: DispatchWorkItem?
     private var pendingStartRequestIdentifier = UUID()
     private var contextualKeyterms: [String] = []
-    private var lastRecordedAudioPowerSampleDate = Date.distantPast
     private var activePermissionRequestTask: Task<Bool, Never>?
     /// Timestamp of the last completed permission request, used to debounce
     /// rapid follow-up requests that arrive before macOS updates its cache.
@@ -291,7 +93,7 @@ final class BuddyDictationManager: NSObject, ObservableObject {
         super.init()
     }
 
-    /// Swaps the engine between takes (Settings → engine). Ignored while a take is in progress.
+    /// Swaps the engine between takes (Settings → Dictation). Ignored while a take is in progress.
     func replaceTranscriptionProvider(_ provider: any BuddyTranscriptionProvider) {
         guard !isDictationInProgress else { return }
         transcriptionProvider = provider
@@ -308,99 +110,14 @@ final class BuddyDictationManager: NSObject, ObservableObject {
         self.contextualKeyterms = contextualKeyterms
     }
 
-    func startPersistentDictationFromMicrophoneButton(
-        currentDraftText: String,
-        updateDraftText: @escaping (String) -> Void,
-        submitDraftText: @escaping (String) -> Void
-    ) async {
-        await startPushToTalk(
-            startSource: .microphoneButton,
-            currentDraftText: currentDraftText,
-            updateDraftText: updateDraftText,
-            submitDraftText: submitDraftText,
-            shouldAutomaticallySubmitFinalDraftOnStop: false
-        )
-    }
-
     func startPushToTalkFromKeyboardShortcut(
         currentDraftText: String,
         updateDraftText: @escaping (String) -> Void,
         submitDraftText: @escaping (String) -> Void
     ) async {
-        await startPushToTalk(
-            startSource: .keyboardShortcut,
-            currentDraftText: currentDraftText,
-            updateDraftText: updateDraftText,
-            submitDraftText: submitDraftText,
-            shouldAutomaticallySubmitFinalDraftOnStop: currentDraftText
-                .trimmingCharacters(in: .whitespacesAndNewlines)
-                .isEmpty
-        )
-    }
-
-    func stopPersistentDictationFromMicrophoneButton() {
-        stopPushToTalk(expectedStartSource: .microphoneButton)
-    }
-
-    func stopPushToTalkFromKeyboardShortcut() {
-        stopPushToTalk(expectedStartSource: .keyboardShortcut)
-    }
-
-    func cancelCurrentDictation(preserveDraftText: Bool = true) {
-        pendingStartRequestIdentifier = UUID()
-
-        guard isDictationInProgress else { return }
-
-        finalizeFallbackWorkItem?.cancel()
-        finalizeFallbackWorkItem = nil
-
-        if preserveDraftText {
-            let currentDraftText = composeDraftText(withTranscribedText: latestRecognizedText)
-            draftCallbacks?.updateDraftText(currentDraftText)
-        }
-
-        audioEngine.stop()
-        audioEngine.inputNode.removeTap(onBus: 0)
-        activeTranscriptionSession?.cancel()
-
-        resetSessionState()
-    }
-
-    func requestInitialPushToTalkPermissionsIfNeeded() async {
-        guard needsInitialPermissionPrompt else { return }
         guard !isDictationInProgress else { return }
 
-        lastErrorMessage = nil
-        currentPermissionProblem = nil
-        isPreparingToRecord = true
-
-        NSApplication.shared.activate(ignoringOtherApps: true)
-
-        do {
-            try await Task.sleep(for: .milliseconds(200))
-        } catch {
-            // If the task is cancelled while we are waiting for macOS to bring
-            // the app forward, we can safely continue into the permission check.
-        }
-
-        let hasPermissions = await requestMicrophoneAndSpeechPermissionsWithoutDuplicatePrompts()
-        isPreparingToRecord = false
-
-        if hasPermissions {
-            lastErrorMessage = nil
-        }
-    }
-
-    private func startPushToTalk(
-        startSource: BuddyDictationStartSource,
-        currentDraftText: String,
-        updateDraftText: @escaping (String) -> Void,
-        submitDraftText: @escaping (String) -> Void,
-        shouldAutomaticallySubmitFinalDraftOnStop: Bool
-    ) async {
-        guard !isDictationInProgress else { return }
-
-        print("🎙️ BuddyDictationManager: start requested (\(startSource))")
+        print("🎙️ BuddyDictationManager: start requested")
 
         if needsInitialPermissionPrompt {
             print("🎙️ BuddyDictationManager: requesting initial permissions")
@@ -418,7 +135,6 @@ final class BuddyDictationManager: NSObject, ObservableObject {
         pendingStartRequestIdentifier = startRequestIdentifier
 
         lastErrorMessage = nil
-        currentPermissionProblem = nil
         isPreparingToRecord = true
 
         guard await requestMicrophoneAndSpeechPermissionsWithoutDuplicatePrompts() else {
@@ -443,20 +159,14 @@ final class BuddyDictationManager: NSObject, ObservableObject {
             updateDraftText: updateDraftText,
             submitDraftText: submitDraftText
         )
-        activeStartSource = startSource
-        shouldAutomaticallySubmitFinalDraft = shouldAutomaticallySubmitFinalDraftOnStop
+        isPushToTalkSessionOpen = true
+        // With words already in the caller's draft the dictation is added to them, not sent.
+        shouldAutomaticallySubmitFinalDraft = currentDraftText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
         hasFinishedCurrentDictationSession = false
         isFinalizingTranscript = false
-        isRecordingFromMicrophoneButton = startSource == .microphoneButton
-        isRecordingFromKeyboardShortcut = startSource == .keyboardShortcut
-        isKeyboardShortcutSessionActiveOrFinalizing = startSource == .keyboardShortcut
+        isRecordingFromKeyboardShortcut = true
+        isKeyboardShortcutSessionActiveOrFinalizing = true
         currentAudioPowerLevel = 0
-        recordedAudioPowerHistory = Array(
-            repeating: Self.recordedAudioPowerHistoryBaselineLevel,
-            count: Self.recordedAudioPowerHistoryLength
-        )
-        microphoneButtonRecordingStartedAt = nil
-        lastRecordedAudioPowerSampleDate = .distantPast
 
         guard !Task.isCancelled else {
             print("🎙️ BuddyDictationManager: start cancelled (shortcut released before recording began)")
@@ -468,14 +178,9 @@ final class BuddyDictationManager: NSObject, ObservableObject {
             try await startRecognitionSession()
             guard !Task.isCancelled else {
                 print("🎙️ BuddyDictationManager: start cancelled (shortcut released during session start)")
-                audioEngine.stop()
-                audioEngine.inputNode.removeTap(onBus: 0)
-                activeTranscriptionSession?.cancel()
+                tearDownRecordingAndSession()
                 resetSessionState()
                 return
-            }
-            if startSource == .microphoneButton {
-                microphoneButtonRecordingStartedAt = Date()
             }
             isPreparingToRecord = false
             print("🎙️ BuddyDictationManager: recognition session started")
@@ -486,22 +191,25 @@ final class BuddyDictationManager: NSObject, ObservableObject {
                 fallback: "couldn't start voice input. try again."
             )
             AppLog.append("dictation: failed to start recognition session (\(transcriptionProvider.displayName)): \(error)")
+            // The provider may have opened its session and the tap may be installed before the
+            // audio engine refused to start: both go, as on a cancelled start, so nothing keeps
+            // feeding (or billing) a session no take is listening to.
+            tearDownRecordingAndSession()
             resetSessionState()
         }
     }
 
-    private func stopPushToTalk(expectedStartSource: BuddyDictationStartSource) {
+    func stopPushToTalkFromKeyboardShortcut() {
         pendingStartRequestIdentifier = UUID()
 
-        guard activeStartSource == expectedStartSource else {
+        guard isPushToTalkSessionOpen else {
             isPreparingToRecord = false
             return
         }
         guard !isFinalizingTranscript else { return }
 
-        print("🎙️ BuddyDictationManager: stop requested (\(expectedStartSource))")
+        print("🎙️ BuddyDictationManager: stop requested")
 
-        isRecordingFromMicrophoneButton = false
         isRecordingFromKeyboardShortcut = false
         isFinalizingTranscript = true
 
@@ -528,17 +236,44 @@ final class BuddyDictationManager: NSObject, ObservableObject {
         )
     }
 
-    private func startRecognitionSession() async throws {
+    func cancelCurrentDictation(preserveDraftText: Bool = true) {
+        pendingStartRequestIdentifier = UUID()
+
+        guard isDictationInProgress else { return }
+
+        finalizeFallbackWorkItem?.cancel()
+        finalizeFallbackWorkItem = nil
+
+        if preserveDraftText {
+            let currentDraftText = composeDraftText(withTranscribedText: latestRecognizedText)
+            draftCallbacks?.updateDraftText(currentDraftText)
+        }
+
+        tearDownRecordingAndSession()
+        resetSessionState()
+    }
+
+    /// Stops the microphone, removes the tap and cancels the open transcription session.
+    private func tearDownRecordingAndSession() {
+        audioEngine.stop()
+        audioEngine.inputNode.removeTap(onBus: 0)
         activeTranscriptionSession?.cancel()
-        activeTranscriptionSession = nil
+    }
 
-        print("🎙️ BuddyDictationManager: opening transcription provider \(transcriptionProvider.displayName)")
+    /// Gives the session about to open a new identity; callbacks made for an earlier one go quiet.
+    func beginNewSessionIdentity() -> UUID {
+        let sessionIdentity = UUID()
+        activeSessionIdentity = sessionIdentity
+        return sessionIdentity
+    }
 
-        let activeTranscriptionSession = try await transcriptionProvider.startStreamingSession(
-            keyterms: buildTranscriptionKeyterms(),
+    /// The callbacks for the session with `sessionIdentity`. Each checks, on the main actor, that
+    /// its session is still the active one and drops what it carries otherwise.
+    func makeTranscriptionCallbacks(forSessionIdentity sessionIdentity: UUID) -> BuddyTranscriptionSessionCallbacks {
+        BuddyTranscriptionSessionCallbacks(
             onTranscriptUpdate: { [weak self] transcriptText in
                 Task { @MainActor in
-                    guard let self else { return }
+                    guard let self, self.activeSessionIdentity == sessionIdentity else { return }
                     self.latestRecognizedText = transcriptText
                     // Live words for the orb; the companion's callers ignore partials.
                     self.draftCallbacks?.updateDraftText(self.composeDraftText(withTranscribedText: transcriptText))
@@ -546,7 +281,7 @@ final class BuddyDictationManager: NSObject, ObservableObject {
             },
             onFinalTranscriptReady: { [weak self] transcriptText in
                 Task { @MainActor in
-                    guard let self else { return }
+                    guard let self, self.activeSessionIdentity == sessionIdentity else { return }
                     self.latestRecognizedText = transcriptText
 
                     if self.isFinalizingTranscript {
@@ -558,9 +293,25 @@ final class BuddyDictationManager: NSObject, ObservableObject {
             },
             onError: { [weak self] error in
                 Task { @MainActor in
-                    self?.handleRecognitionError(error)
+                    guard let self, self.activeSessionIdentity == sessionIdentity else { return }
+                    self.handleRecognitionError(error)
                 }
             }
+        )
+    }
+
+    private func startRecognitionSession() async throws {
+        activeTranscriptionSession?.cancel()
+        activeTranscriptionSession = nil
+
+        print("🎙️ BuddyDictationManager: opening transcription provider \(transcriptionProvider.displayName)")
+
+        let callbacks = makeTranscriptionCallbacks(forSessionIdentity: beginNewSessionIdentity())
+        let activeTranscriptionSession = try await transcriptionProvider.startStreamingSession(
+            keyterms: buildTranscriptionKeyterms(),
+            onTranscriptUpdate: callbacks.onTranscriptUpdate,
+            onFinalTranscriptReady: callbacks.onFinalTranscriptReady,
+            onError: callbacks.onError
         )
 
         self.activeTranscriptionSession = activeTranscriptionSession
@@ -624,10 +375,7 @@ final class BuddyDictationManager: NSObject, ObservableObject {
             currentDraftCallbacks?.updateDraftText(finalDraftText)
         }
 
-        audioEngine.stop()
-        audioEngine.inputNode.removeTap(onBus: 0)
-        activeTranscriptionSession?.cancel()
-
+        tearDownRecordingAndSession()
         resetSessionState()
 
         guard shouldSubmitFinalDraft else { return }
@@ -660,24 +408,18 @@ final class BuddyDictationManager: NSObject, ObservableObject {
     private func resetSessionState() {
         pendingStartRequestIdentifier = UUID()
         activeTranscriptionSession = nil
+        activeSessionIdentity = nil
         draftCallbacks = nil
-        activeStartSource = nil
+        isPushToTalkSessionOpen = false
         draftTextBeforeCurrentDictation = ""
         latestRecognizedText = ""
         shouldAutomaticallySubmitFinalDraft = false
         hasFinishedCurrentDictationSession = false
         isPreparingToRecord = false
-        isRecordingFromMicrophoneButton = false
         isRecordingFromKeyboardShortcut = false
         isKeyboardShortcutSessionActiveOrFinalizing = false
         isFinalizingTranscript = false
         currentAudioPowerLevel = 0
-        recordedAudioPowerHistory = Array(
-            repeating: Self.recordedAudioPowerHistoryBaselineLevel,
-            count: Self.recordedAudioPowerHistoryLength
-        )
-        microphoneButtonRecordingStartedAt = nil
-        lastRecordedAudioPowerSampleDate = .distantPast
     }
 
     private func buildTranscriptionKeyterms() -> [String] {
@@ -744,30 +486,8 @@ final class BuddyDictationManager: NSObject, ObservableObject {
                     self.currentAudioPowerLevel * 0.72
                 )
                 self.currentAudioPowerLevel = smoothedAudioPowerLevel
-
-                let now = Date()
-                if now.timeIntervalSince(self.lastRecordedAudioPowerSampleDate)
-                    >= Self.recordedAudioPowerHistorySampleIntervalSeconds {
-                    self.lastRecordedAudioPowerSampleDate = now
-                    self.appendRecordedAudioPowerSample(
-                        max(CGFloat(boostedLevel), Self.recordedAudioPowerHistoryBaselineLevel)
-                    )
-                }
             }
         }
-    }
-
-    private func appendRecordedAudioPowerSample(_ audioPowerSample: CGFloat) {
-        var updatedRecordedAudioPowerHistory = recordedAudioPowerHistory
-        updatedRecordedAudioPowerHistory.append(audioPowerSample)
-
-        if updatedRecordedAudioPowerHistory.count > Self.recordedAudioPowerHistoryLength {
-            updatedRecordedAudioPowerHistory.removeFirst(
-                updatedRecordedAudioPowerHistory.count - Self.recordedAudioPowerHistoryLength
-            )
-        }
-
-        recordedAudioPowerHistory = updatedRecordedAudioPowerHistory
     }
 
     private func requestMicrophoneAndSpeechPermissionsIfNeeded() async -> Bool {
@@ -829,14 +549,12 @@ final class BuddyDictationManager: NSObject, ObservableObject {
     private func cachedPermissionsAllowRecording() -> Bool {
         let microphoneStatus = AVCaptureDevice.authorizationStatus(for: .audio)
         if microphoneStatus == .denied || microphoneStatus == .restricted {
-            currentPermissionProblem = .microphoneAccessDenied
             lastErrorMessage = "microphone permission is required for push to talk."
             return false
         }
         if transcriptionProvider.requiresSpeechRecognitionPermission {
             let speechStatus = SFSpeechRecognizer.authorizationStatus()
             if speechStatus == .denied || speechStatus == .restricted {
-                currentPermissionProblem = .speechRecognitionDenied
                 lastErrorMessage = "speech recognition permission is required for push to talk."
                 return false
             }
@@ -847,21 +565,16 @@ final class BuddyDictationManager: NSObject, ObservableObject {
     private func requestMicrophonePermissionIfNeeded() async -> Bool {
         switch AVCaptureDevice.authorizationStatus(for: .audio) {
         case .authorized:
-            currentPermissionProblem = nil
             return true
         case .notDetermined:
-            let isGranted = await withCheckedContinuation { continuation in
+            return await withCheckedContinuation { continuation in
                 AVCaptureDevice.requestAccess(for: .audio) { isGranted in
                     continuation.resume(returning: isGranted)
                 }
             }
-            currentPermissionProblem = isGranted ? nil : .microphoneAccessDenied
-            return isGranted
         case .denied, .restricted:
-            currentPermissionProblem = .microphoneAccessDenied
             return false
         @unknown default:
-            currentPermissionProblem = .microphoneAccessDenied
             return false
         }
     }
@@ -869,39 +582,18 @@ final class BuddyDictationManager: NSObject, ObservableObject {
     private func requestSpeechRecognitionPermissionIfNeeded() async -> Bool {
         switch SFSpeechRecognizer.authorizationStatus() {
         case .authorized:
-            currentPermissionProblem = nil
             return true
         case .notDetermined:
-            let isGranted = await withCheckedContinuation { continuation in
+            return await withCheckedContinuation { continuation in
                 SFSpeechRecognizer.requestAuthorization { authorizationStatus in
                     continuation.resume(returning: authorizationStatus == .authorized)
                 }
             }
-            currentPermissionProblem = isGranted ? nil : .speechRecognitionDenied
-            return isGranted
         case .denied, .restricted:
-            currentPermissionProblem = .speechRecognitionDenied
             return false
         @unknown default:
-            currentPermissionProblem = .speechRecognitionDenied
             return false
         }
-    }
-
-    func openRelevantPrivacySettings() {
-        let settingsURLString: String
-
-        switch currentPermissionProblem {
-        case .microphoneAccessDenied:
-            settingsURLString = "x-apple.systempreferences:com.apple.preference.security?Privacy_Microphone"
-        case .speechRecognitionDenied:
-            settingsURLString = "x-apple.systempreferences:com.apple.preference.security?Privacy_SpeechRecognition"
-        case nil:
-            settingsURLString = "x-apple.systempreferences:com.apple.preference.security"
-        }
-
-        guard let settingsURL = URL(string: settingsURLString) else { return }
-        NSWorkspace.shared.open(settingsURL)
     }
 
     private func userFacingErrorMessage(from error: Error, fallback: String) -> String {

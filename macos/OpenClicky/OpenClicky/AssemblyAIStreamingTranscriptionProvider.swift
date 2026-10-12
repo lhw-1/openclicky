@@ -17,8 +17,8 @@ struct AssemblyAIStreamingTranscriptionProviderError: LocalizedError {
 }
 
 final class AssemblyAIStreamingTranscriptionProvider: BuddyTranscriptionProvider {
-    /// URL for the Cloudflare Worker endpoint that returns a short-lived
-    /// AssemblyAI streaming token. The real API key never leaves the server.
+    /// The OpenClicky backend's endpoint that mints a short-lived AssemblyAI streaming token on
+    /// OpenClicky's own AssemblyAI key. That key never leaves the server.
     private static var tokenProxyURL: String { "\(OpenClickyConfiguration.backendBaseURL)/transcribe-token" }
 
     let displayName = "AssemblyAI"
@@ -81,7 +81,6 @@ final class AssemblyAIStreamingTranscriptionProvider: BuddyTranscriptionProvider
         print("🎙️ AssemblyAI: fetched temporary token (\(temporaryToken.count) chars)")
 
         let session = AssemblyAIStreamingTranscriptionSession(
-            apiKey: nil,
             temporaryToken: temporaryToken,
             urlSession: sharedWebSocketURLSession,
             keyterms: keyterms,
@@ -94,7 +93,7 @@ final class AssemblyAIStreamingTranscriptionProvider: BuddyTranscriptionProvider
         return session
     }
 
-    /// Calls the Cloudflare Worker to get a short-lived AssemblyAI token.
+    /// Asks the OpenClicky backend (`POST /transcribe-token`, account only) for a short-lived AssemblyAI token.
     private func fetchTemporaryToken() async throws -> String {
         if let sentence = ProviderRouter.current(for: .assemblyAIStreaming).unavailableSentence {
             throw AssemblyAIStreamingTranscriptionProviderError(message: sentence)
@@ -163,8 +162,7 @@ private final class AssemblyAIStreamingTranscriptionSession: NSObject, BuddyStre
 
     let finalTranscriptFallbackDelaySeconds: TimeInterval = 2.8
 
-    private let apiKey: String?
-    private let temporaryToken: String?
+    private let temporaryToken: String
     private let keyterms: [String]
     private let onTranscriptUpdate: (String) -> Void
     private let onFinalTranscriptReady: (String) -> Void
@@ -178,6 +176,10 @@ private final class AssemblyAIStreamingTranscriptionSession: NSObject, BuddyStre
     private var webSocketTask: URLSessionWebSocketTask?
     private var readyContinuation: CheckedContinuation<Void, Error>?
     private var hasResolvedReadyContinuation = false
+    /// The socket's first answer ("Begin", or a failure) when it landed before `open` had stored its
+    /// continuation: both hops go through `stateQueue`, in whichever order they were queued, and an
+    /// answer that found no continuation used to be dropped, leaving `open` waiting for ever.
+    private var readyResultBeforeContinuation: Result<Void, Error>?
     private var hasDeliveredFinalTranscript = false
     private var isAwaitingExplicitFinalTranscript = false
     private var latestTranscriptText = ""
@@ -187,15 +189,13 @@ private final class AssemblyAIStreamingTranscriptionSession: NSObject, BuddyStre
     private var explicitFinalTranscriptDeadlineWorkItem: DispatchWorkItem?
 
     init(
-        apiKey: String?,
-        temporaryToken: String?,
+        temporaryToken: String,
         urlSession: URLSession,
         keyterms: [String],
         onTranscriptUpdate: @escaping (String) -> Void,
         onFinalTranscriptReady: @escaping (String) -> Void,
         onError: @escaping (Error) -> Void
     ) {
-        self.apiKey = apiKey
         self.temporaryToken = temporaryToken
         self.urlSession = urlSession
         self.keyterms = keyterms
@@ -210,10 +210,7 @@ private final class AssemblyAIStreamingTranscriptionSession: NSObject, BuddyStre
             keyterms: keyterms
         )
 
-        var websocketRequest = URLRequest(url: websocketURL)
-        if let apiKey {
-            websocketRequest.setValue(apiKey, forHTTPHeaderField: "Authorization")
-        }
+        let websocketRequest = URLRequest(url: websocketURL)
 
         let webSocketTask = urlSession.webSocketTask(with: websocketRequest)
         self.webSocketTask = webSocketTask
@@ -221,8 +218,14 @@ private final class AssemblyAIStreamingTranscriptionSession: NSObject, BuddyStre
 
         receiveNextMessage()
 
-        try await withCheckedThrowingContinuation { continuation in
+        try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
             stateQueue.async {
+                // The socket may already have answered (see `readyResultBeforeContinuation`).
+                if let earlyReadyResult = self.readyResultBeforeContinuation {
+                    self.readyResultBeforeContinuation = nil
+                    continuation.resume(with: earlyReadyResult)
+                    return
+                }
                 self.readyContinuation = continuation
             }
         }
@@ -474,19 +477,18 @@ private final class AssemblyAIStreamingTranscriptionSession: NSObject, BuddyStre
             guard !self.hasResolvedReadyContinuation else { return }
             self.hasResolvedReadyContinuation = true
 
-            switch result {
-            case .success:
-                self.readyContinuation?.resume()
-            case .failure(let error):
-                self.readyContinuation?.resume(throwing: error)
+            guard let readyContinuation = self.readyContinuation else {
+                // `open` has not stored its continuation yet: it picks this result up when it does.
+                self.readyResultBeforeContinuation = result
+                return
             }
-
             self.readyContinuation = nil
+            readyContinuation.resume(with: result)
         }
     }
 
     private static func makeWebsocketURL(
-        temporaryToken: String?,
+        temporaryToken: String,
         keyterms: [String]
     ) throws -> URL {
         guard var websocketURLComponents = URLComponents(string: websocketBaseURLString) else {
@@ -512,9 +514,7 @@ private final class AssemblyAIStreamingTranscriptionSession: NSObject, BuddyStre
             queryItems.append(URLQueryItem(name: "keyterms_prompt", value: keytermsJSONString))
         }
 
-        if let temporaryToken {
-            queryItems.append(URLQueryItem(name: "token", value: temporaryToken))
-        }
+        queryItems.append(URLQueryItem(name: "token", value: temporaryToken))
 
         websocketURLComponents.queryItems = queryItems
 

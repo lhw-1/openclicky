@@ -31,7 +31,6 @@ struct StableWordCommitterTests {
         // The last two words of the partial can still be revised; they wait.
         #expect(committed == ["hello", "there"])
         #expect(committer.committedWords == ["hello", "there"])
-        #expect(committer.uncommittedTail(of: "hello there my friend") == "my friend")
     }
 
     @Test func aRevisedWordRestartsItsClock() {
