@@ -30,6 +30,16 @@ final class RecordedVoice {
         case noticeStoppedPartway = "notice-stopped-partway"
         case noticeWentWrong = "notice-went-wrong"
         case noticeRealtimeUnavailable = "notice-realtime-unavailable"
+        // The one-minute Settings tour (SettingsTour.swift).
+        case settingsTourIntro = "settings-tour-intro"
+        case settingsTourDictation = "settings-tour-dictation"
+        case settingsTourLanguage = "settings-tour-language"
+        case settingsTourVoice = "settings-tour-voice"
+        case settingsTourPointer = "settings-tour-pointer"
+        case settingsTourWords = "settings-tour-words"
+        case settingsTourShortcuts = "settings-tour-shortcuts"
+        case settingsTourKeys = "settings-tour-keys"
+        case settingsTourDone = "settings-tour-done"
     }
 
     /// The fixed sentences the app speaks, by their exact text (any case), and their recording.

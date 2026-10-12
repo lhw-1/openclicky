@@ -87,12 +87,19 @@ enum DictationSettingsPage: String, CaseIterable, Identifiable {
 /// One page (or the search results) as a grouped form: a section per group, its footer under it.
 struct SettingsFormView: View {
     let groups: [SettingsSectionGroup]
+    /// The Settings tour asks for a row to be scrolled into view before it points at it.
+    @ObservedObject private var tourTargets = SettingsTourTargets.shared
 
     var body: some View {
+        ScrollViewReader { scrollProxy in
         Form {
             ForEach(groups) { group in
                 Section {
-                    ForEach(group.items) { item in item.view }
+                    ForEach(group.items) { item in
+                        item.view
+                            .settingsTourTarget(item.id)
+                            .id(item.id)
+                    }
                 } header: {
                     if !group.title.isEmpty { Text(group.title) }
                 } footer: {
@@ -105,6 +112,12 @@ struct SettingsFormView: View {
             }
         }
         .formStyle(.grouped)
+        .onChange(of: tourTargets.scrollRequest) { requestedRowID in
+            guard let requestedRowID else { return }
+            withAnimation(.easeInOut(duration: 0.3)) { scrollProxy.scrollTo(requestedRowID, anchor: .center) }
+            tourTargets.scrollRequest = nil
+        }
+        }
     }
 }
 

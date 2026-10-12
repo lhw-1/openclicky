@@ -635,6 +635,7 @@ final class CompanionManager: ObservableObject {
     /// the stop button silences it outright.
     private func interruptCurrentAnswer(includingAgentWork: Bool) {
         stopWatchingForGuidedStep()
+        settingsTour.stop()
         stopActiveAnswer()
         currentResponseTask?.cancel()
         if includingAgentWork { openClickyAgentClient.cancel() }
@@ -744,6 +745,28 @@ final class CompanionManager: ObservableObject {
         pointerPresenceTracker = PointerPresenceTracker(presence: presence)
         isPointerAwake = pointerPresenceTracker.isAwake
         startPointerPresenceMonitor()
+    }
+
+    /// One use: counted for the island's "open at login?" offer, and for the pointer's default.
+    private func noteUse() {
+        firstRunTour.noteUse()
+        hidePointerUntilShakeOnceItIsFamiliar()
+    }
+
+    /// After the first few uses the pointer stops following the mouse all the time and waits for a
+    /// shake, unless the person picked a setting themselves. Said once, after the answer or paste.
+    private func hidePointerUntilShakeOnceItIsFamiliar() {
+        let useCount = UserDefaults.standard.integer(forKey: FirstRunTourController.useCountKey)
+        let personChoseOne = UserDefaults.standard.string(forKey: "openClickyPointerPresence") != nil
+        guard let newPresence = PointerPresenceDefault.presenceToSwitchTo(
+            useCount: useCount, personChoseOne: personChoseOne, current: pointerPresence) else { return }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 6) { [weak self] in
+            guard let self, self.voiceState == .idle, self.pointerPresence == .always,
+                  UserDefaults.standard.string(forKey: "openClickyPointerPresence") == nil else { return }
+            AppLog.append("pointer: hides until a shake now, after \(useCount) uses")
+            self.setPointerPresence(newPresence)
+            self.showQuietNotice("from now on i'll stay out of the way. shake the mouse when you want me. you can change this in settings, clicky.")
+        }
     }
 
     /// Show the pointer now; it rests away again as the presence setting says.
@@ -972,12 +995,12 @@ final class CompanionManager: ObservableObject {
         $voiceState
             .removeDuplicates()
             .filter { $0 == .responding }
-            .sink { [weak self] _ in self?.firstRunTour.noteUse() }
+            .sink { [weak self] _ in self?.noteUse() }
             .store(in: &useCountingCancellables)
         dictationTakeController.$lastTake
             .compactMap { $0 }
             .filter { $0.status != .failed && !$0.displayText.isEmpty }
-            .sink { [weak self] _ in self?.firstRunTour.noteUse() }
+            .sink { [weak self] _ in self?.noteUse() }
             .store(in: &useCountingCancellables)
         // Kokoro (and, before macOS 26, Parakeet) download on their own once setup is long done.
         // A few seconds in, so the launch itself stays quick.
@@ -1197,8 +1220,63 @@ final class CompanionManager: ObservableObject {
     }
 
     /// The window at a settings page (General when none is named): ⌘,, "Settings…", the island.
+    /// Opened at General for the first time after the welcome tour, it plays the Settings tour once.
     func showSettings(_ page: DictationSettingsPage = .general) {
         showDictationWindow(settingsPage: page)
+        if page == .general, firstRunTour.isFinished, !SettingsTourController.hasPlayed {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) { [weak self] in self?.startSettingsTour() }
+        }
+    }
+
+    // MARK: - Settings tour
+
+    /// The one-minute tour of the Settings window (SettingsTour.swift).
+    private(set) lazy var settingsTour = SettingsTourController(companionManager: self)
+
+    /// Opens the window at General and plays the tour (General › Startup › Settings tour).
+    func startSettingsTour() {
+        showDictationWindow(settingsPage: .general)
+        guard let windowController = dictationWindowController, let window = windowController.window else { return }
+        interruptCurrentAnswer(includingAgentWork: false)
+        settingsTour.start(in: window, model: windowController.model)
+    }
+
+    func stopSettingsTour() { settingsTour.stop() }
+
+    /// While true, the pointer stays on what it points at until it is sent somewhere else, instead
+    /// of flying back to the mouse after a few seconds (each tour step is longer than that).
+    @Published private(set) var pointerStaysOnTarget = false
+    /// Bumped for each simulated click; the overlay draws a ripple where the pointer is.
+    @Published private(set) var pointerClickToken = 0
+
+    func beginSettingsTourPointing() {
+        pointerStaysOnTarget = true
+        if isCursorDocked {
+            cursorLaunchOriginScreenLocation = notchHUDManager.dockPoint
+        }
+        if !isOverlayVisible { showOverlayOnAllScreens() }
+    }
+
+    /// The tour is over: the pointer goes back to the mouse (or the notch) a moment later.
+    func endSettingsTourPointing() {
+        pointerStaysOnTarget = false
+        guard let lastLocation = detectedElementScreenLocation else { return }
+        // Pointing at the same spot again starts the normal hold, after which it flies back.
+        pointForSettingsTour(at: lastLocation, bubble: detectedElementBubbleText ?? "")
+    }
+
+    func pointForSettingsTour(at screenLocation: CGPoint, bubble: String) {
+        let displayFrame = NSScreen.screens.first { $0.frame.contains(screenLocation) }?.frame
+            ?? NSScreen.main?.frame ?? .zero
+        if !isOverlayVisible { showOverlayOnAllScreens() }
+        detectedElementBubbleText = bubble.isEmpty ? nil : bubble
+        detectedElementDisplayFrame = displayFrame
+        detectedElementScreenLocation = screenLocation
+        detectedElementPointToken &+= 1
+    }
+
+    func showPointerClick() {
+        pointerClickToken &+= 1
     }
 
     // MARK: - First-run tour

@@ -29,6 +29,19 @@ enum PointerPresence: String, CaseIterable, Identifiable {
     }
 }
 
+/// The pointer's default: on screen all the time while someone is learning OpenClicky, then out of
+/// sight until a shake once they've used it a few times. Someone who picked a setting keeps it.
+enum PointerPresenceDefault {
+    /// Uses (a dictation with words, a spoken answer) before the pointer starts hiding until a shake.
+    static let usesBeforeShake = 5
+
+    /// The presence to switch to now, or nil to leave it alone.
+    static func presenceToSwitchTo(useCount: Int, personChoseOne: Bool, current: PointerPresence) -> PointerPresence? {
+        guard !personChoseOne, current == .always, useCount >= usesBeforeShake else { return nil }
+        return .onShake
+    }
+}
+
 /// Spots a side-to-side (or up-and-down) shake: several quick reversals of direction, each after
 /// a swing long enough that a wobble of the hand does not count. Fed with mouse samples. It asks
 /// for a deliberate shake: three reversals of 25 pt woke the pointer during ordinary back-and-forth

@@ -50,6 +50,14 @@ extension SettingsCatalog {
                         .pointerCursor()
                 })),
             SettingsItem(
+                id: "general.settingsTour", page: .general, section: "Startup",
+                title: "Settings tour", detail: "A one-minute look around this window: Clicky points at what matters most.",
+                keywords: ["tour", "crash course", "show me around", "help", "guide", "replay", "walkthrough"],
+                view: AnyView(SettingsRow(title: "Settings tour", detail: "A one-minute look around this window: Clicky points at what matters most.") {
+                    Button("Play") { companionManager.startSettingsTour() }
+                        .pointerCursor()
+                })),
+            SettingsItem(
                 id: "general.reduceMotion", page: .general, section: "Motion",
                 title: "Reduce motion", detail: "The orb and the island appear and leave without animating.",
                 keywords: ["animation", "motion", "accessibility", "calm"],

@@ -141,6 +141,7 @@ final class DictationWindowController: NSWindowController, NSWindowDelegate {
     }
 
     func windowWillClose(_ notification: Notification) {
+        companionManager.stopSettingsTour()
         // Back to a menu-bar app: no Dock icon while the window is closed.
         DispatchQueue.main.async {
             if !(NSApp.windows.contains { $0.isVisible && !($0 is NSPanel) }) {
@@ -266,12 +267,14 @@ struct DictationRootView: View {
 
     private func pageRow(_ page: DictationSettingsPage, matches: [SettingsItem]) -> some View {
         SidebarIconLabel(title: page.title, symbol: page.symbol, tint: page.tint)
+            .settingsTourTarget(SettingsTourTargets.sidebarTargetID(for: .settings(page)))
             .opacity(model.isSearching && !matches.contains { $0.page == page && $0.searchOnlyGroup == nil } ? 0.35 : 1)
             .tag(DictationDestination.settings(page))
     }
 
     private func sectionRow(_ section: DictationSection, count: Int? = nil, matches: [SettingsItem]) -> some View {
         SidebarIconLabel(title: section.sidebarTitle, symbol: section.symbol, tint: section.tint)
+            .settingsTourTarget(SettingsTourTargets.sidebarTargetID(for: .section(section)))
             .badge(count ?? 0)
             .opacity(model.isSearching && !matches.contains { $0.searchOnlyGroup == section.sidebarTitle } ? 0.35 : 1)
             .tag(DictationDestination.section(section))

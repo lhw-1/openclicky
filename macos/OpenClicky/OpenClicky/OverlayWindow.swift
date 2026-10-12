@@ -177,6 +177,9 @@ struct BlueCursorView: View {
     /// True when the buddy is flying BACK to the cursor after pointing.
     /// Only during the return flight can cursor movement cancel the animation.
     @State private var isReturningToCursor: Bool = false
+    /// The Settings tour's simulated click: a ring that grows and fades where the pointer's tip is.
+    @State private var clickRippleScale: CGFloat = 0.3
+    @State private var clickRippleOpacity: Double = 0
 
     private let fullWelcomeMessage = "Hi, I'm OpenClicky."
 
@@ -323,6 +326,15 @@ struct BlueCursorView: View {
                     value: triangleRotationDegrees
                 )
 
+            // The Settings tour's "click": the pointer sits 8 pt right and 12 pt below what it points at.
+            Circle()
+                .stroke(DS.Colors.overlayCursorColor, lineWidth: 2.5)
+                .frame(width: 34, height: 34)
+                .scaleEffect(clickRippleScale)
+                .opacity(buddyIsVisibleOnThisScreen ? clickRippleOpacity : 0)
+                .position(x: cursorPosition.x - 8, y: cursorPosition.y - 12)
+                .allowsHitTesting(false)
+
             // Blue waveform — replaces the triangle while listening
             BlueCursorWaveformView(audioPowerLevel: companionManager.currentAudioPowerLevel)
                 .opacity(buddyIsVisibleOnThisScreen && companionManager.voiceState == .listening ? cursorOpacity : 0)
@@ -397,6 +409,14 @@ struct BlueCursorView: View {
             }
 
             startNavigatingToElement(screenLocation: screenLocation)
+        }
+        .onChange(of: companionManager.pointerClickToken) { _ in
+            clickRippleScale = 0.3
+            clickRippleOpacity = 0.9
+            withAnimation(.easeOut(duration: 0.45)) {
+                clickRippleScale = 1.4
+                clickRippleOpacity = 0
+            }
         }
         .onChange(of: companionManager.cursorDockRequestToken) { _ in
             // OpenClicky: the user asked the buddy to dock in the notch. The overlay that is showing
@@ -644,6 +664,8 @@ struct BlueCursorView: View {
             // All characters streamed — hold for 3 seconds, then fly back (unless retargeted since)
             DispatchQueue.main.asyncAfter(deadline: .now() + 3.0) {
                 guard self.buddyNavigationMode == .pointingAtTarget, self.pointingGeneration == generation else { return }
+                // The Settings tour keeps the pointer on each row while its line is said.
+                guard !self.companionManager.pointerStaysOnTarget else { return }
                 self.navigationBubbleOpacity = 0.0
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
                     guard self.buddyNavigationMode == .pointingAtTarget, self.pointingGeneration == generation else { return }
