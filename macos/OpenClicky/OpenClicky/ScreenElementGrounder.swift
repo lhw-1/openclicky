@@ -75,7 +75,7 @@ nonisolated enum ScreenElementGrounder {
         if !text.isEmpty { element += " (it shows the text \"\(text)\")" }
         lines.append(element + ".")
         if let userRequest, !userRequest.isEmpty {
-            lines.append("The user asked: \"\(userRequest)\" — pick the element that answers that.")
+            lines.append("The user asked: \"\(userRequest)\", pick the element that answers that.")
         }
         lines.append("Reply with only [POINT:x,y:visible text], where visible text is exactly what the element itself shows (a link that reads \"arXiv\" is arXiv, whatever it leads to), or [POINT:x,y] for an element with no text, or [POINT:none] if it is not visible.")
         return lines.joined(separator: "\n")

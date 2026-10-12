@@ -32,11 +32,11 @@ struct PointerPresenceTests {
         sweep(&tracker, from: point, to: point, start: start, duration: duration)
     }
 
-    /// A vigorous side-to-side shake: four 120 pt swings in about half a second.
+    /// A deliberate side-to-side shake: five 120 pt swings (four reversals) in about two thirds of a second.
     private func shake(_ tracker: inout PointerPresenceTracker, around point: CGPoint, start: TimeInterval) -> TimeInterval {
         var time = start
         var from = point
-        for swing in 0..<4 {
+        for swing in 0..<5 {
             let to = CGPoint(x: point.x + (swing.isMultiple(of: 2) ? 120 : -120), y: point.y)
             time = sweep(&tracker, from: from, to: to, start: time, duration: 0.13)
             from = to
@@ -122,7 +122,7 @@ struct PointerPresenceTests {
         var alwaysSeen = false
         var time: TimeInterval = 0
         var from = CGPoint(x: 400, y: 300)
-        for swing in 0..<4 {
+        for swing in 0..<5 {
             let to = CGPoint(x: 400 + (swing.isMultiple(of: 2) ? 120 : -120), y: 300)
             let steps = 4
             for step in 1...steps {
@@ -139,12 +139,29 @@ struct PointerPresenceTests {
         #expect(!alwaysSeen)
     }
 
+    @Test func aQuickWobbleOrThreeTurnsIsNotAShake() {
+        func shakes(turns: [CGFloat]) -> Bool {
+            var detector = MouseShakeDetector()
+            var time: TimeInterval = 0
+            for (index, x) in turns.enumerated() where index > 0 {
+                let previous = turns[index - 1]
+                for step in 1...4 {
+                    time += 0.033
+                    if detector.feed(CGPoint(x: previous + (x - previous) * CGFloat(step) / 4, y: 50), at: time) { return true }
+                }
+            }
+            return false
+        }
+        #expect(!shakes(turns: [100, 220, 100, 220, 100]), "three reversals used to be enough; ordinary mousing made them")
+        #expect(!shakes(turns: [100, 140, 100, 140, 100, 140, 100, 140]), "a 40 pt jiggle is the hand, not a shake")
+    }
+
     @Test func shakeDetectorNeedsReversalsWithinTheWindow() {
         var detector = MouseShakeDetector()
         var shaken = false
         var time: TimeInterval = 0
-        // Four big swings in about half a second: three reversals of direction.
-        let turns: [CGFloat] = [100, 220, 100, 220, 100]
+        // Five big swings in about two thirds of a second: four reversals of direction.
+        let turns: [CGFloat] = [100, 220, 100, 220, 100, 220]
         for (index, x) in turns.enumerated() where index > 0 {
             let previous = turns[index - 1]
             for step in 1...4 {

@@ -111,7 +111,7 @@ struct EmailAccountFormContent: View {
                     .disabled(isSending || !EmailAccountForm.canSubmitEmail(email))
                     .pointerCursor()
             }
-            Text("no password — we'll send a link to confirm it's you.")
+            Text("no password. we'll send a link to confirm it's you.")
                 .font(SettingsLook.caption).foregroundStyle(.secondary)
             if case .failed(let message) = state {
                 Text(message).font(SettingsLook.caption).foregroundStyle(SettingsLook.danger).fixedSize(horizontal: false, vertical: true)
@@ -125,7 +125,7 @@ struct EmailAccountFormContent: View {
 
     private func codeStep(_ address: String) -> some View {
         VStack(alignment: .leading, spacing: 10) {
-            Text("you already have an account — we sent a 6-digit code to \(address).")
+            Text("you already have an account. we sent a 6-digit code to \(address).")
                 .font(SettingsLook.body(13)).foregroundStyle(.primary).fixedSize(horizontal: false, vertical: true)
             HStack(spacing: 8) {
                 TextField("123456", text: $code)

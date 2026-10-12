@@ -195,7 +195,7 @@ enum TakeFormatter {
         lines.append("You clean up dictated speech into written text. Return only the cleaned text, nothing else: no preamble, no quotes, no explanation, no markdown fences.")
         lines.append("Keep the speaker's meaning, words and order. Fix punctuation, capitalisation and obvious speech-to-text errors; remove fillers, false starts and self-corrections (keep the corrected version). Do not add content, do not answer the text, do not translate unless told to.")
         lines.append("Write numbers the way the context expects (\"3 kg\", \"3 PM\", \"2026\"). Spoken formatting words become formatting: \"new line\", \"new paragraph\", \"comma\", \"full stop\".")
-        lines.append("Style — \(context.style.name): \(context.style.rules)")
+        lines.append("Style (\(context.style.name)): \(context.style.rules)")
         if let appName = context.appName { lines.append("The text is going into \(appName).") }
         if let code = context.language.bareCode {
             lines.append("The language is \(context.language.name) (\(code)). Write it in \(context.script == .roman ? "roman letters (latin script), the way people type it on a phone" : "its native script").")

@@ -81,7 +81,7 @@ final class OpenClickyAuthSession: ObservableObject {
         }
     }
 
-    nonisolated static let unreachableMessage = "couldn't reach openclicky right now — try again in a minute."
+    nonisolated static let unreachableMessage = "couldn't reach openclicky right now, try again in a minute."
 
     nonisolated struct Session: Decodable, Equatable { let access_token: String; let refresh_token: String; let expires_in: Double }
     nonisolated enum StartOutcome: Equatable { case signedIn(Session, confirmed: Bool), codeSent, failed(String) }
@@ -112,14 +112,14 @@ final class OpenClickyAuthSession: ObservableObject {
         post(backendBaseURL, "/auth/confirm", ["code": code], token: token)
     }
 
-    nonisolated static let badCodeMessage = "that code didn't work — check it, or ask for a new one."
-    nonisolated static let accountsUnavailableMessage = "openclicky's accounts are having trouble right now — try again in a few minutes."
+    nonisolated static let badCodeMessage = "that code didn't work. check it, or ask for a new one."
+    nonisolated static let accountsUnavailableMessage = "openclicky's accounts are having trouble right now, try again in a few minutes."
 
     /// "wait about 3 minutes" when the backend said how long (Retry-After, in seconds).
     nonisolated static func slowDownMessage(retryAfterSeconds: Int?) -> String {
-        guard let retryAfterSeconds, retryAfterSeconds > 0 else { return "too many tries — wait a few minutes and try again." }
+        guard let retryAfterSeconds, retryAfterSeconds > 0 else { return "too many tries, wait a few minutes and try again." }
         let minutes = max(1, Int((Double(retryAfterSeconds) / 60).rounded(.up)))
-        return "too many tries — wait about \(minutes) minute\(minutes == 1 ? "" : "s") and try again."
+        return "too many tries, wait about \(minutes) minute\(minutes == 1 ? "" : "s") and try again."
     }
 
     /// Retry-After as whole seconds (the HTTP-date form is not used by the backend).
@@ -570,7 +570,7 @@ final class OpenClickyAuthSession: ObservableObject {
 
     nonisolated static let askAgainSentence = "please ask that again."
     nonisolated static let spokenSignInExpiredSentence = "your openclicky sign-in has expired. sign in again in settings, account."
-    nonisolated static let ownKeyRefusedSentence = "your own api key was refused — check it in settings, account."
+    nonisolated static let ownKeyRefusedSentence = "your own api key was refused. check it in settings, keys & plans."
 
     nonisolated static func spokenSentence(after outcome: RejectionOutcome) -> String {
         switch outcome {
@@ -607,7 +607,7 @@ final class OpenClickyAuthSession: ObservableObject {
     }
 
     nonisolated static let httpStatusKey = "OpenClickyAuthHTTPStatus"
-    nonisolated static let sessionExpiredMessage = "your sign-in expired — sign in again with your email."
+    nonisolated static let sessionExpiredMessage = "your sign-in expired, sign in again with your email."
 
     /// A 4xx from the token endpoint means this refresh token is dead; a 429, a 5xx or no answer
     /// (status 0) may pass, so the session is kept and tried again later.

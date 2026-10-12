@@ -60,13 +60,13 @@ extension BillingSummary {
         switch allowanceStanding {
         case .plenty: return "plenty left this month · resets \(onResetDay)"
         case .runningLow: return "running low this month · resets \(onResetDay)"
-        case .usedUpThisMonth: return "this month's free allowance is used — it comes back \(onResetDay)"
-        case .usedUpToday: return "today's free allowance is used — it comes back tomorrow"
+        case .usedUpThisMonth: return "this month's free allowance is used, it comes back \(onResetDay)"
+        case .usedUpToday: return "today's free allowance is used, it comes back tomorrow"
         case .sharedBudgetUsedUp: return "the free allowance is used up for now"
-        case .paused: return "this account is paused — dictation still works"
+        case .paused: return "this account is paused, dictation still works"
         case .unconfirmed:
             let limit = guestLimitUsd ?? 0, spent = guestSpentUsd ?? 0
-            if limit > 0 && spent >= limit { return "the starter allowance is used — confirm your email to keep going" }
+            if limit > 0 && spent >= limit { return "the starter allowance is used, confirm your email to keep going" }
             let percent = limit > 0 ? Int((spent / limit * 100).rounded()) : 0
             return "confirm your email to unlock the full free allowance · \(percent)% of the starter used"
         }
@@ -137,7 +137,7 @@ final class BillingStatusModel: ObservableObject {
         // A refused sign-in has already been refreshed once, or signed out; its sentence says which.
         if let signInError = error as? BackendSignInError { return signInError.localizedDescription }
         switch (error as NSError).code {
-        case 401: return "your sign-in ran out — sign in again."
+        case 401: return "your sign-in ran out, sign in again."
         case 503: return AccountLimitError.serviceTroubleMessage
         default: return "couldn't load your allowance right now."
         }

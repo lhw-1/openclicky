@@ -61,20 +61,20 @@ enum AccountLimitError: String, Equatable {
 
     var message: String {
         switch self {
-        case .personalLimit: return "you've used this month's free allowance — it comes back on the 1st. dictation still works."
-        case .dailyLimit: return "you've used today's free allowance — it comes back tomorrow. dictation still works."
-        case .monthlyBudget: return "openclicky's free allowance is used up for now — you can keep going with your own key."
+        case .personalLimit: return "you've used this month's free allowance, it comes back on the 1st. dictation still works."
+        case .dailyLimit: return "you've used today's free allowance, it comes back tomorrow. dictation still works."
+        case .monthlyBudget: return "openclicky's free allowance is used up for now, you can keep going with your own key."
         case .notOnPlan: return "that needs your own key for now."
-        case .accountsFull: return "openclicky's free accounts are full right now — you can use your own key instead."
+        case .accountsFull: return "openclicky's free accounts are full right now, you can use your own key instead."
         case .blocked: return "this account is paused. dictation still works."
         case .ttsBudget: return ""
-        case .confirmEmail: return "confirm your email to keep going — you can resend the link in settings."
-        case .deviceLimit: return "this mac already has two openclicky accounts — sign in with one of them."
+        case .confirmEmail: return "confirm your email to keep going, you can resend the link in settings."
+        case .deviceLimit: return "this mac already has two openclicky accounts, sign in with one of them."
         }
     }
 
     /// A grant route answered 503 `unavailable`: the ledger itself could not be reached.
-    static let serviceTroubleMessage = "openclicky's free service is having trouble — try again in a minute."
+    static let serviceTroubleMessage = "openclicky's free service is having trouble, try again in a minute."
 
     /// True for the backend's 503 `{"error":"unavailable"}` on a grant route.
     static func isServiceTrouble(status: Int, body: Data) -> Bool {
@@ -91,8 +91,8 @@ extension BillingSummary {
     var isMetered: Bool { plan.map { $0 == "grant" } ?? !byok }
     /// A grant login with no OpenClicky account row: the backend refuses it until someone adds it.
     var isSwitchedOff: Bool { plan == "grant" && onPlan == false && !blocked }
-    static let switchedOffMessage = "this login isn't switched on for openclicky yet — write to hello@flowsxr.com, or use your own key."
-    static let runningLowNotice = "your free allowance is running low this month — dictation still works offline."
+    static let switchedOffMessage = "this login isn't switched on for openclicky yet. write to hello@flowsxr.com, or use your own key."
+    static let runningLowNotice = "your free allowance is running low this month, dictation still works offline."
 
     /// The month to remember when the "running low" notice is due: a metered account past 80% (and
     /// not yet used up) whose notice has not been shown this month. Nil when nothing is due.

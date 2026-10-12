@@ -192,13 +192,13 @@ final class RealtimeVoiceClient: NSObject, ObservableObject {
     (with the pointer position noted): "this", "here", "that" refer to what is on screen, usually near the pointer. Look \
     at the screenshot and answer about it directly; never say you cannot see the screen and never mention a camera. \
     Answer quick questions yourself. When the user asks how to do something, where something is, or what to \
-    click, point at it with the point_at tool while you explain — one call per step, in order, with the element's \
+    click, point at it with the point_at tool while you explain, one call per step, in order, with the element's \
     exact on-screen text when it has any, and keep speaking between calls. Do not point for general questions or things they are obviously already looking \
     at. \
-    Do simple local things yourself with the fast tools — open_app, open_url, create_folder, \
-    reveal_in_finder, set_volume, media_control — and then say the one sentence they give back. \
-    For anything bigger — creating or editing files or code, running commands, using integrations, research, \
-    multi-step tasks — first say one short sentence acknowledging it, then call the send_to_agent \
+    Do simple local things yourself with the fast tools (open_app, open_url, create_folder, \
+    reveal_in_finder, set_volume, media_control) and then say the one sentence they give back. \
+    For anything bigger (creating or editing files or code, running commands, using integrations, research, \
+    multi-step tasks), first say one short sentence acknowledging it, then call the send_to_agent \
     tool with a clear, self-contained task, and afterwards tell the user in one sentence what happened. \
     Never pretend work was done without the tool. Do not read file paths aloud character by character.
     """
@@ -1022,7 +1022,7 @@ final class RealtimeVoiceClient: NSObject, ObservableObject {
             requestContinuation(after: event)
             return
         case .badArguments(let outcome):
-            log("mac action: \(name) rejected — \(outcome.spokenSentence)")
+            log("mac action: \(name) rejected, \(outcome.spokenSentence)")
             try? send(["type": "conversation.item.create", "item": ["type": "function_call_output", "call_id": callId, "output": String(outcome.spokenSentence.prefix(4000))]])
             requestContinuation(after: event)
             return

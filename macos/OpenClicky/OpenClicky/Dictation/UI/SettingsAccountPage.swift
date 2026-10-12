@@ -120,7 +120,7 @@ private struct AccountProfileRow: View {
                     Text("Signing out keeps your history on this Mac.").font(.system(size: 12)).foregroundStyle(.secondary)
                     if billing.summary?.isUnconfirmed == true {
                         HStack(spacing: 6) {
-                            Text(resendNote ?? "Unconfirmed — check your inbox for the code.")
+                            Text(resendNote ?? "Unconfirmed. Check your inbox for the code.")
                                 .font(SettingsLook.caption).foregroundStyle(.secondary)
                             Button("Resend", action: resend).buttonStyle(.link).font(SettingsLook.caption).pointerCursor()
                         }
@@ -175,7 +175,7 @@ private struct AccountProfileRow: View {
     private func resend() {
         resendWork.start {
             let sent = await authSession.resendLink()
-            resendNote = sent ? "Sent — check your inbox." : "Couldn’t send it — try again in a minute."
+            resendNote = sent ? "Sent. Check your inbox." : "Couldn’t send it. Try again in a minute."
         }
     }
 }
@@ -223,7 +223,9 @@ private struct PlanSummary: View {
                 Text("No account needed: your keys in shell.json go straight to OpenAI and Anthropic, and nothing is metered.")
                     .font(SettingsLook.caption).foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
-            } else if authSession.accountEmail == nil && !OpenClickyConfiguration.isConfigured {
+            } else if !OpenClickyConfiguration.hasAccountToken {
+                // No sign-in, so there is no allowance to fetch (a plan or another key can make the
+                // app "configured" without one; waiting for a summary then said Loading… forever).
                 meterHeader(trailing: "Sign in to see usage")
                 ProgressView(value: 0).progressViewStyle(.linear).tint(SettingsLook.accent)
             } else {
@@ -256,7 +258,7 @@ private struct BackendEngineUsageRow: View {
                 ? "OpenAI runs straight on your own key, not metered. AssemblyAI is on your account."
                 : "OpenAI runs straight on your own key, not metered. AssemblyAI needs an account."
             badge = "Your key"
-        } else if OpenClickyConfiguration.isConfigured {
+        } else if OpenClickyConfiguration.hasAccountToken {
             detail = "Through OpenClicky, counted against your free allowance."
             badge = "Allowance"
         } else {

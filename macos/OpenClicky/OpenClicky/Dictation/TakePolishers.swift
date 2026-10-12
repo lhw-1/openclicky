@@ -269,7 +269,7 @@ enum PolishFailureNotice {
         }
     }
 
-    static let ownKeyRefusedSentence = "your own api key was refused, so your words were cleaned up locally — check the key in settings, account."
+    static let ownKeyRefusedSentence = "your own api key was refused, so your words were cleaned up locally. check the key in settings, keys & plans."
 
     /// Sentences already shown this session.
     @MainActor private static var shownSentences: Set<String> = []

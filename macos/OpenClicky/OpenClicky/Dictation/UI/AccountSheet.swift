@@ -17,7 +17,7 @@ struct AccountSheet: View {
         VStack(alignment: .leading, spacing: 16) {
             Text("your free openclicky account")
                 .font(SettingsLook.body(20, weight: .semibold))
-            Text("polished dictation and spoken answers, on us — up to $10 of use a month once your email is confirmed.")
+            Text("polished dictation and spoken answers, on us: up to $10 of use a month once your email is confirmed.")
                 .font(SettingsLook.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
             EmailAccountForm(onSignedIn: onDone, onUseOwnKey: onUseOwnKey)
             Button("not now", action: onDone)

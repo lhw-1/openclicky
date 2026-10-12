@@ -72,7 +72,7 @@ struct AccountProfileTests {
         #expect(!summary(plan: "grant", onPlan: true).isSwitchedOff)
         #expect(!summary(plan: "grant", onPlan: false, blocked: true).isSwitchedOff) // paused has its own sentence
         #expect(!summary(plan: "unmetered", onPlan: true).isSwitchedOff)
-        #expect(BillingSummary.switchedOffMessage == "this login isn't switched on for openclicky yet — write to hello@flowsxr.com, or use your own key.")
+        #expect(BillingSummary.switchedOffMessage == "this login isn't switched on for openclicky yet. write to hello@flowsxr.com, or use your own key.")
     }
 
     // MARK: §3.5 — the running-low notice, once a month
@@ -126,7 +126,7 @@ struct AccountProfileTests {
         #expect(CompanionManager.accountNoticeToSpeak(for: notOnPlan, alreadySpoken: &spoken) == AccountLimitError.notOnPlan.message)
         let trouble = claudeError(503, #"{"error":"unavailable"}"#)
         #expect(CompanionManager.isAccountNotice(trouble))
-        #expect(CompanionManager.accountNoticeToSpeak(for: trouble, alreadySpoken: &spoken) == "openclicky's free service is having trouble — try again in a minute.")
+        #expect(CompanionManager.accountNoticeToSpeak(for: trouble, alreadySpoken: &spoken) == "openclicky's free service is having trouble, try again in a minute.")
         #expect(CompanionManager.accountNoticeToSpeak(for: trouble, alreadySpoken: &spoken) == nil)
         #expect(!CompanionManager.isAccountNotice(claudeError(503, "upstream down")))
         #expect(!CompanionManager.isAccountNotice(claudeError(500, #"{"error":"daily_limit"}"#)))

@@ -320,7 +320,7 @@ final class TakeStore: @unchecked Sendable {
     private func prepare(_ sql: String) throws -> OpaquePointer {
         var statement: OpaquePointer?
         guard sqlite3_prepare_v2(database, sql, -1, &statement, nil) == SQLITE_OK, let statement else {
-            throw TakeStoreError(message: "sqlite prepare failed: \(lastErrorMessage()) — \(sql.prefix(80))")
+            throw TakeStoreError(message: "sqlite prepare failed: \(lastErrorMessage()), \(sql.prefix(80))")
         }
         return statement
     }
@@ -334,7 +334,7 @@ final class TakeStore: @unchecked Sendable {
 
     private func execute(_ sql: String) throws {
         guard sqlite3_exec(database, sql, nil, nil, nil) == SQLITE_OK else {
-            throw TakeStoreError(message: "sqlite exec failed: \(lastErrorMessage()) — \(sql.prefix(80))")
+            throw TakeStoreError(message: "sqlite exec failed: \(lastErrorMessage()), \(sql.prefix(80))")
         }
     }
 

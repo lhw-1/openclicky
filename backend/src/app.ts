@@ -129,7 +129,7 @@ export function createApp(options: AppOptions = {}) {
 if (location.hash.indexOf("error") !== -1) {
   document.title = "Link expired";
   document.getElementById("head").textContent = "that link has expired.";
-  document.getElementById("note").textContent = "this link has expired — open openclicky and press resend link in settings.";
+  document.getElementById("note").textContent = "this link has expired. open openclicky and press resend link in settings.";
 }
 history.replaceState(null, "", location.pathname);
 </script></body>`),

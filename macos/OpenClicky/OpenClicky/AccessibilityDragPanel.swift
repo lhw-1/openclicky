@@ -179,7 +179,7 @@ struct AccessibilityDragCardView: View {
                     .frame(width: 22, height: 22)
                     .background(Circle().fill(Color.white.opacity(0.14)))
 
-                Text("I'm OpenClicky — drag me into the list above.")
+                Text("I'm OpenClicky. Drag me into the list above.")
                     .font(.system(size: 13, weight: .semibold))
                     .foregroundColor(.white)
             }

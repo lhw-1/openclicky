@@ -111,7 +111,7 @@ enum MacActionOutcome: Equatable {
         case .invalidURL:
             return "That doesn't look like a web address I can open."
         case .permissionDenied(let location):
-            return "macOS hasn't granted access to \(location.spokenName) yet — I asked for it."
+            return "macOS hasn't granted access to \(location.spokenName) yet. I asked for it."
         case .failed(let reason):
             return "That didn't work: \(reason)."
         }

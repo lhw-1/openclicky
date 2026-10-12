@@ -16,10 +16,10 @@ struct AccountSheetTests {
     @Test func eachAllowanceStandingHasItsOwnSentence() {
         #expect(summary().allowanceSentence(resetDay: "nov 1") == "plenty left this month · resets on nov 1")
         #expect(summary(spentMonth: 8.5).allowanceSentence(resetDay: "nov 1") == "running low this month · resets on nov 1")
-        #expect(summary(spentMonth: 10).allowanceSentence(resetDay: "nov 1") == "this month's free allowance is used — it comes back on nov 1")
-        #expect(summary(spentToday: 2).allowanceSentence(resetDay: "nov 1") == "today's free allowance is used — it comes back tomorrow")
+        #expect(summary(spentMonth: 10).allowanceSentence(resetDay: "nov 1") == "this month's free allowance is used, it comes back on nov 1")
+        #expect(summary(spentToday: 2).allowanceSentence(resetDay: "nov 1") == "today's free allowance is used, it comes back tomorrow")
         #expect(summary(budgetExhausted: true).allowanceSentence(resetDay: "nov 1") == "the free allowance is used up for now")
-        #expect(summary(blocked: true).allowanceSentence(resetDay: "nov 1") == "this account is paused — dictation still works")
+        #expect(summary(blocked: true).allowanceSentence(resetDay: "nov 1") == "this account is paused, dictation still works")
         #expect(summary().allowanceSentence(resetDay: nil) == "plenty left this month · resets on the 1st")
     }
 
@@ -58,12 +58,12 @@ struct AccountSheetTests {
         #expect(guest.allowanceStanding == .unconfirmed)
         #expect(guest.allowanceSentence(resetDay: "nov 1") == "confirm your email to unlock the full free allowance · 25% of the starter used")
         guest.guestSpentUsd = 1
-        #expect(guest.allowanceSentence(resetDay: "nov 1") == "the starter allowance is used — confirm your email to keep going")
+        #expect(guest.allowanceSentence(resetDay: "nov 1") == "the starter allowance is used, confirm your email to keep going")
     }
 
     @Test func confirmEmailAndDeviceLimitHaveSentences() {
-        #expect(AccountLimitError.confirmEmail.message == "confirm your email to keep going — you can resend the link in settings.")
-        #expect(AccountLimitError.deviceLimit.message == "this mac already has two openclicky accounts — sign in with one of them.")
+        #expect(AccountLimitError.confirmEmail.message == "confirm your email to keep going, you can resend the link in settings.")
+        #expect(AccountLimitError.deviceLimit.message == "this mac already has two openclicky accounts, sign in with one of them.")
         #expect(AccountLimitError.from(status: 402, body: Data(#"{"error":"confirm_email"}"#.utf8)) == .confirmEmail)
     }
 }

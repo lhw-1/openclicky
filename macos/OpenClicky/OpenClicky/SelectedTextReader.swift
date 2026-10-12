@@ -61,6 +61,6 @@ enum SelectedTextReader {
 
     /// The line added to a turn's screen context.
     nonisolated static func contextLine(for selectedText: String) -> String {
-        "The user has selected (highlighted) this text on screen: «\(selectedText)». When they say \"this\", \"this line\" or \"this word\", they almost certainly mean the selection — answer about that text, not about whatever is under the pointer."
+        "The user has selected (highlighted) this text on screen: «\(selectedText)». When they say \"this\", \"this line\" or \"this word\", they almost certainly mean the selection, answer about that text, not about whatever is under the pointer."
     }
 }

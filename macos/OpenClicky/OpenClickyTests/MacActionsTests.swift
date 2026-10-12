@@ -70,7 +70,7 @@ struct MacActionsTests {
         #expect(MacActionOutcome.invalidName.spokenSentence == "That name has characters a folder can't have.")
         #expect(MacActionOutcome.unknownLocation("icloud").spokenSentence == "I don't know where icloud is.")
         #expect(MacActionOutcome.invalidURL.spokenSentence == "That doesn't look like a web address I can open.")
-        #expect(MacActionOutcome.permissionDenied(.documents).spokenSentence == "macOS hasn't granted access to your Documents folder yet — I asked for it.")
+        #expect(MacActionOutcome.permissionDenied(.documents).spokenSentence == "macOS hasn't granted access to your Documents folder yet. I asked for it.")
         #expect(MacActionOutcome.failed("disk full").spokenSentence == "That didn't work: disk full.")
     }
 

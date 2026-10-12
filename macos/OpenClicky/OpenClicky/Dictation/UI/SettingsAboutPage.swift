@@ -27,9 +27,9 @@ extension SettingsCatalog {
                 })),
             SettingsItem(
                 id: "about.reportBug", page: .about, section: "Help",
-                title: "Report a bug", detail: "Attach the log — it lists what each take did, not what you said.",
+                title: "Report a bug", detail: "Attach the log. It lists what each take did, not what you said.",
                 keywords: ["bug", "log", "issue", "problem", "feedback", "app.log"],
-                view: AnyView(SettingsRow(title: "Report a bug", detail: "Attach the log — it lists what each take did, not what you said.") {
+                view: AnyView(SettingsRow(title: "Report a bug", detail: "Attach the log. It lists what each take did, not what you said.") {
                     HStack(spacing: 8) {
                         Button("Show Log") { NSWorkspace.shared.activateFileViewerSelecting([AppLog.fileURL]) }
                             .pointerCursor()

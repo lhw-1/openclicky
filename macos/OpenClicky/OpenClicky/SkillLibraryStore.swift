@@ -235,7 +235,7 @@ final class SkillLibraryStore: ObservableObject {
             let status = (response as? HTTPURLResponse)?.statusCode ?? 0
             guard (200..<300).contains(status) else {
                 AppLog.append("skills: drafting on the own openai key failed (\(status))")
-                throw SkillLibraryError.backend("openai answered \(status) — check your openai key in shell.json.")
+                throw SkillLibraryError.backend("openai answered \(status). check your openai key in shell.json.")
             }
             guard let markdown = DirectProviderRequests.skillMarkdown(fromCompletion: data) else {
                 AppLog.append("skills: openai's draft had no text")

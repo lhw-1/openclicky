@@ -22,10 +22,10 @@ struct EmailAccountFlowTests {
         #expect(OpenClickyAuthSession.outcome(status: 402, body: json(#"{"error":"accounts_full"}"#), email: "g@x.co") == .failed(AccountLimitError.accountsFull.message))
         #expect(OpenClickyAuthSession.outcome(status: 402, body: json(#"{"error":"device_limit"}"#), email: "g@x.co") == .failed(AccountLimitError.deviceLimit.message))
         #expect(OpenClickyAuthSession.outcome(status: 400, body: json(#"{"error":"bad_email"}"#), email: "g") == .failed("that doesn't look like an email address."))
-        #expect(OpenClickyAuthSession.outcome(status: 401, body: json(#"{"error":"bad_code"}"#), email: "g@x.co") == .failed("that code didn't work — check it, or ask for a new one."))
-        #expect(OpenClickyAuthSession.outcome(status: 429, body: json(#"{"error":"slow_down"}"#), email: "g@x.co") == .failed("too many tries — wait a few minutes and try again."))
-        #expect(OpenClickyAuthSession.outcome(status: 502, body: json("{}"), email: "g@x.co") == .failed("couldn't reach openclicky right now — try again in a minute."))
-        #expect(OpenClickyAuthSession.outcome(status: 200, body: json("not json"), email: "g@x.co") == .failed("couldn't reach openclicky right now — try again in a minute."))
+        #expect(OpenClickyAuthSession.outcome(status: 401, body: json(#"{"error":"bad_code"}"#), email: "g@x.co") == .failed("that code didn't work. check it, or ask for a new one."))
+        #expect(OpenClickyAuthSession.outcome(status: 429, body: json(#"{"error":"slow_down"}"#), email: "g@x.co") == .failed("too many tries, wait a few minutes and try again."))
+        #expect(OpenClickyAuthSession.outcome(status: 502, body: json("{}"), email: "g@x.co") == .failed("couldn't reach openclicky right now, try again in a minute."))
+        #expect(OpenClickyAuthSession.outcome(status: 200, body: json("not json"), email: "g@x.co") == .failed("couldn't reach openclicky right now, try again in a minute."))
     }
 
     @Test func codeAndResendRequests() throws {
@@ -60,15 +60,15 @@ struct EmailAccountFlowTests {
 
     @Test func accountTroubleIsNotAConnectionProblem() {
         #expect(OpenClickyAuthSession.outcome(status: 503, body: json(#"{"error":"accounts_unavailable"}"#), email: "g@x.co")
-                == .failed("openclicky's accounts are having trouble right now — try again in a few minutes."))
+                == .failed("openclicky's accounts are having trouble right now, try again in a few minutes."))
     }
 
     @Test func aRetryAfterSaysHowLongToWait() {
         #expect(OpenClickyAuthSession.outcome(status: 429, body: json(#"{"error":"slow_down"}"#), email: "g@x.co", retryAfterSeconds: 180)
-                == .failed("too many tries — wait about 3 minutes and try again."))
-        #expect(OpenClickyAuthSession.slowDownMessage(retryAfterSeconds: 30) == "too many tries — wait about 1 minute and try again.")
-        #expect(OpenClickyAuthSession.slowDownMessage(retryAfterSeconds: 61) == "too many tries — wait about 2 minutes and try again.")
-        #expect(OpenClickyAuthSession.slowDownMessage(retryAfterSeconds: nil) == "too many tries — wait a few minutes and try again.")
+                == .failed("too many tries, wait about 3 minutes and try again."))
+        #expect(OpenClickyAuthSession.slowDownMessage(retryAfterSeconds: 30) == "too many tries, wait about 1 minute and try again.")
+        #expect(OpenClickyAuthSession.slowDownMessage(retryAfterSeconds: 61) == "too many tries, wait about 2 minutes and try again.")
+        #expect(OpenClickyAuthSession.slowDownMessage(retryAfterSeconds: nil) == "too many tries, wait a few minutes and try again.")
         let response = HTTPURLResponse(url: URL(string: "https://api.example")!, statusCode: 429, httpVersion: nil, headerFields: ["Retry-After": "120"])
         #expect(OpenClickyAuthSession.retryAfterSeconds(of: response) == 120)
         #expect(OpenClickyAuthSession.retryAfterSeconds(of: nil) == nil)

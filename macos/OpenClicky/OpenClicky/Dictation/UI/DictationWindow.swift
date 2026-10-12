@@ -2,7 +2,7 @@
 //  DictationWindow.swift
 //  OpenClicky
 //
-//  OpenClicky's one window. A native sidebar lists one group, Settings, in this order: General,
+//  OpenClicky's one window. A native sidebar lists the pages, with no heading, in this order: General,
 //  Dictation, Clicky, Voice, Your words (what you dictated: try it, this week, every take), How it
 //  writes (dictionary, snippets, styles), The Orb, Shortcuts, Keys & Plans, Account, Privacy &
 //  Security, About. Every
@@ -197,13 +197,11 @@ struct DictationRootView: View {
                 get: { model.isSearching ? nil : model.destination },
                 set: { chosen in if let chosen { model.select(chosen) } }
             )) {
-                Section("Settings") {
-                    // General, Dictation, Clicky, Voice, then your two pages, then the rest.
-                    ForEach(DictationSettingsPage.pagesBeforeYourPages) { page in pageRow(page, matches: matches) }
-                    sectionRow(.words, count: historyCount, matches: matches)
-                    sectionRow(.writing, matches: matches)
-                    ForEach(DictationSettingsPage.pagesAfterYourPages) { page in pageRow(page, matches: matches) }
-                }
+                // General, Dictation, Clicky, Voice, then your two pages, then the rest.
+                ForEach(DictationSettingsPage.pagesBeforeYourPages) { page in pageRow(page, matches: matches) }
+                sectionRow(.words, count: historyCount, matches: matches)
+                sectionRow(.writing, matches: matches)
+                ForEach(DictationSettingsPage.pagesAfterYourPages) { page in pageRow(page, matches: matches) }
             }
             .listStyle(.sidebar)
             .searchable(text: $model.searchText, placement: .sidebar, prompt: "Search settings")
@@ -320,7 +318,7 @@ private struct SidebarFooter: View {
             }
             .padding(.horizontal, 14)
             .padding(.vertical, 8)
-            .help(settings.incognito ? "Incognito is on — takes paste but are not saved." : "Incognito is off — takes are saved to history on this Mac.")
+            .help(settings.incognito ? "Incognito is on: takes paste but are not saved." : "Incognito is off: takes are saved to history on this Mac.")
             Divider()
             Button(action: { model.select(.settings(.account)) }) {
                 HStack(spacing: 10) {

@@ -83,7 +83,7 @@ struct BackendSignInTests {
 
     @Test func theExpirySentenceSurvivesOpeningTheForm() {
         #expect(OpenClickyAuthSession.flowSurvivesFreshForm(.failed(OpenClickyAuthSession.sessionExpiredMessage)))
-        #expect(!OpenClickyAuthSession.flowSurvivesFreshForm(.failed("that code didn't work — check it, or ask for a new one.")))
+        #expect(!OpenClickyAuthSession.flowSurvivesFreshForm(.failed("that code didn't work. check it, or ask for a new one.")))
         #expect(!OpenClickyAuthSession.flowSurvivesFreshForm(.idle))
         #expect(!OpenClickyAuthSession.flowSurvivesFreshForm(.signedIn(confirmed: true)))
         #expect(OpenClickyAuthSession.flowSurvivesFreshForm(.needsCode(email: "a@b.co")))

@@ -287,7 +287,7 @@ final class DictationTakeController: ObservableObject {
         }
         switch host.paste(text) {
         case .typed: orb.boxReason = "pasted"
-        case .leftOnPasteboard: orb.boxReason = "copied — press ⌘V"
+        case .leftOnPasteboard: orb.boxReason = "copied, press ⌘V"
         }
         if let last = lastTake, last.pasteOutcome == .leftInOrb, !settings.incognito {
             var pasted = last
@@ -407,7 +407,7 @@ final class DictationTakeController: ObservableObject {
                     markLiveTypingStopped(&session, reason: "too late for an edit", takeID: takeID)
                     session.editKeyJoinedAfterTyping = true
                     liveTyping = session
-                    orb.hint = "already typing — stopped here. let go, then start an edit"
+                    orb.hint = "already typing, stopped here. let go, then start an edit"
                     break
                 }
                 takeMode = .edit
@@ -437,7 +437,7 @@ final class DictationTakeController: ObservableObject {
                 if keyWasPressedDuringHold {
                     // The key was held for a shortcut (right ⌘ + C, fn + an arrow), not to talk:
                     // finishing would paste room noise or end in "didn't catch that".
-                    cancelTake(reason: "cancelled — that was a shortcut")
+                    cancelTake(reason: "cancelled, that was a shortcut")
                 } else if wasTap {
                     // A tap: keep listening until the next tap (or a double tap cancels).
                     takeIsToggle = true
@@ -633,7 +633,7 @@ final class DictationTakeController: ObservableObject {
             let heardButUntyped = heardButUntypedText(liveTyping)
             if !heardButUntyped.isEmpty {
                 host.copyToPasteboard(heardButUntyped)
-                failureLine = "\(message) — the rest is copied, press ⌘V"
+                failureLine = "\(message). the rest is copied, press ⌘V"
             }
             if let historyNote { failureLine += " · \(historyNote)" }
             orb.phase = .failed(failureLine)
@@ -791,7 +791,7 @@ final class DictationTakeController: ObservableObject {
             return try await HeyClickyEditor.edit(selection: selection, instruction: instruction, context: context, polisher: polisher)
         } catch {
             if isCurrent(thisTakeID) {
-                failTake("couldn't finish your edit — \(error.localizedDescription)", takeID: thisTakeID)
+                failTake("couldn't finish your edit: \(error.localizedDescription)", takeID: thisTakeID)
             }
             return nil
         }
@@ -814,23 +814,23 @@ final class DictationTakeController: ObservableObject {
             return (.leftInOrb, "not pasting into a password field")
         }
         if let appAtPress = field.appBundleID, let appInFrontNow = host.frontAppBundleID(), appAtPress != appInFrontNow {
-            return (.leftOnPasteboard, "the app changed — copied, press ⌘V")
+            return (.leftOnPasteboard, "the app changed. copied, press ⌘V")
         }
         if focusMovedSincePress() {
-            return (.leftOnPasteboard, "the focus moved — copied, press ⌘V")
+            return (.leftOnPasteboard, "the focus moved. copied, press ⌘V")
         }
         // Editable, or unknown (no permission / the app exposes nothing): try the paste.
         guard field.isEditable || !host.isAccessibilityTrusted() || field.role == nil else {
-            return (.leftOnPasteboard, "no text box — copied, press ⌘V")
+            return (.leftOnPasteboard, "no text box. copied, press ⌘V")
         }
         switch host.paste(outputText) {
         case .leftOnPasteboard:
-            return (.leftOnPasteboard, "copied — press ⌘V (allow accessibility to paste for you)")
+            return (.leftOnPasteboard, "copied, press ⌘V (allow accessibility to paste for you)")
         case .typed:
             switch await host.verifyPaste(outputText, field) {
             case .verified: return (.verified, pastedMessage)
             case .posted: return (.posted, pastedMessage)
-            case .noTarget: return (.leftOnPasteboard, "couldn't see it land — copied, press ⌘V")
+            case .noTarget: return (.leftOnPasteboard, "couldn't see it land. copied, press ⌘V")
             case .leftOnPasteboard: return (.leftOnPasteboard, pastedMessage)
             }
         }
@@ -1053,7 +1053,7 @@ final class DictationTakeController: ObservableObject {
             if !untypedForPasteboard.isEmpty {
                 host.copyToPasteboard(untypedForPasteboard)
                 pasteOutcome = .leftOnPasteboard
-                message = "\(reason) — the rest is copied, press ⌘V"
+                message = "\(reason). the rest is copied, press ⌘V"
             }
         }
         logLiveTypedTotal(session, takeID: thisTakeID)

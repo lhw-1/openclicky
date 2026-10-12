@@ -396,7 +396,7 @@ struct DictationTakeControllerTests {
         // Nowhere to put them: on the clipboard, one line on the orb, no box.
         #expect(h.pasted.copied == ["Hello"])
         #expect(!h.orb.isBoxOpen)
-        #expect(h.orb.phase == .done("the app changed — copied, press ⌘V"))
+        #expect(h.orb.phase == .done("the app changed. copied, press ⌘V"))
         #expect(try h.store.recent().first?.pasteOutcome == .leftOnPasteboard)
     }
 
@@ -626,7 +626,7 @@ struct DictationTakeControllerTests {
         #expect(h.pasted.typed == ["Hello there"])
         h.controller.handle(.dictationEditModifierJoined)
         #expect(h.orb.phase == .listening)
-        #expect(h.orb.hint == "already typing — stopped here. let go, then start an edit")
+        #expect(h.orb.hint == "already typing, stopped here. let go, then start an edit")
         // The edit instruction is heard but never typed.
         speak("hello there my friend make it formal", in: h)
         #expect(h.pasted.typed == ["Hello there"])
@@ -688,7 +688,7 @@ struct DictationTakeControllerTests {
         await h.waitUntil { h.controller.state == .idle }
         #expect(h.pasted.texts.isEmpty)
         #expect(h.pasted.copied == ["Hello"])
-        #expect(h.orb.phase == .done("the focus moved — copied, press ⌘V"))
+        #expect(h.orb.phase == .done("the focus moved. copied, press ⌘V"))
         #expect(try h.store.recent().first?.pasteOutcome == .leftOnPasteboard)
     }
 
@@ -703,7 +703,7 @@ struct DictationTakeControllerTests {
         await h.waitUntil { h.controller.state == .idle }
         #expect(h.pasted.texts == ["Hello"])
         #expect(h.pasted.copied == ["Hello"])
-        #expect(h.orb.phase == .done("couldn't see it land — copied, press ⌘V"))
+        #expect(h.orb.phase == .done("couldn't see it land. copied, press ⌘V"))
         #expect(try h.store.recent().first?.pasteOutcome == .leftOnPasteboard)
     }
 

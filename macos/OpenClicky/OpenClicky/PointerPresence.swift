@@ -30,14 +30,16 @@ enum PointerPresence: String, CaseIterable, Identifiable {
 }
 
 /// Spots a side-to-side (or up-and-down) shake: several quick reversals of direction, each after
-/// a swing long enough that a wobble of the hand does not count. Fed with mouse samples.
+/// a swing long enough that a wobble of the hand does not count. Fed with mouse samples. It asks
+/// for a deliberate shake: three reversals of 25 pt woke the pointer during ordinary back-and-forth
+/// mousing, so it takes four, each after a swing of at least 60 pt.
 struct MouseShakeDetector {
     /// Reversals must all fall within this many seconds.
-    var window: TimeInterval = 0.7
+    var window: TimeInterval = 0.8
     /// A swing shorter than this before a reversal is ignored.
-    var minimumSwing: CGFloat = 25
+    var minimumSwing: CGFloat = 60
     /// How many qualifying reversals make a shake.
-    var reversalsNeeded = 3
+    var reversalsNeeded = 4
 
     private struct Axis {
         var last: CGFloat?

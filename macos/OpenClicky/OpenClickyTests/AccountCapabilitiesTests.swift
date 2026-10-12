@@ -34,7 +34,7 @@ struct AccountCapabilitiesTests {
         let body = Data(#"{"error":"daily_limit","resets_at":"2026-10-09T00:00:00Z"}"#.utf8)
         let error = AccountLimitError.from(status: 402, body: body)
         #expect(error == .dailyLimit)
-        #expect(error?.message == "you've used today's free allowance — it comes back tomorrow. dictation still works.")
+        #expect(error?.message == "you've used today's free allowance, it comes back tomorrow. dictation still works.")
         #expect(AccountLimitError.from(status: 500, body: body) == nil)
     }
 

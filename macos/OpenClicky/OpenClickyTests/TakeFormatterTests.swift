@@ -96,7 +96,7 @@ struct TakeFormatterTests {
         ctx.language = DictationLanguage.named("ml-IN")
         ctx.script = .roman
         let prompt = TakeFormatter.systemPrompt(for: ctx)
-        #expect(prompt.contains("Style — other apps"))
+        #expect(prompt.contains("Style (other apps)"))
         #expect(prompt.contains("\"FlowsXR\" (heard as \"flows xr\")"))
         #expect(prompt.contains("Malayalam (ml)"))
         #expect(prompt.contains("roman letters"))

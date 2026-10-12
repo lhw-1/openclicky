@@ -244,7 +244,7 @@ private struct MicrophoneTestRow: View {
     @State private var testEngine: AVAudioEngine?
 
     var body: some View {
-        SettingsRow(title: "Test your microphone", detail: isTesting ? "Speak — the bars should follow your voice." : "Hear whether the chosen input picks you up.") {
+        SettingsRow(title: "Test your microphone", detail: isTesting ? "Speak, and the bars should follow your voice." : "Hear whether the chosen input picks you up.") {
             HStack(spacing: 12) {
                 if isTesting { OrbLevelBars(level: testLevel, color: SettingsLook.success).frame(width: 40, height: 16) }
                 Button(isTesting ? "Stop" : "Speak to Test") { isTesting ? stopTest() : startTest() }
