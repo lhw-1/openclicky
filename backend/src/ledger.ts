@@ -39,7 +39,9 @@ export function limitsFromEnv(env: Env): Limits {
     ttsCharsMonthly: integer(env.ACCOUNT_MONTHLY_TTS_CHARS, 20_000),
     guestTotalMicro: usd(env.GUEST_TOTAL_USD, 1),
     guestDays: integer(env.GUEST_DAYS, 14),
-    guestTtsChars: integer(env.GUEST_TTS_CHARS, 2_000),
+    // OpenAI speaks once the shared ElevenLabs plan is used, at about $0.015 a spoken minute: 10,000
+    // characters (about ten minutes) is a few cents a guest, and 2,000 ran out within one evening.
+    guestTtsChars: integer(env.GUEST_TTS_CHARS, 10_000),
   };
 }
 

@@ -44,9 +44,18 @@ export async function elevenLabsCharsRemaining(env: Env, now = Date.now()): Prom
   }
 }
 
+/** What the reservation is told is left when OpenAI speaks: no shared plan to run out of, only the
+ *  per-account limits (and the guest limit) the ledger enforces. Fits Postgres' integer. */
+const OPENAI_SPEECH_GLOBAL_CHARS = 1_000_000_000;
+
+/** The free voice. ElevenLabs while its shared plan has room, then OpenAI speech on the backend's key
+ *  (the free ElevenLabs plan is 10,000 characters a month for everyone together, and the first real
+ *  user ran past it in an evening); OpenAI also takes over when an ElevenLabs request fails. Each
+ *  account's own character limits apply whichever voice speaks. */
 export async function speakOnGrant(c: Context, ledger: SpendLedger): Promise<Response> {
   const env = getEnv(c);
-  if (!env.ELEVENLABS_API_KEY) return c.json({ error: "tts_budget" }, 402);
+  const canUseOpenAI = Boolean(env.OPENAI_API_KEY);
+  if (!env.ELEVENLABS_API_KEY && !canUseOpenAI) return c.json({ error: "tts_budget" }, 402);
   let req: { text?: string } = {};
   try { req = JSON.parse((await c.req.text()) || "{}"); } catch { return c.json({ error: "body must be JSON" }, 400); }
   const text = typeof req.text === "string" ? req.text.trim() : "";
@@ -58,31 +67,63 @@ export async function speakOnGrant(c: Context, ledger: SpendLedger): Promise<Res
     return c.json({ error: "text_too_long" }, 413);
   }
   const account = c.get("account" as never) as AccountContext;
-  const remaining = await elevenLabsCharsRemaining(env);
+  const elevenLabsRemaining = env.ELEVENLABS_API_KEY ? await elevenLabsCharsRemaining(env) : 0;
+  const useElevenLabs = elevenLabsRemaining >= text.length;
+  if (!useElevenLabs && !canUseOpenAI) return c.json({ error: "tts_budget" }, 402); // the app falls back to the Mac's voice, silently
   let reserved: Awaited<ReturnType<SpendLedger["reserveCharacters"]>>;
   try {
-    reserved = await ledger.reserveCharacters(account.userId, text.length, account.limits, remaining);
+    reserved = await ledger.reserveCharacters(account.userId, text.length, account.limits,
+      useElevenLabs ? elevenLabsRemaining : OPENAI_SPEECH_GLOBAL_CHARS);
   } catch {
     console.error("tts: character reservation failed");
     return c.json({ error: "tts_budget" }, 402);
   }
-  if (!reserved.ok) return c.json({ error: "tts_budget" }, 402); // the app falls back to the Mac's voice, silently
-  spendCached(text.length);
+  if (!reserved.ok) return c.json({ error: "tts_budget" }, 402);
+  if (useElevenLabs) {
+    spendCached(text.length);
+    const spoken = await speakWithElevenLabs(env, text);
+    if (spoken) return spoken;
+    if (!canUseOpenAI) return c.json({ error: "tts_budget" }, 402);
+  }
+  return (await speakWithOpenAI(env, text)) ?? c.json({ error: "tts_budget" }, 402);
+}
+
+async function speakWithElevenLabs(env: Env, text: string): Promise<Response | undefined> {
   const voiceId = env.ELEVENLABS_VOICE_ID || "21m00Tcm4TlvDq8ikWAM";
   let upstream: Response;
   try {
     upstream = await fetch(`${base(env)}/v1/text-to-speech/${voiceId}`, {
       method: "POST",
-      headers: { "xi-api-key": env.ELEVENLABS_API_KEY, "content-type": "application/json", accept: "audio/mpeg" },
+      headers: { "xi-api-key": env.ELEVENLABS_API_KEY ?? "", "content-type": "application/json", accept: "audio/mpeg" },
       body: JSON.stringify({ text, model_id: "eleven_flash_v2_5", voice_settings: { stability: 0.5, similarity_boost: 0.75 } }),
     });
   } catch {
     console.error("tts: ElevenLabs request failed");
-    return c.json({ error: "tts_budget" }, 402);
+    return undefined;
   }
   if (!upstream.ok || !upstream.body) {
     console.error(`tts: ElevenLabs ${upstream.status}`);
-    return c.json({ error: "tts_budget" }, 402);
+    return undefined;
+  }
+  return new Response(upstream.body, { headers: { "content-type": "audio/mpeg" } });
+}
+
+async function speakWithOpenAI(env: Env, text: string): Promise<Response | undefined> {
+  const openaiBase = (env.OPENAI_BASE_URL || "https://api.openai.com/v1").replace(/\/$/, "");
+  let upstream: Response;
+  try {
+    upstream = await fetch(`${openaiBase}/audio/speech`, {
+      method: "POST",
+      headers: { authorization: `Bearer ${env.OPENAI_API_KEY ?? ""}`, "content-type": "application/json" },
+      body: JSON.stringify({ model: env.OPENAI_TTS_MODEL || "gpt-4o-mini-tts", voice: env.OPENAI_TTS_VOICE || "marin", input: text, response_format: "mp3" }),
+    });
+  } catch {
+    console.error("tts: OpenAI speech request failed");
+    return undefined;
+  }
+  if (!upstream.ok || !upstream.body) {
+    console.error(`tts: OpenAI speech ${upstream.status}`);
+    return undefined;
   }
   return new Response(upstream.body, { headers: { "content-type": "audio/mpeg" } });
 }

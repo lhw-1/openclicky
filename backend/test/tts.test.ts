@@ -141,4 +141,65 @@ describe("speakOnGrant", () => {
     expect(third.status).toBe(402);
     expect(await third.json()).toEqual({ error: "tts_budget" });
   });
+
+  it("speaks with OpenAI once ElevenLabs' shared plan is used up, and still counts the characters", async () => {
+    const f = vi.fn(async (url: string) =>
+      url.includes("/v1/user/subscription")
+        ? new Response(JSON.stringify({ character_count: 9_999, character_limit: 10_000 }))
+        : new Response(new Uint8Array([4, 5, 6]), { headers: { "content-type": "audio/mpeg" } }),
+    );
+    vi.stubGlobal("fetch", f);
+    const ledger = new MemorySpendLedger();
+    const res = await app(ledger).request("/tts", { method: "POST", body: JSON.stringify({ text: "A long answer." }) },
+      { ...env, OPENAI_API_KEY: "sk-test", OPENAI_TTS_MODEL: "gpt-4o-mini-tts", OPENAI_TTS_VOICE: "marin" });
+    expect(res.status).toBe(200);
+    expect(res.headers.get("content-type")).toBe("audio/mpeg");
+    const speech = f.mock.calls.find(([url]) => String(url).endsWith("/audio/speech"))!;
+    expect(String(speech[0])).toBe("https://api.openai.com/v1/audio/speech");
+    expect(JSON.parse((speech as unknown as [string, RequestInit])[1].body as string)).toMatchObject({ model: "gpt-4o-mini-tts", voice: "marin", input: "A long answer." });
+    expect(f.mock.calls.some(([url]) => String(url).includes("text-to-speech"))).toBe(false);
+    const s = await ledger.summary("u1", { monthlyMicro: 10e6, dailyMicro: 2e6, globalMonthlyMicro: 1e9, ttsCharsMonthly: 20000, guestTotalMicro: 1_000_000, guestDays: 14, guestTtsChars: 10_000 });
+    expect(s.ttsCharsMonth).toBe("A long answer.".length);
+  });
+
+  it("speaks with OpenAI when an ElevenLabs request fails", async () => {
+    const log = vi.spyOn(console, "error").mockImplementation(() => {});
+    const f = vi.fn(async (url: string) => {
+      if (url.includes("/v1/user/subscription")) return new Response(JSON.stringify({ character_count: 0, character_limit: 1_000_000 }));
+      if (url.includes("text-to-speech")) return new Response("busy", { status: 503 });
+      return new Response(new Uint8Array([7]), { headers: { "content-type": "audio/mpeg" } });
+    });
+    vi.stubGlobal("fetch", f);
+    const res = await app(new MemorySpendLedger()).request("/tts", { method: "POST", body: JSON.stringify({ text: "Hello." }) }, { ...env, OPENAI_API_KEY: "sk-test" });
+    expect(res.status).toBe(200);
+    expect(f.mock.calls.some(([url]) => String(url).endsWith("/audio/speech"))).toBe(true);
+    log.mockRestore();
+  });
+
+  it("speaks with OpenAI alone when there is no ElevenLabs key", async () => {
+    const f = vi.fn(async () => new Response(new Uint8Array([8]), { headers: { "content-type": "audio/mpeg" } }));
+    vi.stubGlobal("fetch", f);
+    const res = await app(new MemorySpendLedger()).request("/tts", { method: "POST", body: JSON.stringify({ text: "Hi." }) }, { OPENAI_API_KEY: "sk-test" });
+    expect(res.status).toBe(200);
+    expect(f).toHaveBeenCalledTimes(1);
+  });
+
+  it("still holds each account to its own character limit when OpenAI speaks", async () => {
+    vi.stubGlobal("fetch", vi.fn(async (url: string) =>
+      url.includes("/v1/user/subscription")
+        ? new Response(JSON.stringify({ character_count: 10_000, character_limit: 10_000 }))
+        : new Response(new Uint8Array([9]), { headers: { "content-type": "audio/mpeg" } })));
+    const ledger = new MemorySpendLedger();
+    const a = new Hono();
+    a.use("*", async (c, next) => { c.set("principal" as never, { sub: "u1", via: "supabase" } as never); await next(); });
+    a.use("*", requireAccount(() => ledger));
+    a.use("*", async (c, next) => {
+      const account = c.get("account" as never) as { limits: { ttsCharsMonthly: number } };
+      account.limits = { ...account.limits, ttsCharsMonthly: 10 };
+      await next();
+    });
+    a.post("/tts", (c) => speakOnGrant(c, ledger));
+    const res = await a.request("/tts", { method: "POST", body: JSON.stringify({ text: "More than ten characters." }) }, { ...env, OPENAI_API_KEY: "sk-test" });
+    expect(res.status).toBe(402);
+  });
 });

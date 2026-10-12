@@ -7,7 +7,7 @@ const now = new Date("2026-10-08T10:00:00Z");
 
 describe("limitsFromEnv", () => {
   it("reads dollars and defaults to the spec's numbers", () => {
-    expect(limitsFromEnv({})).toEqual(limits);
+    expect(limitsFromEnv({})).toEqual({ ...limits, guestTtsChars: 10_000 });
     expect(limitsFromEnv({ ACCOUNT_DAILY_USD: "5" }).dailyMicro).toBe(5_000_000);
   });
   it("falls back to 20000 for invalid ACCOUNT_MONTHLY_TTS_CHARS", () => {

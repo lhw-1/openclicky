@@ -505,6 +505,18 @@ describe("app", () => {
       expect(await me.json()).toMatchObject({ confirmed: false, guestSpentUsd: 0, guestLimitUsd: 1, email: "g•••@example.com" });
     });
 
+    it("/billing/me tells a guest the guest voice limit, and a confirmed account the monthly one", async () => {
+      const ledger = new MemorySpendLedger({ requireAccountRow: true });
+      ledger.setAccount("user-1", { confirmed: false, deviceHash: "a".repeat(64), createdAt: Date.now(), email: "gran@example.com" });
+      const billed = createApp({ log: null, spendLedger: ledger });
+      const limits = limitsFromEnv(grantEnv);
+      const guest = await billed.request("/billing/me", { headers: { authorization: `Bearer ${await jwt()}` } }, grantEnv);
+      expect((await guest.json()).ttsCharsLimit).toBe(limits.guestTtsChars);
+      ledger.setAccount("user-1", { confirmed: true, email: "gran@example.com" });
+      const confirmed = await billed.request("/billing/me", { headers: { authorization: `Bearer ${await jwt()}` } }, grantEnv);
+      expect((await confirmed.json()).ttsCharsLimit).toBe(limits.ttsCharsMonthly);
+    });
+
     it("a guest whose Mac pool is spent past the cap gets 402 confirm_email with no resets_at", async () => {
       const ledger = new MemorySpendLedger({ requireAccountRow: true });
       ledger.setAccount("user-1", { confirmed: false, deviceHash: "a".repeat(64), createdAt: Date.now(), email: "gran@example.com" });
@@ -642,7 +654,7 @@ describe("sign-up support", () => {
     expect(res.headers.get("content-type")).toContain("text/html");
     const page = await res.text();
     expect(page).toContain("your openclicky account is confirmed — you can close this tab.");
-    expect(page).toContain("this link has expired — open openclicky and press resend link in settings.");
+    expect(page).toContain("this link has expired. open openclicky and press resend link in settings.");
     expect(page).toContain(`history.replaceState(null, "", location.pathname)`);
   });
   it("the password routes are gone", async () => {

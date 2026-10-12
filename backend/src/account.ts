@@ -94,7 +94,9 @@ export async function accountSummary(c: Context, ledger: SpendLedger): Promise<A
     byok: account.byok,
     spentMonthUsd: dollars(s.spentMonthMicro), monthlyLimitUsd: dollars(s.monthlyLimitMicro),
     spentTodayUsd: dollars(s.spentTodayMicro), dailyLimitUsd: dollars(s.dailyLimitMicro),
-    ttsCharsMonth: s.ttsCharsMonth, ttsCharsLimit: s.ttsCharsLimit,
+    // An unconfirmed (guest) account is held to the guest voice limit, not the monthly one: the app
+    // showed guests 20,000 characters while they ran out at 2,000.
+    ttsCharsMonth: s.ttsCharsMonth, ttsCharsLimit: s.confirmed === false ? account.limits.guestTtsChars : s.ttsCharsLimit,
     monthEnd: s.monthEnd, dayEnd: s.dayEnd,
     budgetExhausted: s.globalSpentMicro >= s.globalLimitMicro, blocked: s.blocked,
     // Older schemas send no confirmation: count the account as confirmed rather than shut it out.
