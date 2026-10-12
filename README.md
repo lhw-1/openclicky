@@ -90,6 +90,11 @@ is a separate product and this project is not affiliated with it. The dictation 
 Sarvam's Kivi, studied in [docs/research/2026-10-06-kivi-reverse-engineering.md](docs/research/2026-10-06-kivi-reverse-engineering.md);
 no Kivi code, art or fonts are used.
 
+**Thank you.** To the [Sarvam AI](https://www.sarvam.ai) team behind Kivi: the way it handles dictation (one key
+anywhere, a style per app, a history you can search, an orb that shows every step) taught us how dictation
+on a Mac should feel, and much of OpenClicky's dictation and settings is modelled on it. To Farza, whose open
+Clicky gave the app its start.
+
 ## What is inside
 
 Modeled on the HeyClicky idea, built as a **headless agent core plus a native shell**:
