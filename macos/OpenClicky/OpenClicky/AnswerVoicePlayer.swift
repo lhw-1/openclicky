@@ -44,17 +44,6 @@ final class AnswerVoicePlayer {
         self.session = URLSession(configuration: configuration)
     }
 
-    /// Sends `text` to ElevenLabs TTS and plays the resulting audio.
-    /// Throws on network or decoding errors. Cancellation-safe.
-    func speakText(_ text: String) async throws {
-        let data = try await fetchAudio(for: text)
-        try Task.checkCancellation()
-        let player = try AVAudioPlayer(data: data)
-        self.audioPlayer = player
-        player.play()
-        print("🔊 ElevenLabs TTS: playing \(data.count / 1024)KB audio")
-    }
-
     /// The audio for `text`, without playing it, in the voice `SpeechVoiceChoice.current()` names;
     /// the free voice comes from the backend's /tts. Used by `SpeechQueue` to
     /// fetch the next piece of an answer while the current one plays.
@@ -136,9 +125,9 @@ final class AnswerVoicePlayer {
     }
 }
 
-/// Tells `playToCompletion` when an AVAudioPlayer has finished, exactly once (natural end, decode
-/// error, or a stop).
-private final class AudioPlayerFinishObserver: NSObject, AVAudioPlayerDelegate {
+/// Tells `playToCompletion` (and RecordedVoice) when an AVAudioPlayer has finished, exactly once
+/// (natural end, decode error, or a stop).
+final class AudioPlayerFinishObserver: NSObject, AVAudioPlayerDelegate {
     var onFinish: (() -> Void)?
 
     func finishOnce() {

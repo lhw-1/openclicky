@@ -179,6 +179,14 @@ final class StreamingAnswerSpeaker {
         if hasVoiceStarted || enqueuedPieceCount == 0 { handlePointTagIfKnown() }
     }
 
+    /// A reply that is already whole (the agent's result): handed over in one go and closed, so the
+    /// chunker cuts it into pieces exactly as it would a streamed answer and the queue fetches each
+    /// piece while the one before it plays, instead of one long request for the whole reply.
+    func receiveWholeReply(_ replyText: String) {
+        receive(accumulatedAnswer: replyText)
+        finish(closingSentences: [])
+    }
+
     /// The voice could not be used: the caller speaks another way and points now.
     func voiceFellBack() {
         handlePointTagIfKnown()

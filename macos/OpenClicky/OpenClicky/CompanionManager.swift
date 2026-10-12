@@ -488,10 +488,7 @@ final class CompanionManager: ObservableObject {
             speakWithSystemVoice(AccountLimitError.notOnPlan.message)
             return
         }
-        stopActiveAnswer()
-        currentResponseTask?.cancel()
-        openClickyAgentClient.cancel()
-        answerVoicePlayer.stopPlayback()
+        interruptCurrentAnswer(includingAgentWork: true)
         if let threadId { lastAgentThreadId = threadId } else if startsNewThread { lastAgentThreadId = nil }
         lastTranscript = trimmedText
         currentResponseTask = Task {
@@ -505,6 +502,7 @@ final class CompanionManager: ObservableObject {
                 agentActivityText = nil
                 speakCreditsErrorFallback()
             }
+            await waitForSystemVoiceNoticeToEnd()
             if !Task.isCancelled {
                 voiceState = .idle
                 scheduleTransientHideIfNeeded()
@@ -606,29 +604,39 @@ final class CompanionManager: ObservableObject {
     /// speaks again so a new response can begin immediately.
     private var currentResponseTask: Task<Void, Never>?
 
-    /// The ask lane's answer being spoken, kept so a new question stops it outright. Stopping only
-    /// the player ends the current piece "normally", and the queue went on to the next piece (and
-    /// kept fetching every remaining piece from /tts).
+    /// The answer being spoken (the ask lane's, or the agent's result), kept so a new question
+    /// stops it outright. Stopping only the player ends the current piece "normally", and the queue
+    /// went on to the next piece (and kept fetching every remaining piece from /tts).
     private var activeAnswerSpeaker: StreamingAnswerSpeaker?
     private var activeAnswerPlayback: Task<Void, Error>?
 
-    /// Stops the spoken answer, its remaining /tts fetches, and its pointer — before the player is
-    /// stopped, so the queue cannot move on to the next piece.
     /// The island's stop button: silence whatever Clicky is saying. Agent work keeps going.
     func stopSpeaking() {
         guard voiceState == .responding else { return }
         AppLog.append("ask: stopped speaking from the island")
-        stopActiveAnswer()
-        currentResponseTask?.cancel()
-        answerVoicePlayer.stopPlayback()
-        systemSpeechSynthesizer.stopSpeaking(at: .immediate)
-        recordedVoice.stop()
+        interruptCurrentAnswer(includingAgentWork: false)
         realtimeVoiceClient.stopSpeaking()
         // A cancelled answer skips its own reset to idle.
         voiceState = .idle
         scheduleTransientHideIfNeeded()
     }
 
+    /// Silences everything this manager is saying and abandons the answer in progress: the queued
+    /// pieces of a spoken answer, the response task, the answer voice, and a system-voice or
+    /// recorded notice. `includingAgentWork` also ends a running agent turn: a new question
+    /// replaces it, while the island's stop button only silences the voice and leaves the agent
+    /// working. The realtime session is left alone: its next turn cancels its own reply, and only
+    /// the stop button silences it outright.
+    private func interruptCurrentAnswer(includingAgentWork: Bool) {
+        stopActiveAnswer()
+        currentResponseTask?.cancel()
+        if includingAgentWork { openClickyAgentClient.cancel() }
+        answerVoicePlayer.stopPlayback()
+        stopSystemVoice()
+    }
+
+    /// Stops the spoken answer, its remaining /tts fetches, and its pointer — before the player is
+    /// stopped, so the queue cannot move on to the next piece.
     private func stopActiveAnswer() {
         activeAnswerSpeaker?.cancel()
         activeAnswerPlayback?.cancel()
@@ -861,8 +869,7 @@ final class CompanionManager: ObservableObject {
         overlayWindowManager.hideOverlay()
         transientHideTask?.cancel()
 
-        stopActiveAnswer()
-        currentResponseTask?.cancel()
+        interruptCurrentAnswer(includingAgentWork: false)
         currentResponseTask = nil
         shortcutTransitionCancellable?.cancel()
         companionShortcutCancellable?.cancel()
@@ -1309,11 +1316,7 @@ final class CompanionManager: ObservableObject {
         if !isClickyCursorEnabled && !isOverlayVisible && !isCursorDocked {
             showOverlayOnAllScreens()
         }
-        stopActiveAnswer()
-        currentResponseTask?.cancel()
-        openClickyAgentClient.cancel()
-        answerVoicePlayer.stopPlayback()
-        systemSpeechSynthesizer.stopSpeaking(at: .immediate)
+        interruptCurrentAnswer(includingAgentWork: true)
         clearDetectedElementLocation()
         dismissCursorCaption()
         lastTranscript = trimmedText
@@ -1391,11 +1394,7 @@ final class CompanionManager: ObservableObject {
             }
 
             // Cancel any in-progress response, agent run, and TTS from a previous utterance
-            stopActiveAnswer()
-            currentResponseTask?.cancel()
-            openClickyAgentClient.cancel()
-            answerVoicePlayer.stopPlayback()
-            systemSpeechSynthesizer.stopSpeaking(at: .immediate)
+            interruptCurrentAnswer(includingAgentWork: true)
             clearDetectedElementLocation()
 
             // Dismiss the onboarding prompt / caption if it's showing
@@ -1514,9 +1513,7 @@ final class CompanionManager: ObservableObject {
     /// Claude's response may include a [POINT:x,y:label] tag which triggers
     /// the buddy to fly to that element on screen.
     private func sendTranscriptToClaudeWithScreenshot(transcript: String) {
-        stopActiveAnswer()
-        currentResponseTask?.cancel()
-        answerVoicePlayer.stopPlayback()
+        interruptCurrentAnswer(includingAgentWork: false)
 
         currentResponseTask = Task {
             // Stay in processing (spinner) state — no streaming text displayed
@@ -1573,11 +1570,7 @@ final class CompanionManager: ObservableObject {
                 let toolsLine = tools.isEmpty ? "" : "\n\n" + Self.accountToolsInstruction
                 // The answer is spoken while it is still being written: each finished sentence goes to
                 // the voice, and the pointer moves when the voice starts (the prompt puts the tag first).
-                let answerSpeaker = StreamingAnswerSpeaker(
-                    speechQueue: SpeechQueue(
-                        fetchAudio: { [answerVoicePlayer] pieceText in try await answerVoicePlayer.fetchAudio(for: pieceText) },
-                        playAudio: { [answerVoicePlayer] audioData in try await answerVoicePlayer.playToCompletion(audioData) }
-                    ),
+                let answerSpeaker = makeAnswerSpeaker(
                     onVoiceStarts: { [weak self] in
                         self?.voiceState = .responding
                         self?.dismissCursorCaption()
@@ -1713,6 +1706,8 @@ final class CompanionManager: ObservableObject {
                 }
             }
 
+            // A notice in the system voice is still being said: the turn is over when it ends.
+            await waitForSystemVoiceNoticeToEnd()
             if !Task.isCancelled {
                 voiceState = .idle
                 scheduleTransientHideIfNeeded()
@@ -1779,11 +1774,7 @@ final class CompanionManager: ObservableObject {
             if !isClickyCursorEnabled && !isOverlayVisible && !isCursorDocked {
                 showOverlayOnAllScreens()
             }
-            stopActiveAnswer()
-            currentResponseTask?.cancel()
-            openClickyAgentClient.cancel()
-            answerVoicePlayer.stopPlayback()
-            systemSpeechSynthesizer.stopSpeaking(at: .immediate)
+            interruptCurrentAnswer(includingAgentWork: true)
             clearDetectedElementLocation()
             ClickyAnalytics.trackPushToTalkStarted()
             voiceState = .listening
@@ -1822,12 +1813,57 @@ final class CompanionManager: ObservableObject {
     private func runOpenClickyAgentLane(transcript: String, screenCaptures: [CompanionScreenCapture]) async throws {
         let spokenText = try await performAgentTask(transcript: transcript, screenCaptures: screenCaptures)
         guard !Task.isCancelled else { return }
+        await speakWholeReply(spokenText)
+    }
+
+    /// The speaker for one spoken reply: its pieces are fetched and played by the answer voice
+    /// player, the next one fetched while the current one plays.
+    private func makeAnswerSpeaker(onVoiceStarts: @escaping () -> Void, onPointTag: @escaping (String) -> Void) -> StreamingAnswerSpeaker {
+        StreamingAnswerSpeaker(
+            speechQueue: SpeechQueue(
+                fetchAudio: { [answerVoicePlayer] pieceText in try await answerVoicePlayer.fetchAudio(for: pieceText) },
+                playAudio: { [answerVoicePlayer] audioData in try await answerVoicePlayer.playToCompletion(audioData) }
+            ),
+            onVoiceStarts: onVoiceStarts,
+            onPointTag: onPointTag
+        )
+    }
+
+    /// Speaks a reply that is already whole (the agent's result) the way a streamed answer is
+    /// spoken: in pieces through `SpeechQueue`, kept as the active answer so the island's stop
+    /// button and a new question silence it. It used to go out as one /tts request whose call
+    /// returned as soon as playback began, so nothing could stop it and `.responding` was set
+    /// after the voice had already started. Returns once the reply has been said, was interrupted,
+    /// or the voice failed and the system voice has said what was left.
+    private func speakWholeReply(_ replyText: String) async {
+        let answerSpeaker = makeAnswerSpeaker(
+            onVoiceStarts: { [weak self] in
+                self?.voiceState = .responding
+                self?.dismissCursorCaption()
+            },
+            // The agent's reply carries no [POINT:…] tag; the chunker would only strip one.
+            onPointTag: { _ in }
+        )
+        let answerPlayback = Task { @MainActor in try await answerSpeaker.play() }
+        activeAnswerSpeaker = answerSpeaker
+        activeAnswerPlayback = answerPlayback
+        answerSpeaker.receiveWholeReply(replyText)
         do {
-            try await answerVoicePlayer.speakText(spokenText)
-            voiceState = .responding
+            // A question asked meanwhile cancels the calling task; the cancellation is passed on.
+            try await withTaskCancellationHandler {
+                try await answerPlayback.value
+            } onCancel: {
+                answerPlayback.cancel()
+            }
+        } catch let failure as SpeechQueue.Failure {
+            guard !Task.isCancelled else { return }
+            let nsError = failure.underlyingError as NSError
+            print("⚠️ TTS failed after agent run (\(nsError.localizedDescription)); using the system voice")
+            AppLog.append("agent: voice failed (\(nsError.code)); using the system voice")
+            speakWithSystemVoice(failure.unspokenText.joined(separator: " "))
+            await waitForSystemVoiceNoticeToEnd()
         } catch {
-            print("⚠️ TTS via backend failed after agent run (\(error.localizedDescription)); using the system voice")
-            speakWithSystemVoice(spokenText)
+            // Interrupted by a new question or the stop button.
         }
     }
 
@@ -1924,24 +1960,72 @@ final class CompanionManager: ObservableObject {
     /// OpenClicky: speak with the built-in macOS voice when the backend has no text-to-speech
     /// route (for example an OpenRouter-only backend). Keeps the conversation audible.
     private let systemSpeechSynthesizer = AVSpeechSynthesizer()
+    /// Tells when a system-voice utterance has ended, finished or stopped.
+    private let systemSpeechFinishObserver = SystemSpeechFinishObserver()
 
     /// The bundled recordings of the lines said the same way every time (RecordedVoice.swift).
     let recordedVoice = RecordedVoice()
 
+    /// Bumped for every notice spoken and every interruption, so the end of an older notice (one
+    /// cut off by the next, say) never sets a newer turn back to idle.
+    private var systemVoiceNoticeNumber = 0
+    private var isSystemVoiceNoticeSpeaking = false
+    /// Turns waiting for the notice to end before they go back to idle (`waitForSystemVoiceNoticeToEnd`).
+    private var systemVoiceNoticeEndWaiters: [CheckedContinuation<Void, Never>] = []
+
+    /// Says `text` in this Mac's voice, or plays its recording when it is one of the fixed notices.
+    /// The state is `.responding` while it talks and goes back to `.idle` when it ends: nothing set
+    /// it back before, so the island stayed "speaking" after a notice until the next question.
     private func speakWithSystemVoice(_ text: String) {
         answeringSourceName = nil
+        stopSystemVoice()
+        let noticeNumber = systemVoiceNoticeNumber
+        isSystemVoiceNoticeSpeaking = true
+        let noticeEnded: () -> Void = { [weak self] in self?.systemVoiceNoticeEnded(noticeNumber: noticeNumber) }
+        voiceState = .responding
         // A fixed notice that has a recording plays it, in the app's own voice.
-        if let line = RecordedVoice.line(forSpokenText: text), recordedVoice.play(line) {
-            systemSpeechSynthesizer.stopSpeaking(at: .immediate)
-            voiceState = .responding
+        if let line = RecordedVoice.line(forSpokenText: text), recordedVoice.play(line, onFinished: noticeEnded) {
             return
         }
         let utterance = AVSpeechUtterance(string: text)
         utterance.voice = MacVoice.currentVoice()
         utterance.rate = MacVoice.speakingRate(for: utterance.voice)
-        systemSpeechSynthesizer.stopSpeaking(at: .immediate)
+        systemSpeechFinishObserver.watch(utterance, onEnded: noticeEnded)
+        systemSpeechSynthesizer.delegate = systemSpeechFinishObserver
         systemSpeechSynthesizer.speak(utterance)
-        voiceState = .responding
+    }
+
+    private func systemVoiceNoticeEnded(noticeNumber: Int) {
+        guard noticeNumber == systemVoiceNoticeNumber, isSystemVoiceNoticeSpeaking else { return }
+        isSystemVoiceNoticeSpeaking = false
+        resumeSystemVoiceNoticeEndWaiters()
+        // A notice is the last thing a turn says: once it has been said, the turn is over.
+        guard voiceState == .responding else { return }
+        voiceState = .idle
+        scheduleTransientHideIfNeeded()
+    }
+
+    /// Stops a notice being said in the system voice or played from its recording.
+    private func stopSystemVoice() {
+        systemVoiceNoticeNumber += 1
+        isSystemVoiceNoticeSpeaking = false
+        systemSpeechSynthesizer.stopSpeaking(at: .immediate)
+        recordedVoice.stop()
+        resumeSystemVoiceNoticeEndWaiters()
+    }
+
+    /// Returns once the notice being said has ended or was stopped; at once when none is.
+    private func waitForSystemVoiceNoticeToEnd() async {
+        guard isSystemVoiceNoticeSpeaking else { return }
+        await withCheckedContinuation { continuation in
+            systemVoiceNoticeEndWaiters.append(continuation)
+        }
+    }
+
+    private func resumeSystemVoiceNoticeEndWaiters() {
+        let waiters = systemVoiceNoticeEndWaiters
+        systemVoiceNoticeEndWaiters = []
+        waiters.forEach { $0.resume() }
     }
 
     /// The ask lane offers the quick actions where nothing else does them: whenever the agent lane
@@ -2375,4 +2459,34 @@ final class CompanionManager: ObservableObject {
     }
 
     private static let maximumRememberedExchanges = 10
+}
+
+/// Tells the companion when the system-voice utterance it is watching has ended: spoken to the
+/// end, or stopped (the next notice, a new question, the stop button). Only the latest utterance
+/// counts, so the end of one cut off by the next is not mistaken for the new one's.
+private final class SystemSpeechFinishObserver: NSObject, AVSpeechSynthesizerDelegate {
+    private weak var watchedUtterance: AVSpeechUtterance?
+    private var onWatchedUtteranceEnded: (() -> Void)?
+
+    /// `utterance` is about to be spoken; `onEnded` runs once when it ends.
+    func watch(_ utterance: AVSpeechUtterance, onEnded: @escaping () -> Void) {
+        watchedUtterance = utterance
+        onWatchedUtteranceEnded = onEnded
+    }
+
+    func speechSynthesizer(_ synthesizer: AVSpeechSynthesizer, didFinish utterance: AVSpeechUtterance) {
+        DispatchQueue.main.async { self.utteranceEnded(utterance) }
+    }
+
+    func speechSynthesizer(_ synthesizer: AVSpeechSynthesizer, didCancel utterance: AVSpeechUtterance) {
+        DispatchQueue.main.async { self.utteranceEnded(utterance) }
+    }
+
+    private func utteranceEnded(_ utterance: AVSpeechUtterance) {
+        guard utterance === watchedUtterance else { return }
+        let onEnded = onWatchedUtteranceEnded
+        watchedUtterance = nil
+        onWatchedUtteranceEnded = nil
+        onEnded?()
+    }
 }
