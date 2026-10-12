@@ -41,10 +41,16 @@ struct SettingsItem: Identifiable {
     var chrome: Chrome = .card
     /// False hides the item from its page and from search (the fn banner once fn is free).
     var isRelevant: @MainActor () -> Bool = { true }
+    /// Set for an item that only search shows: a way to one of your own pages (Your words, How it
+    /// writes), which aren't drawn from the catalog. It names the page in the search results.
+    var searchOnlyGroup: String?
     let view: AnyView
 
+    /// The heading it is listed under in search results.
+    var searchGroupTitle: String { searchOnlyGroup ?? page.title }
+
     func matches(_ query: String) -> Bool {
-        let searchableText = ([title, detail, section, page.title] + keywords).joined(separator: " ")
+        let searchableText = ([title, detail, section, searchGroupTitle] + keywords).joined(separator: " ")
         return query
             .lowercased()
             .split(separator: " ")
@@ -58,20 +64,48 @@ struct SettingsCatalog {
     let settings: DictationSettings
     let companionManager: CompanionManager
 
-    /// In page order; within a page, in the order the page shows them.
+    /// In page order; within a page, in the order the page shows them. Then the search-only ways
+    /// to your own pages.
     var allItems: [SettingsItem] {
-        DictationSettingsPage.allCases.flatMap { items(for: $0) }
+        DictationSettingsPage.allCases.flatMap { items(for: $0) } + yourPagesSearchItems()
+    }
+
+    /// What lives on Your words and How it writes, findable by search: each a row that opens its page.
+    func yourPagesSearchItems() -> [SettingsItem] {
+        func item(_ id: String, section: DictationSection, title: String, detail: String, keywords: [String]) -> SettingsItem {
+            SettingsItem(
+                id: id, page: .dictation, section: section.sidebarTitle, title: title, detail: detail, keywords: keywords,
+                searchOnlyGroup: section.sidebarTitle,
+                view: AnyView(SettingsRow(title: title, detail: detail) {
+                    Button("Open \(section.sidebarTitle)") { companionManager.showDictationWindow(section: section) }
+                        .pointerCursor()
+                }))
+        }
+        return [
+            item("words.takes", section: .words, title: "Your takes", detail: "Every take you dictated, with search and filters.",
+                 keywords: ["history", "takes", "transcript", "past", "record", "recording", "retry", "dictated"]),
+            item("words.tryIt", section: .words, title: "Try it here", detail: "A box to dictate into and see what OpenClicky writes.",
+                 keywords: ["test", "practice", "try", "scratch"]),
+            item("writing.dictionary", section: .writing, title: "Dictionary", detail: "Names and terms written exactly as you expect.",
+                 keywords: ["dictionary", "terms", "names", "spelling", "vocabulary", "words", "misheard"]),
+            item("writing.snippets", section: .writing, title: "Snippets", detail: "Say a short phrase, get a longer text.",
+                 keywords: ["snippet", "shortcut", "text expansion", "template", "signature", "address", "email"]),
+            item("writing.styles", section: .writing, title: "Styles", detail: "How you sound, app by app: the rules the AI clean-up reads.",
+                 keywords: ["style", "tone", "formal", "casual", "per app", "rules", "apps"]),
+        ]
     }
 
     func items(for page: DictationSettingsPage) -> [SettingsItem] {
         switch page {
         case .general: return generalItems()
         case .dictation: return dictationItems()
-        case .keyboard: return keyboardItems()
         case .clicky: return clickyItems()
+        case .voice: return voiceItems()
         case .orb: return orbItems()
-        case .privacy: return privacyItems()
+        case .keyboard: return keyboardItems()
+        case .keys: return keysItems()
         case .account: return accountItems()
+        case .privacy: return privacyItems()
         case .about: return aboutItems()
         }
     }
@@ -105,6 +139,18 @@ struct SettingsSectionGroup: Identifiable {
             }
         }
         return groups
+    }
+}
+
+extension SettingsSectionGroup {
+    /// Search results by page, the pages with a row whose title holds the query first ("dictionary"
+    /// shows the Dictionary before the privacy rows that mention it); otherwise in sidebar order.
+    static func searchResultGroups(_ matches: [SettingsItem], query: String) -> [SettingsSectionGroup] {
+        let groups = groups(matches) { $0.searchGroupTitle }
+        func namesTheQuery(_ group: SettingsSectionGroup) -> Bool {
+            group.items.contains { $0.title.localizedCaseInsensitiveContains(query) }
+        }
+        return groups.filter(namesTheQuery) + groups.filter { !namesTheQuery($0) }
     }
 }
 

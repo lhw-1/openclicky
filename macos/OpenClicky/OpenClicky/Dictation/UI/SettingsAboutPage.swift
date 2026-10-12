@@ -2,8 +2,8 @@
 //  SettingsAboutPage.swift
 //  OpenClicky
 //
-//  Settings → About: the version, software updates, the source and reporting a bug. These used
-//  to sit at the bottom of General.
+//  Settings → About: the version, the source and reporting a bug. Software updates are on
+//  General, where macOS keeps its own; their rows are drawn here.
 //
 
 import AppKit
@@ -17,16 +17,6 @@ extension SettingsCatalog {
                 title: "OpenClicky", detail: "Version \(AppVersion.shortVersion) (\(AppVersion.buildNumber)) · Open source, MIT",
                 keywords: ["version", "about", "build", "mit", "license"],
                 view: AnyView(AboutAppRow())),
-            SettingsItem(
-                id: "about.autoUpdate", page: .about, section: "Updates",
-                title: "Check for updates daily", detail: "Updates come through Sparkle.",
-                keywords: ["update", "updates", "sparkle", "automatic"],
-                view: AnyView(AutomaticUpdatesRow())),
-            SettingsItem(
-                id: "about.checkNow", page: .about, section: "Updates",
-                title: "Check now", detail: "",
-                keywords: ["update", "updates", "sparkle", "check now"],
-                view: AnyView(CheckNowRow())),
             SettingsItem(
                 id: "about.source", page: .about, section: "Help",
                 title: "Source code", detail: "Issues and pull requests welcome.",
@@ -71,7 +61,7 @@ private struct AboutAppRow: View {
     }
 }
 
-private struct AutomaticUpdatesRow: View {
+struct AutomaticUpdatesRow: View {
     @ObservedObject private var updater = AppUpdater.shared
     @State private var checksDaily = AppUpdater.shared.automaticallyChecks
 
@@ -88,7 +78,7 @@ private struct AutomaticUpdatesRow: View {
     }
 }
 
-private struct CheckNowRow: View {
+struct CheckNowRow: View {
     @ObservedObject private var updater = AppUpdater.shared
 
     var body: some View {

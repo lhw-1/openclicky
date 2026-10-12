@@ -3,7 +3,7 @@
 //  OpenClicky
 //
 //  Settings → The Orb: how the pill narrates a take. Show the orb; its style, theme and size;
-//  when it appears; feedback.
+//  when it appears. Its sounds and haptics are dictation's, so they live on Dictation.
 //
 
 import SwiftUI
@@ -53,15 +53,9 @@ extension SettingsCatalog {
                 title: "Free to drag", detail: "Off pins the orb at the bottom centre.",
                 keywords: ["drag", "move", "pin", "position", "center", "centre", "bottom"],
                 view: AnyView(OrbDragRow(settings: settings))),
-            toggleItem("orb.tooltips", section: "Feedback", title: "Tooltips",
+            toggleItem("orb.tooltips", section: "When it appears", title: "Tooltips",
                        detail: "A short hint under the orb.",
                        keywords: ["hint", "help"], keyPath: \.tooltips),
-            toggleItem("orb.sounds", section: "Feedback", title: "Sounds",
-                       detail: "Tones when a take starts, stops or finishes.",
-                       keywords: ["sound", "tone", "earcon", "audio", "beep"], keyPath: \.sounds),
-            toggleItem("orb.haptics", section: "Feedback", title: "Haptics",
-                       detail: "A trackpad tap on start, stop and result.",
-                       keywords: ["trackpad", "vibration", "tap"], keyPath: \.haptics),
         ]
     }
 }

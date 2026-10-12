@@ -4,7 +4,10 @@
 //
 //  Settings → Account: who you are and what it costs. Sign in (or set up a free account with just
 //  an email, in AccountSheet) or sign out; how much of the free allowance is used and what each
-//  engine costs; your own provider keys (each one testable) and the plans you already pay for; and the backend host and token from shell.json.
+//  engine costs; and the backend host and token from shell.json.
+//  Settings → Keys & Plans: your own provider keys (each one testable) and the plans you already
+//  pay for. They have their own page because the account is optional and keys aren't an account:
+//  "add a key under Account" read like "sign up".
 //
 
 import AppKit
@@ -32,6 +35,7 @@ extension SettingsCatalog {
                 id: "account.usage.sarvam", page: .account, section: "Plan & usage",
                 title: "Sarvam", detail: "Billed by Sarvam to your key.",
                 keywords: ["sarvam", "billing", "engine", "dashboard"],
+                isRelevant: { OpenClickyConfiguration.settings.sarvamKey?.isEmpty == false },
                 view: AnyView(SettingsRow(title: "Sarvam", detail: "Billed by Sarvam to your key.") {
                     Button("Dashboard ↗") { openExternalLink("https://dashboard.sarvam.ai") }
                         .pointerCursor()
@@ -42,35 +46,6 @@ extension SettingsCatalog {
                 keywords: ["openai", "assemblyai", "allowance", "metered", "engine"],
                 view: AnyView(BackendEngineUsageRow())),
             SettingsItem(
-                id: "account.keys", page: .account, section: "Your keys",
-                title: "Your keys", detail: "Add keys from OpenAI, Anthropic, OpenRouter, Google Gemini, Groq, Mistral, xAI and Sarvam.",
-                keywords: ["api key", "byok", "own key", "provider", "add key", "openai", "openaiApiKey", "anthropic", "claude",
-                           "anthropicApiKey", "openrouter", "llama", "deepseek", "gemini", "google", "ai studio", "groq",
-                           "mistral", "xai", "grok", "sarvam", "saaras", "test"],
-                view: AnyView(ProviderKeysList())),
-            SettingsItem(
-                id: "account.keysNote", page: .account, section: "Your keys",
-                title: "Where keys go", detail: "Your keys go straight to that provider, never through OpenClicky, and are used instead of the free credits. Stored in ~/.openclicky/shell.json.",
-                keywords: ["shell.json", "byok"],
-                chrome: .footer,
-                view: AnyView(SettingsFootnote(text: "Your keys go straight to that provider, never through OpenClicky, and are used instead of the free credits. Stored in ~/.openclicky/shell.json."))),
-            SettingsItem(
-                id: "account.claudeCodePlan", page: .account, section: "Subscriptions",
-                title: "Claude Code (your Claude plan)", detail: "Answer questions through Claude Code, signed in to your Claude plan.",
-                keywords: ["claude code", "claude plan", "pro", "max", "subscription", "anthropic"],
-                view: AnyView(PlanSubscriptionRow(plan: .claudeCodePlan))),
-            SettingsItem(
-                id: "account.codexPlan", page: .account, section: "Subscriptions",
-                title: "Codex (your ChatGPT plan)", detail: "Answer questions through Codex, signed in with ChatGPT.",
-                keywords: ["codex", "chatgpt", "plus", "pro", "subscription", "openai"],
-                view: AnyView(PlanSubscriptionRow(plan: .codexPlan))),
-            SettingsItem(
-                id: "account.plansNote", page: .account, section: "Subscriptions",
-                title: "What a plan can do", detail: "A plan answers, points and does quick actions like opening apps; bigger tasks need the agent.",
-                keywords: ["subscription", "plan"],
-                chrome: .footer,
-                view: AnyView(SettingsFootnote(text: "A plan answers questions, points, and does quick actions like opening apps or making folders. Bigger tasks need the agent. Codex answers in one go, a few seconds after you ask."))),
-            SettingsItem(
                 id: "account.backendHost", page: .account, section: "Backend",
                 title: "Host", detail: "Where OpenClicky’s model calls go. Change it in shell.json.",
                 keywords: ["backend", "server", "url", "host", "shell.json"],
@@ -80,6 +55,40 @@ extension SettingsCatalog {
                 title: "Session token", detail: "Written when you sign in.",
                 keywords: ["token", "bearer", "shell.json", "session"],
                 view: AnyView(BackendDetailsRow(kind: .token))),
+        ]
+    }
+
+    func keysItems() -> [SettingsItem] {
+        [
+            SettingsItem(
+                id: "account.keys", page: .keys, section: "Your keys",
+                title: "Your keys", detail: "Keys from AI providers (they answer, clean up and speak) and voice services.",
+                keywords: ["api key", "byok", "own key", "provider", "add key", "openai", "openaiApiKey", "anthropic", "claude",
+                           "anthropicApiKey", "openrouter", "llama", "deepseek", "gemini", "google", "ai studio", "groq",
+                           "mistral", "xai", "grok", "sarvam", "saaras", "elevenlabs", "polly", "google cloud", "voice", "test"],
+                view: AnyView(ProviderKeysList())),
+            SettingsItem(
+                id: "account.keysNote", page: .keys, section: "Your keys",
+                title: "Where keys go", detail: "Your keys go straight to that provider, never through OpenClicky, and are used instead of the free credits. Stored in ~/.openclicky/shell.json.",
+                keywords: ["shell.json", "byok"],
+                chrome: .footer,
+                view: AnyView(SettingsFootnote(text: "Your keys go straight to that provider, never through OpenClicky, and are used instead of the free credits. Stored in ~/.openclicky/shell.json."))),
+            SettingsItem(
+                id: "account.claudeCodePlan", page: .keys, section: "Subscriptions",
+                title: "Claude Code (your Claude plan)", detail: "Answer questions through Claude Code, signed in to your Claude plan.",
+                keywords: ["claude code", "claude plan", "pro", "max", "subscription", "anthropic"],
+                view: AnyView(PlanSubscriptionRow(plan: .claudeCodePlan))),
+            SettingsItem(
+                id: "account.codexPlan", page: .keys, section: "Subscriptions",
+                title: "Codex (your ChatGPT plan)", detail: "Answer questions through Codex, signed in with ChatGPT.",
+                keywords: ["codex", "chatgpt", "plus", "pro", "subscription", "openai"],
+                view: AnyView(PlanSubscriptionRow(plan: .codexPlan))),
+            SettingsItem(
+                id: "account.plansNote", page: .keys, section: "Subscriptions",
+                title: "What a plan can do", detail: "A plan answers, points and does quick actions like opening apps; bigger tasks need the agent.",
+                keywords: ["subscription", "plan"],
+                chrome: .footer,
+                view: AnyView(SettingsFootnote(text: "A plan answers questions, points, and does quick actions like opening apps or making folders. Bigger tasks need the agent. Codex answers in one go, a few seconds after you ask."))),
         ]
     }
 }
@@ -374,11 +383,13 @@ private struct ProviderKeysList: View {
     @State private var rowStatus: [KeyProvider: String] = [:]
     @State private var checking: Set<KeyProvider> = []
     @State private var pendingRemoval: KeyProvider?
+    @ObservedObject private var dictationSettings = DictationSettings.shared
 
     var body: some View {
         let _ = shellSettingsRevision.revision
         let saved = KeyProvider.allCases.filter { $0.savedKey != nil }
-        let unsaved = KeyProvider.allCases.filter { $0.savedKey == nil }
+        // Sarvam is for Indian languages: offered to add only in India (a saved one always shows).
+        let unsaved = KeyProvider.allCases.filter { $0.savedKey == nil && ($0 != .sarvam || dictationSettings.region.offersIndianOptions) }
         // A group, not a stack: the form draws each key as its own row, with its separators.
         Group {
             ForEach(saved) { provider in savedRow(provider) }

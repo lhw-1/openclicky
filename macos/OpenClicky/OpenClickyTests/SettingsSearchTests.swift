@@ -38,8 +38,28 @@ struct SettingsSearchTests {
             item("c", page: .clicky, section: "Pointer", title: "Show the pointer"),
         ]
         let groups = SettingsSectionGroup.groups(items) { $0.page.title }
-        #expect(groups.map(\.title) == ["Keyboard", "Clicky"])
+        #expect(groups.map(\.title) == ["Shortcuts", "Clicky"])
         #expect(groups.first?.items.count == 2)
+    }
+
+    @Test func aSearchOnlyItemIsListedUnderItsOwnPageName() {
+        var dictionary = item("d", page: .dictation, section: "How it writes", title: "Dictionary", keywords: ["spelling"])
+        dictionary.searchOnlyGroup = "How it writes"
+        #expect(dictionary.matches("spelling"))
+        #expect(dictionary.matches("how it writes"))
+        #expect(!dictionary.matches("dictation key"))
+        #expect(SettingsSectionGroup.groups([dictionary]) { $0.searchGroupTitle }.map(\.title) == ["How it writes"])
+    }
+
+    @Test func pagesWhoseRowsAreNamedForTheQueryComeFirst() {
+        var dictionary = item("d", page: .dictation, section: "How it writes", title: "Dictionary")
+        dictionary.searchOnlyGroup = "How it writes"
+        let matches = [
+            item("p", page: .privacy, section: "What it keeps", title: "Delete all takes", detail: "Your dictionary stays."),
+            dictionary,
+        ]
+        #expect(SettingsSectionGroup.searchResultGroups(matches, query: "dictionary").map(\.title) == ["How it writes", "Privacy & Security"])
+        #expect(SettingsSectionGroup.searchResultGroups(matches, query: "stays").map(\.title) == ["Privacy & Security", "How it writes"])
     }
 
     @Test func aFooterJoinsTheSectionBeforeIt() {

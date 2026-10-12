@@ -98,18 +98,26 @@ final class UITour {
             await shootWindow(named: String(format: "window-%@-%02d-%@", appearanceName, index, section.rawValue), window: mainWindow, scrolls: scrolls)
         }
         if scrolls, let window = mainWindow {
-            // The Account page at the window's narrowest: its "Add a key" row is the widest there
-            // is, and the reason for the minimum width.
+            // The Keys & Plans page at the window's narrowest: its "Add a key" row is the widest
+            // there is, and the reason for the minimum width.
             let fullFrame = window.frame
             window.setContentSize(DictationWindowController.minimumSize)
-            companionManager.showSettings(.account)
-            await shoot("window-\(appearanceName)-00-account-narrow", window: window)
+            companionManager.showSettings(.keys)
+            await shoot("window-\(appearanceName)-00-keys-narrow", window: window)
             window.setFrame(fullFrame, display: true)
         }
         for page in DictationSettingsPage.allCases {
             index += 1
             companionManager.showSettings(page)
             await shootWindow(named: String(format: "settings-%@-%02d-%@", appearanceName, index, page.rawValue), window: mainWindow, scrolls: scrolls)
+        }
+        // What someone types when they can't find a setting: the results have to lead somewhere.
+        if scrolls, let windowModel = (mainWindow?.windowController as? DictationWindowController)?.model {
+            for query in ["voice", "language", "dictionary"] {
+                windowModel.searchText = query
+                await shootWindow(named: "search-\(appearanceName)-\(query)", window: mainWindow, scrolls: false)
+            }
+            windowModel.searchText = ""
         }
     }
 

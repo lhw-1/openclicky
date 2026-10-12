@@ -2,9 +2,10 @@
 //  SettingsGeneralPage.swift
 //  OpenClicky
 //
-//  Settings → General: how OpenClicky looks and starts. Appearance, where the island lives, the
-//  menu bar icon (always on while the island is hidden), open at login, the walkthrough, reduce
-//  motion. The quiet-take timeout moved to Dictation; version and help moved to About.
+//  Settings → General: where you are, how OpenClicky looks and starts, and updates. The region
+//  (India or the rest of the world), appearance, where the island lives, the menu bar icon
+//  (always on while the island is hidden), open at login, the walkthrough, reduce motion, and
+//  software updates. Version and help are on About.
 //
 
 import AppKit
@@ -15,6 +16,11 @@ extension SettingsCatalog {
     func generalItems() -> [SettingsItem] {
         let dictationKeyName = settings.dictationKey.keycapLabel
         return [
+            SettingsItem(
+                id: "general.region", page: .general, section: "",
+                title: "Region", detail: "India adds Sarvam and the Indian languages and scripts. Anything you already use stays.",
+                keywords: ["region", "country", "india", "world", "sarvam", "indian languages", "hindi", "location"],
+                view: AnyView(RegionPicker(settings: settings))),
             SettingsItem(
                 id: "general.appearance", page: .general, section: "",
                 title: "Appearance", detail: "The orb and its transcript box follow this. The island stays black.",
@@ -50,7 +56,38 @@ extension SettingsCatalog {
                 view: AnyView(SettingsRow(title: "Reduce motion", detail: "The orb and the island appear and leave without animating.") {
                     SettingsToggle(settings: settings, keyPath: \.reduceAnimation)
                 })),
+            SettingsItem(
+                id: "about.autoUpdate", page: .general, section: "Updates",
+                title: "Check for updates daily", detail: "Updates come through Sparkle.",
+                keywords: ["update", "updates", "sparkle", "automatic"],
+                view: AnyView(AutomaticUpdatesRow())),
+            SettingsItem(
+                id: "about.checkNow", page: .general, section: "Updates",
+                title: "Check now", detail: "",
+                keywords: ["update", "updates", "sparkle", "check now"],
+                view: AnyView(CheckNowRow())),
         ]
+    }
+}
+
+// MARK: - region
+
+/// India or the rest of the world (AppRegion): what the other pages offer.
+private struct RegionPicker: View {
+    @ObservedObject var settings: DictationSettings
+
+    var body: some View {
+        SettingsRow(title: "Region", detail: "India adds Sarvam and the Indian languages and scripts. Anything you already use stays.") {
+            Picker("", selection: $settings.region) {
+                ForEach(AppRegion.allCases) { Text($0.title).tag($0) }
+            }
+            .pickerStyle(.segmented)
+            .labelsHidden()
+            .fixedSize()
+            .tint(SettingsLook.accent)
+            .pointerCursor()
+            .accessibilityLabel("Region")
+        }
     }
 }
 

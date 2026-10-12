@@ -2,9 +2,11 @@
 //  SettingsDictationPage.swift
 //  OpenClicky
 //
-//  Settings → Dictation: who hears you, through which microphone, and when a quiet take ends.
-//  Each engine says where the audio goes; its key lives under Account → Your keys. Language,
-//  script and AI clean-up live in Styles, next to the rules the model reads.
+//  Settings → Dictation: everything about typing with your voice, in the order someone sets it
+//  up. The key you hold, who hears you, in which language, whether AI tidies the words, through
+//  which microphone, when a quiet take ends, and the tones. Each engine says where the audio goes;
+//  its key lives under Keys & Plans. Language and clean-up used to sit in Styles; they moved here
+//  because "where do I change the language" is asked on this page.
 //
 
 import AVFoundation
@@ -12,23 +14,39 @@ import SwiftUI
 
 extension SettingsCatalog {
     func dictationItems() -> [SettingsItem] {
+        let region = settings.region
         let engineItems = DictationEngineChoice.allCases.map { choice in
             SettingsItem(
                 id: "dictation.engine.\(choice.rawValue)", page: .dictation, section: "Who hears you",
                 title: choice.settingsTitle, detail: choice.settingsDetail,
                 keywords: choice.searchKeywords,
+                // Sarvam hears Indian languages: offered in India, and wherever it is already chosen.
+                isRelevant: { [settings] in choice != .sarvam || region.offersIndianOptions || settings.engine == .sarvam },
                 view: AnyView(VoiceProviderOption(choice: choice, settings: settings, companionManager: companionManager)))
         }
-        return engineItems + [
+        return dictationKeyItems() + engineItems + [
             SettingsItem(
-                id: "dictation.movedToStyles", page: .dictation, section: "Who hears you",
-                title: "Language, script and AI clean-up", detail: "They live in Styles, next to the rules the model reads.",
-                keywords: ["polish", "language", "script", "model", "cleanup", "clean-up", "styles", "offline takes"],
-                chrome: .footer,
-                view: AnyView(MovedToStylesNote(companionManager: companionManager))),
+                id: "dictation.language", page: .dictation, section: "Language",
+                title: "Language", detail: "Pins every engine to one language, or lets it detect.",
+                keywords: ["language", "english", "hindi", "tamil", "spanish", "french", "german", "pin", "auto-detect", "detect"],
+                view: AnyView(DictationLanguageRow(settings: settings))),
+            SettingsItem(
+                id: "dictation.script", page: .dictation, section: "Language",
+                title: "Script for Indian languages", detail: "Same words, written two ways.",
+                keywords: ["script", "roman", "native", "devanagari", "hinglish", "transliteration"],
+                // Only India, and only while the words could be in an Indian language.
+                isRelevant: { [settings] in
+                    settings.region.offersIndianOptions && (settings.language == .auto || settings.language.isIndian)
+                },
+                view: AnyView(DictationScriptRow(settings: settings))),
+            SettingsItem(
+                id: "dictation.cleanUp", page: .dictation, section: "Clean-up",
+                title: "Clean up my words with AI", detail: "Adds punctuation and fixes numbers.",
+                keywords: ["polish", "clean up", "cleanup", "clean-up", "ai", "punctuation", "grammar", "apple intelligence", "model", "offline takes"],
+                view: AnyView(DictationCleanUpRow(settings: settings))),
             SettingsItem(
                 id: "dictation.input", page: .dictation, section: "Microphone",
-                title: "Input", detail: "Automatic follows the Mac’s default, but skips the headphone jack when nothing there can hear.",
+                title: "Input", detail: "Automatic follows the Mac’s default, but skips the headphone jack when nothing there can hear. Clicky listens through it too.",
                 keywords: ["microphone", "mic", "device", "input", "headset", "airpods"],
                 view: AnyView(MicrophoneInputRow(settings: settings))),
             SettingsItem(
@@ -42,6 +60,28 @@ extension SettingsCatalog {
                 keywords: ["inactivity", "timeout", "silence", "minutes", "quiet"],
                 view: AnyView(SettingsRow(title: "End a quiet take after", detail: "A tapped take finishes on its own after this much silence.") {
                     InactivityTimeoutPicker(settings: settings)
+                })),
+            SettingsItem(
+                id: "dictation.pasteLast", page: .dictation, section: "Takes",
+                title: "Paste last take", detail: "Put your last take at the cursor again.",
+                keywords: ["paste", "again", "re-insert", "last"],
+                view: AnyView(SettingsRow(title: "Paste last take", detail: "Put your last take at the cursor again.") {
+                    Button("Paste Now") { companionManager.dictationTakeController.pasteLast() }
+                        .pointerCursor()
+                })),
+            SettingsItem(
+                id: "dictation.sounds", page: .dictation, section: "Sounds",
+                title: "Sounds", detail: "Tones when a take starts, stops or finishes.",
+                keywords: ["sound", "tone", "earcon", "audio", "beep", "mute", "quiet"],
+                view: AnyView(SettingsRow(title: "Sounds", detail: "Tones when a take starts, stops or finishes.") {
+                    SettingsToggle(settings: settings, keyPath: \.sounds)
+                })),
+            SettingsItem(
+                id: "dictation.haptics", page: .dictation, section: "Sounds",
+                title: "Haptics", detail: "A trackpad tap on start, stop and result.",
+                keywords: ["trackpad", "vibration", "tap", "haptic"],
+                view: AnyView(SettingsRow(title: "Haptics", detail: "A trackpad tap on start, stop and result.") {
+                    SettingsToggle(settings: settings, keyPath: \.haptics)
                 })),
         ]
     }
@@ -104,7 +144,7 @@ private struct VoiceProviderOption: View {
                 HStack(spacing: 8) {
                     Text(unavailableReason).font(SettingsLook.caption).foregroundStyle(SettingsLook.danger)
                         .fixedSize(horizontal: false, vertical: true)
-                    Button(choice == .sarvam ? "Add Key…" : "Sign In…") { companionManager.showSettings(.account) }
+                    Button(choice == .sarvam ? "Add Key…" : "Sign In…") { companionManager.showSettings(choice == .sarvam ? .keys : .account) }
                         .controlSize(.small)
                 }
                 .padding(.leading, 24)
@@ -251,19 +291,104 @@ private struct MicrophoneTestRow: View {
     }
 }
 
-private struct MovedToStylesNote: View {
-    let companionManager: CompanionManager
-    @Environment(\.settingsSearchQuery) private var searchQuery
+// MARK: - language and clean-up
+
+/// Auto-detect or one pinned language, from the languages the region offers. Pinning again comes
+/// back to the language last pinned.
+private struct DictationLanguageRow: View {
+    @ObservedObject var settings: DictationSettings
+    /// The language last pinned, so "Pin one" comes back to it after a turn on auto-detect. Same
+    /// key the Styles page used, so the remembered language survives the move.
+    @AppStorage("dictation.lastPinnedLanguage") private var lastPinnedLanguageCode = ""
 
     var body: some View {
-        HStack(spacing: 3) {
-            Text(settingsHighlighted("Language, script and AI clean-up live in", query: searchQuery))
-            Button("Styles") { companionManager.showDictationWindow(section: .writing) }
-                .buttonStyle(.link)
-                .accessibilityHint("opens Styles")
+        SettingsRow(title: "Language", detail: "Pins every engine to one language, or lets it detect.") {
+            HStack(spacing: 8) {
+                Picker("", selection: Binding(
+                    get: { settings.language == .auto },
+                    set: { isAuto in
+                        if isAuto {
+                            settings.languageCode = DictationLanguage.auto.code
+                        } else if settings.language == .auto {
+                            settings.languageCode = languageToPin.code
+                        }
+                    })) {
+                    Text("Auto-detect").tag(true)
+                    Text("Pin one").tag(false)
+                }
+                .pickerStyle(.segmented).labelsHidden().fixedSize().tint(SettingsLook.accent)
                 .pointerCursor()
-            Text(settingsHighlighted(", next to the rules the model reads.", query: searchQuery))
+                .accessibilityLabel("Language")
+
+                if settings.language != .auto {
+                    Picker("", selection: Binding(
+                        get: { settings.languageCode },
+                        set: { code in settings.languageCode = code; lastPinnedLanguageCode = code })) {
+                        ForEach(DictationLanguage.pinnableChoices(region: settings.region, current: settings.language)) { language in
+                            Text(language.name == language.nativeName ? language.name : "\(language.name) · \(language.nativeName)").tag(language.code)
+                        }
+                    }
+                    .labelsHidden().fixedSize()
+                    .pointerCursor()
+                    .accessibilityLabel("Pinned language")
+                }
+            }
         }
-        .font(SettingsLook.caption).foregroundStyle(.secondary)
+    }
+
+    /// The last pinned language if the region still offers it, else the region's English.
+    private var languageToPin: DictationLanguage {
+        let lastPinned = DictationLanguage.named(lastPinnedLanguageCode)
+        let offered = DictationLanguage.pinnableChoices(region: settings.region, current: .auto)
+        return offered.contains(lastPinned) ? lastPinned : DictationLanguage.defaultPinned(region: settings.region)
+    }
+}
+
+private struct DictationScriptRow: View {
+    @ObservedObject var settings: DictationSettings
+
+    var body: some View {
+        SettingsRow(title: "Script for Indian languages", detail: "Same words, written two ways. The AI clean-up writes it.") {
+            Picker("", selection: $settings.script) {
+                Text("Native · नमस्ते, आप कैसे हैं?").tag(DictationScript.native)
+                Text("Roman · namaste, aap kaise hain?").tag(DictationScript.roman)
+            }
+            .labelsHidden().fixedSize()
+            .pointerCursor()
+            .accessibilityLabel("Script for Indian languages")
+        }
+    }
+}
+
+/// One switch for the model clean-up, in plain words. Underneath there are two settings (takes
+/// heard by an online engine, and takes heard on this Mac); the switch sets both, and shows what
+/// the takes will actually do with the engine in use.
+struct DictationCleanUpRow: View {
+    @ObservedObject var settings: DictationSettings
+    @ObservedObject private var shellSettingsRevision = ShellSettingsRevision.shared
+
+    /// The switch is on exactly when takes are polished: an upgrader whose two old settings
+    /// disagree sees what the takes do, not one half of it.
+    static func cleanUpSwitchShowsOn(settings: DictationSettings) -> Bool {
+        DictationEngineResolver.wantsModelPolish(settings: settings)
+    }
+
+    var body: some View {
+        let _ = shellSettingsRevision.revision
+        let hasModel = DictationEngineResolver.makePolisher() != nil
+        let needsModelNote = hasModel ? "" : " Needs an AI key (Settings → Keys & Plans) or a free OpenClicky account."
+        let tidiedOnThisMac = AppleModelTakePolisherAvailability.isAvailable(languageCode: settings.languageCode)
+        let whereWordsAreTidied = tidiedOnThisMac ? "Apple Intelligence tidies your words on this Mac" : "Your words are sent online to be tidied"
+        let cleanUpIsOn = Binding<Bool>(
+            get: { Self.cleanUpSwitchShowsOn(settings: settings) },
+            set: { isOn in
+                settings.polishWithModel = isOn
+                settings.choosePolishOfflineTakes(isOn)
+            })
+        SettingsRow(
+            title: "Clean up my words with AI",
+            detail: "Adds punctuation and fixes numbers. " + whereWordsAreTidied + ", so they appear when you let go. Off: words type straight in as you speak." + needsModelNote) {
+            SettingsSwitch(isOn: cleanUpIsOn)
+        }
     }
 }

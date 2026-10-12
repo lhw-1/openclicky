@@ -3,7 +3,7 @@
 //  OpenClicky
 //
 //  The settings pages of OpenClicky's one window (DictationWindow.swift), drawn from the Claude
-//  Design "OpenClicky Settings Proposal": eight pages with coloured sidebar icons, each a grouped
+//  Design "OpenClicky Settings Proposal": pages with coloured sidebar icons, each a grouped
 //  form, and the native look they share. Every row comes from `SettingsCatalog`, so a page and a
 //  search result draw the same control.
 //
@@ -12,18 +12,22 @@ import AppKit
 import Combine
 import SwiftUI
 
-/// The eight pages, in sidebar order. Your two pages (Your words, How it writes) sit among them,
-/// after the pages that say `showsBeforeYourPages`.
+/// The settings pages, in sidebar order. Your two pages (Your words, How it writes) sit among them,
+/// after the pages that say `showsBeforeYourPages`. The order follows how someone thinks about
+/// OpenClicky: what it is (General), the two things it does (Dictation, Clicky) and how Clicky
+/// sounds (Voice), what you said and how it is written (your pages), then how it looks, the keys
+/// you press, the AI keys you pay with, your account, privacy and about.
+/// docs/superpowers/specs/2026-10-12-settings-revamp.md has the reasoning.
 enum DictationSettingsPage: String, CaseIterable, Identifiable {
-    case general, dictation, clicky, orb, keyboard, privacy, account, about
+    case general, dictation, clicky, voice, orb, keyboard, keys, account, privacy, about
     var id: String { rawValue }
 
     /// True for the pages the sidebar lists above your two pages: what you set up first (General,
-    /// Dictation, Clicky) comes before what you dictated; the rest follows it.
+    /// Dictation, Clicky, Voice) comes before what you dictated; the rest follows it.
     var showsBeforeYourPages: Bool {
         switch self {
-        case .general, .dictation, .clicky: return true
-        case .orb, .keyboard, .privacy, .account, .about: return false
+        case .general, .dictation, .clicky, .voice: return true
+        case .orb, .keyboard, .keys, .account, .privacy, .about: return false
         }
     }
 
@@ -37,11 +41,13 @@ enum DictationSettingsPage: String, CaseIterable, Identifiable {
         switch self {
         case .general: return "General"
         case .dictation: return "Dictation"
-        case .keyboard: return "Keyboard"
         case .clicky: return "Clicky"
+        case .voice: return "Voice"
         case .orb: return "The Orb"
-        case .privacy: return "Privacy & Security"
+        case .keyboard: return "Shortcuts"
+        case .keys: return "Keys & Plans"
         case .account: return "Account"
+        case .privacy: return "Privacy & Security"
         case .about: return "About"
         }
     }
@@ -51,11 +57,13 @@ enum DictationSettingsPage: String, CaseIterable, Identifiable {
         switch self {
         case .general: return "gearshape.fill"
         case .dictation: return "waveform"
-        case .keyboard: return "command"
         case .clicky: return "cursorarrow"
+        case .voice: return "speaker.wave.2.fill"
         case .orb: return "capsule.fill"
-        case .privacy: return "hand.raised.fill"
+        case .keyboard: return "command"
+        case .keys: return "key.fill"
         case .account: return "person.crop.circle.fill"
+        case .privacy: return "hand.raised.fill"
         case .about: return "info"
         }
     }
@@ -64,11 +72,13 @@ enum DictationSettingsPage: String, CaseIterable, Identifiable {
         switch self {
         case .general: return Color(red: 0.557, green: 0.557, blue: 0.576)
         case .dictation: return Color(red: 1.0, green: 0.231, blue: 0.188)
-        case .keyboard: return Color(red: 0.388, green: 0.388, blue: 0.4)
         case .clicky: return Color(red: 1.0, green: 0.584, blue: 0.0)
+        case .voice: return Color(red: 0.996, green: 0.176, blue: 0.333)
         case .orb: return Color(red: 0.11, green: 0.11, blue: 0.118)
-        case .privacy: return Color(red: 0.0, green: 0.478, blue: 1.0)
+        case .keyboard: return Color(red: 0.388, green: 0.388, blue: 0.4)
+        case .keys: return Color(red: 0.545, green: 0.42, blue: 0.0)
         case .account: return Color(red: 0.204, green: 0.78, blue: 0.349)
+        case .privacy: return Color(red: 0.0, green: 0.478, blue: 1.0)
         case .about: return Color(red: 0.682, green: 0.682, blue: 0.698)
         }
     }

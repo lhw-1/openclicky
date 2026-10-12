@@ -3,8 +3,9 @@
 //  OpenClicky
 //
 //  OpenClicky's one window. A native sidebar lists one group, Settings, in this order: General,
-//  Dictation, Clicky, Your words (what you dictated: try it, this week, every take), How it writes
-//  (dictionary, snippets, styles), The Orb, Keyboard, Privacy & Security, Account, About. Every
+//  Dictation, Clicky, Voice, Your words (what you dictated: try it, this week, every take), How it
+//  writes (dictionary, snippets, styles), The Orb, Shortcuts, Keys & Plans, Account, Privacy &
+//  Security, About. Every
 //  page is drawn the same native way, a search field filters every setting, and incognito and the
 //  account sit at the sidebar's foot. Every way in (⌘,, the menu
 //  bar, the island, the orb's menu, the Dock) opens this window at the page it asks for. It is
@@ -116,7 +117,7 @@ final class DictationWindowController: NSWindowController, NSWindowDelegate {
     required init?(coder: NSCoder) { nil }
 
     /// The sidebar (240 pt) plus 540 pt for a page. Every page is a grouped form that reflows, so
-    /// the widest fixed row decides: Account's "Add a key" (provider menu, 130 pt key field, Add)
+    /// the widest fixed row decides: Keys & Plans' "Add a key" (provider menu, 130 pt key field, Add)
     /// still leaves its title a readable column at 540 pt and squeezes it to one letter a line by
     /// 480 pt. Narrower windows also let the split view push the sidebar off its edge.
     static let minimumSize = NSSize(width: 780, height: 560)
@@ -197,10 +198,10 @@ struct DictationRootView: View {
                 set: { chosen in if let chosen { model.select(chosen) } }
             )) {
                 Section("Settings") {
-                    // General, Dictation, Clicky, then your two pages, then the rest.
+                    // General, Dictation, Clicky, Voice, then your two pages, then the rest.
                     ForEach(DictationSettingsPage.pagesBeforeYourPages) { page in pageRow(page, matches: matches) }
-                    sectionRow(.words, count: historyCount)
-                    sectionRow(.writing)
+                    sectionRow(.words, count: historyCount, matches: matches)
+                    sectionRow(.writing, matches: matches)
                     ForEach(DictationSettingsPage.pagesAfterYourPages) { page in pageRow(page, matches: matches) }
                 }
             }
@@ -238,7 +239,7 @@ struct DictationRootView: View {
                         .foregroundStyle(.secondary)
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
                 } else {
-                    SettingsFormView(groups: SettingsSectionGroup.groups(matches, title: { $0.page.title }))
+                    SettingsFormView(groups: SettingsSectionGroup.searchResultGroups(matches, query: query))
                         .environment(\.settingsSearchQuery, query)
                 }
             }
@@ -246,7 +247,7 @@ struct DictationRootView: View {
         } else {
             switch model.destination {
             case .settings(let page):
-                SettingsFormView(groups: SettingsSectionGroup.groups(relevantItems.filter { $0.page == page }))
+                SettingsFormView(groups: SettingsSectionGroup.groups(relevantItems.filter { $0.page == page && $0.searchOnlyGroup == nil }))
                     .id(page)
                     .navigationTitle(page.title)
             case .section(let section):
@@ -267,13 +268,14 @@ struct DictationRootView: View {
 
     private func pageRow(_ page: DictationSettingsPage, matches: [SettingsItem]) -> some View {
         SidebarIconLabel(title: page.title, symbol: page.symbol, tint: page.tint)
-            .opacity(model.isSearching && !matches.contains { $0.page == page } ? 0.35 : 1)
+            .opacity(model.isSearching && !matches.contains { $0.page == page && $0.searchOnlyGroup == nil } ? 0.35 : 1)
             .tag(DictationDestination.settings(page))
     }
 
-    private func sectionRow(_ section: DictationSection, count: Int? = nil) -> some View {
+    private func sectionRow(_ section: DictationSection, count: Int? = nil, matches: [SettingsItem]) -> some View {
         SidebarIconLabel(title: section.sidebarTitle, symbol: section.symbol, tint: section.tint)
             .badge(count ?? 0)
+            .opacity(model.isSearching && !matches.contains { $0.searchOnlyGroup == section.sidebarTitle } ? 0.35 : 1)
             .tag(DictationDestination.section(section))
     }
 

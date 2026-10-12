@@ -2,17 +2,19 @@
 //  SettingsKeyboardPage.swift
 //  OpenClicky
 //
-//  Settings → Keyboard: which keys do what. The dictation key (with the "fn also opens…" warning
-//  while macOS still gives fn a job of its own), editing and cancelling a take, Clicky's keys,
-//  and pasting the last take again. How visible the pointer is moved to Clicky.
+//  Settings → Shortcuts (the `keyboard` page): which keys do what, at a glance. Dictating,
+//  editing and cancelling a take, and Clicky's keys. The dictation key itself (with the "fn also
+//  opens…" warning while macOS still gives fn a job of its own) is changed on Dictation; its
+//  items are built here because they share the fn state.
 //
 
 import Combine
 import SwiftUI
 
 extension SettingsCatalog {
-    func keyboardItems() -> [SettingsItem] {
-        let key = settings.dictationKey.keycapLabel
+    /// The dictation key and what macOS does with fn: on the Dictation page, where someone
+    /// changing how they dictate looks for it. Shortcuts shows the key and links here.
+    func dictationKeyItems() -> [SettingsItem] {
         let fnKeyState = FnKeyState.shared
         let dictationKeyIsFn = settings.dictationKey == .fn
         // A right-hand key shares its flag with the left one: the left one keeps the companion's
@@ -28,31 +30,50 @@ extension SettingsCatalog {
         let dictationKeyDetail = "Hold to talk anywhere. Tap to start a take, tap again to finish." + rightHandKeyNote
         return [
             SettingsItem(
-                id: "keyboard.dictationKey", page: .keyboard, section: "Dictation",
+                id: "keyboard.dictationKey", page: .dictation, section: "Key",
                 title: "Dictation key", detail: dictationKeyDetail,
-                keywords: ["fn", "hotkey", "push to talk", "right option", "right command", "right control", "dictate"],
+                keywords: ["fn", "hotkey", "push to talk", "right option", "right command", "right control", "dictate", "shortcut"],
                 view: AnyView(SettingsRow(title: "Dictation key", detail: dictationKeyDetail) {
                     DictationKeyPicker(settings: settings)
                 })),
             SettingsItem(
-                id: "keyboard.where", page: .keyboard, section: "Dictation",
+                id: "keyboard.where", page: .dictation, section: "Key",
                 title: "Where the key is", detail: "A sketch of a MacBook keyboard with the dictation key held.",
                 keywords: ["where", "keyboard", "right option", "right command", "right control", "left", "macbook"],
                 view: AnyView(KeyboardSketchRow(settings: settings))),
             SettingsItem(
-                id: "keyboard.fnWarning", page: .keyboard, section: "Dictation",
+                id: "keyboard.fnWarning", page: .dictation, section: "Key",
                 title: "fn also opens \(fnKeyState.usageNoun)", detail: "macOS uses the same key. You can switch it back in the system’s Keyboard settings.",
                 keywords: ["fn", "emoji", "globe", "free the fn key", "keyboard settings"],
                 isRelevant: { dictationKeyIsFn && !FnKeyState.shared.isFree },
                 view: AnyView(FnKeyWarningRow(fnKeyState: fnKeyState))),
             SettingsItem(
-                id: "keyboard.fnFree", page: .keyboard, section: "Dictation",
+                id: "keyboard.fnFree", page: .dictation, section: "Key",
                 title: "fn is free for dictation", detail: "macOS’s own fn action is off (Keyboard settings → Press 🌐 key to: Do Nothing).",
                 keywords: ["fn", "emoji", "globe", "give fn back"],
                 isRelevant: { dictationKeyIsFn && FnKeyState.shared.isFree },
                 view: AnyView(SettingsRow(title: "fn is free for dictation", detail: "macOS’s own fn action is off (Keyboard settings → Press 🌐 key to: Do Nothing).") {
                     Button("Give fn Back to macOS") { fnKeyState.giveBack() }
                         .pointerCursor()
+                })),
+        ]
+    }
+
+    /// Settings → Shortcuts: every key OpenClicky listens for, at a glance.
+    func keyboardItems() -> [SettingsItem] {
+        let key = settings.dictationKey.keycapLabel
+        let usesRealtime = AccountCapabilities.current().usesRealtime
+        return [
+            SettingsItem(
+                id: "keyboard.dictate", page: .keyboard, section: "Dictation",
+                title: "Dictate", detail: "Hold, or tap to start and tap to finish. Change the key on the Dictation page.",
+                keywords: ["fn", "hotkey", "push to talk", "dictate", "change key"],
+                view: AnyView(SettingsRow(title: "Dictate", detail: "Hold, or tap to start and tap to finish. Change the key on the Dictation page.") {
+                    HStack(spacing: 8) {
+                        SettingsKeys(keys: [key], gesture: "hold")
+                        Button("Change…") { companionManager.showSettings(.dictation) }
+                            .pointerCursor()
+                    }
                 })),
             SettingsItem(
                 id: "keyboard.edit", page: .keyboard, section: "Dictation",
@@ -82,20 +103,15 @@ extension SettingsCatalog {
                 view: AnyView(SettingsRow(title: "Type to Clicky", detail: "A one-line composer opens in the island.") {
                     SettingsKeys(keys: ["⌃"], gesture: "tap twice")
                 })),
+            // Hands-free runs on OpenAI Realtime, which needs an own OpenAI key: without one the key
+            // would do nothing, so it isn't listed (Voice says how to get it).
             SettingsItem(
                 id: "keyboard.handsFree", page: .keyboard, section: "Clicky",
-                title: "Hands-free", detail: "Always-on listening. Same keys to stop. Needs your own OpenAI key.",
+                title: "Hands-free", detail: "Always-on listening. Same keys to stop.",
                 keywords: ["always on", "realtime", "listening", "hands free"],
-                view: AnyView(SettingsRow(title: "Hands-free", detail: "Always-on listening. Same keys to stop. Needs your own OpenAI key.") {
+                isRelevant: { usesRealtime },
+                view: AnyView(SettingsRow(title: "Hands-free", detail: "Always-on listening. Same keys to stop.") {
                     SettingsKeys(keys: [key, "⌃"], gesture: "tap twice")
-                })),
-            SettingsItem(
-                id: "keyboard.pasteLast", page: .keyboard, section: "Text",
-                title: "Paste last take", detail: "Put your last take at the cursor again.",
-                keywords: ["paste", "again", "re-insert", "last"],
-                view: AnyView(SettingsRow(title: "Paste last take", detail: "Put your last take at the cursor again.") {
-                    Button("Paste Now") { companionManager.dictationTakeController.pasteLast() }
-                        .pointerCursor()
                 })),
         ]
     }

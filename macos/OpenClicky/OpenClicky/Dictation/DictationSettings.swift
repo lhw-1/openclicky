@@ -198,6 +198,15 @@ struct DictationLanguage: Identifiable, Equatable {
         DictationLanguage(code: "gu-IN", name: "Gujarati", nativeName: "ગુજરાતી"),
         DictationLanguage(code: "pa-IN", name: "Punjabi", nativeName: "ਪੰਜਾਬੀ"),
         DictationLanguage(code: "od-IN", name: "Odia", nativeName: "ଓଡ଼ିଆ"),
+        // Offered outside India (AppRegion): English as written there, and the European languages
+        // Apple's recogniser, Parakeet and the online engines all hear.
+        DictationLanguage(code: "en-US", name: "English (US)", nativeName: "English (US)"),
+        DictationLanguage(code: "en-GB", name: "English (UK)", nativeName: "English (UK)"),
+        DictationLanguage(code: "es-ES", name: "Spanish", nativeName: "Español"),
+        DictationLanguage(code: "fr-FR", name: "French", nativeName: "Français"),
+        DictationLanguage(code: "de-DE", name: "German", nativeName: "Deutsch"),
+        DictationLanguage(code: "it-IT", name: "Italian", nativeName: "Italiano"),
+        DictationLanguage(code: "pt-BR", name: "Portuguese", nativeName: "Português"),
     ]
 
     static func named(_ code: String) -> DictationLanguage {
@@ -262,6 +271,7 @@ final class DictationSettings: ObservableObject {
         hasCompletedDictationOnboarding = defaults.bool(forKey: Keys.hasCompletedDictationOnboarding)
         preferredMicrophoneUID = defaults.string(forKey: Keys.preferredMicrophoneUID)
         orbPosition = Self.decodePoint(defaults.string(forKey: Keys.orbPosition))
+        region = AppRegion(rawValue: defaults.string(forKey: Keys.region) ?? "") ?? AppRegion.detected()
     }
 
     private enum Keys {
@@ -296,6 +306,7 @@ final class DictationSettings: ObservableObject {
         static let readNearbyText = "dictation.readNearbyText"
         static let hasCompletedDictationOnboarding = "dictation.onboarded"
         static let preferredMicrophoneUID = "dictation.preferredMicrophoneUID"
+        static let region = "openclicky.region"
     }
 
     // MARK: engine & language
@@ -375,6 +386,9 @@ final class DictationSettings: ObservableObject {
 
     // MARK: general
 
+    /// India or the rest of the world: which options the settings offer (AppRegion). Stored only
+    /// once picked; until then it follows the Mac.
+    @Published var region: AppRegion { didSet { defaults.set(region.rawValue, forKey: Keys.region) } }
     @Published var appearance: DictationAppearance { didSet { defaults.set(appearance.rawValue, forKey: Keys.appearance) } }
     /// A take with this long of silence ends on its own. 0 = never.
     @Published var inactivityTimeoutMinutes: Int { didSet { defaults.set(inactivityTimeoutMinutes, forKey: Keys.inactivityTimeoutMinutes) } }

@@ -167,17 +167,20 @@ enum NotchVoiceDestination {
 
     /// The place in the window that fixes the engine.
     enum SetupDestination: Equatable {
-        /// Settings → Account: a key or a sign-in is missing.
+        /// Settings → Account: a sign-in is missing.
         case accountSettings
+        /// Settings → Keys & Plans: the engine's own key (Sarvam) is missing.
+        case keySettings
         /// Settings → Dictation: the engines, and Parakeet's download next to its option.
         case dictationSettings
-        /// "How it writes", where the dictation language is chosen.
+        /// Settings → Dictation's language row.
         case languageSettings
 
         /// The warning's button, named for the page it really opens.
         var buttonTitle: String {
             switch self {
             case .accountSettings: return "open account settings"
+            case .keySettings: return "add a key"
             case .dictationSettings: return "open dictation settings"
             case .languageSettings: return "open language settings"
             }
@@ -190,7 +193,10 @@ enum NotchVoiceDestination {
     static func setupDestination(for engine: DictationEngineChoice, unavailableReason: String?) -> SetupDestination {
         guard let unavailableReason else { return .dictationSettings }
         if unavailableReason == DictationEngineResolver.parakeetLanguageNotHeardReason { return .languageSettings }
-        return engine.isOnDevice ? .dictationSettings : .accountSettings
+        if engine.isOnDevice { return .dictationSettings }
+        // A missing key is added on Keys & Plans; a missing sign-in on Account.
+        if engine == .sarvam || unavailableReason == "needs your own key" { return .keySettings }
+        return .accountSettings
     }
 
     /// Where the pill (and the warning in the panel's body) sends the user.
@@ -198,8 +204,8 @@ enum NotchVoiceDestination {
     static func openSetup(for engine: DictationEngineChoice, companionManager: CompanionManager) {
         switch setupDestination(for: engine, unavailableReason: DictationEngineResolver.unavailableReason(for: engine)) {
         case .accountSettings: companionManager.showSettings(.account)
-        case .dictationSettings: companionManager.showSettings(.dictation)
-        case .languageSettings: companionManager.showDictationWindow(section: .writing)
+        case .keySettings: companionManager.showSettings(.keys)
+        case .dictationSettings, .languageSettings: companionManager.showSettings(.dictation)
         }
     }
 }

@@ -4,8 +4,8 @@
 //
 //  "How it writes": the dictionary, the snippets (spoken shortcuts) and the styles on one page,
 //  drawn as a grouped form like the Settings pages so the window reads as one native app. The
-//  language, the script and the AI clean-up switch sit in the Styles section because the model
-//  that cleans up a take is the one reading the style rules. Anything too big for a row (a term,
+//  language, the script and the AI clean-up switch are on the Dictation page; Styles says whether
+//  clean-up is on, since only the clean-up reads the style rules. Anything too big for a row (a term,
 //  a snippet, a style's name and switches, picking an app) opens a native sheet.
 //
 
@@ -26,20 +26,11 @@ struct WritingPageView: View {
     @State private var editedStyle: DictationStyle?
     @State private var expandedStyleID: String?
     @State private var usedApps: [(bundleID: String, name: String?, count: Int)] = []
-    /// The language last pinned, so "Pin one" comes back to it after a turn on auto-detect.
-    /// Same key as the old Styles page, so the remembered language survives the move.
-    @AppStorage("dictation.lastPinnedLanguage") private var lastPinnedLanguageCode = "en-IN"
 
     init(companionManager: CompanionManager) {
         self.companionManager = companionManager
         self.settings = companionManager.dictationSettings
         self.spaceStore = companionManager.dictationSpaceStore
-    }
-
-    /// The switch is on exactly when takes are polished: an upgrader whose two old settings
-    /// disagree sees what the takes do, not one half of it.
-    static func cleanUpSwitchShowsOn(settings: DictationSettings) -> Bool {
-        DictationEngineResolver.wantsModelPolish(settings: settings)
     }
 
     var body: some View {
@@ -79,6 +70,13 @@ struct WritingPageView: View {
 
     // MARK: - Dictionary
 
+    /// A name the engines get wrong, from where the person is.
+    private var dictionaryExample: String {
+        settings.region.offersIndianOptions
+            ? "You say “aditya shatriya”, OpenClicky writes Aaditya Kshatriya."
+            : "You say “shivon”, OpenClicky writes Siobhán."
+    }
+
     private var sortedTerms: [DictionaryTerm] {
         spaceStore.space.dictionary.sorted { $0.written.lowercased() < $1.written.lowercased() }
     }
@@ -105,7 +103,7 @@ struct WritingPageView: View {
         } header: {
             WritingSectionHeader(title: "Dictionary", count: spaceStore.space.dictionary.count, unit: "term")
         } footer: {
-            SettingsFootnote(text: "Names and terms written exactly as you expect. You say “aditya shatriya”, OpenClicky writes Aaditya Kshatriya. The written form is always matched too, in any casing.")
+            SettingsFootnote(text: "Names and terms written exactly as you expect. \(dictionaryExample) The written form is always matched too, in any casing.")
         }
     }
 
@@ -166,9 +164,7 @@ struct WritingPageView: View {
 
     private var stylesSection: some View {
         Section {
-            languageRow
-            scriptRow
-            cleanUpRow
+            cleanUpStatusRow
             ForEach(spaceStore.space.styles) { style in
                 WritingStyleRow(
                     style: style,
@@ -193,72 +189,15 @@ struct WritingPageView: View {
         }
     }
 
-    /// Auto-detect or one pinned language. Pinning again comes back to the language last pinned.
-    private var languageRow: some View {
-        SettingsRow(title: "Language", detail: "Pins every engine to one language, or lets it detect.") {
-            HStack(spacing: 8) {
-                Picker("", selection: Binding(
-                    get: { settings.language == .auto },
-                    set: { isAuto in
-                        if isAuto {
-                            settings.languageCode = DictationLanguage.auto.code
-                        } else if settings.language == .auto {
-                            settings.languageCode = DictationLanguage.named(lastPinnedLanguageCode) == .auto ? "en-IN" : lastPinnedLanguageCode
-                        }
-                    })) {
-                    Text("Auto-detect").tag(true)
-                    Text("Pin one").tag(false)
-                }
-                .pickerStyle(.segmented).labelsHidden().fixedSize().tint(SettingsLook.accent)
-                .pointerCursor()
-                .accessibilityLabel("Language")
-
-                if settings.language != .auto {
-                    Picker("", selection: Binding(
-                        get: { settings.languageCode },
-                        set: { code in settings.languageCode = code; lastPinnedLanguageCode = code })) {
-                        ForEach(DictationLanguage.choices.filter { $0 != .auto }) { language in
-                            Text(language.name == language.nativeName ? language.name : "\(language.name) · \(language.nativeName)").tag(language.code)
-                        }
-                    }
-                    .labelsHidden().fixedSize()
-                    .pointerCursor()
-                    .accessibilityLabel("Pinned language")
-                }
-            }
-        }
-    }
-
-    private var scriptRow: some View {
-        SettingsRow(title: "Script for Indian languages", detail: "Same words, written two ways.") {
-            Picker("", selection: $settings.script) {
-                Text("Native · नमस्ते, आप कैसे हैं?").tag(DictationScript.native)
-                Text("Roman · namaste, aap kaise hain?").tag(DictationScript.roman)
-            }
-            .labelsHidden().fixedSize()
-            .pointerCursor()
-            .accessibilityLabel("Script for Indian languages")
-        }
-    }
-
-    /// One switch for the model clean-up, in plain words. Underneath there are two settings (takes
-    /// heard by an online engine, and takes heard on this Mac); the switch sets both, and shows
-    /// what the takes will actually do with the engine in use.
-    private var cleanUpRow: some View {
-        let hasModel = DictationEngineResolver.makePolisher() != nil
-        let needsModelNote = hasModel ? "" : " Needs an AI key (Settings → Account) or a free OpenClicky account."
-        let tidiedOnThisMac = AppleModelTakePolisherAvailability.isAvailable(languageCode: settings.languageCode)
-        let whereWordsAreTidied = tidiedOnThisMac ? "Apple Intelligence tidies your words on this Mac" : "Your words are sent online to be tidied"
-        let cleanUpIsOn = Binding<Bool>(
-            get: { Self.cleanUpSwitchShowsOn(settings: settings) },
-            set: { isOn in
-                settings.polishWithModel = isOn
-                settings.choosePolishOfflineTakes(isOn)
-            })
+    /// Whether the AI clean-up that reads these rules is on. The switch itself, the language and
+    /// the script are on the Dictation page, where people look for them.
+    private var cleanUpStatusRow: some View {
+        let isOn = DictationCleanUpRow.cleanUpSwitchShowsOn(settings: settings)
         return SettingsRow(
-            title: "Clean up my words with AI",
-            detail: "Adds punctuation and fixes numbers. " + whereWordsAreTidied + ", so they appear when you let go. Off: words type straight in as you speak." + needsModelNote) {
-            SettingsSwitch(isOn: cleanUpIsOn)
+            title: isOn ? "AI clean-up is on" : "AI clean-up is off",
+            detail: isOn ? "It reads the rules of the app’s style below." : "Styles’ rules are read only while clean-up is on.") {
+            Button("Language and Clean-up…") { companionManager.showSettings(.dictation) }
+                .pointerCursor()
         }
     }
 

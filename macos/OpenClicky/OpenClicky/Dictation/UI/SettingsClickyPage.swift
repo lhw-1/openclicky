@@ -2,9 +2,11 @@
 //  SettingsClickyPage.swift
 //  OpenClicky
 //
-//  Settings → Clicky: the companion. The pointer (shown or not, how visible, docked in the
-//  island), the language Clicky speaks and listens in, fast voice and hands-free, and agent mode
-//  with its model and workspace. These used to live only on the island or in the menu bar panel.
+//  Settings → Clicky and Settings → Voice. Clicky: who answers (the source and the Claude
+//  model), the pointer (shown or not, how visible, docked in the island), and agent mode with its
+//  workspace. Voice: the language Clicky speaks and listens in, who speaks the answers, and fast
+//  voice with hands-free. Voice has its own page because "where do I change the voice" is the
+//  question people come to Settings with.
 //
 
 import AppKit
@@ -13,9 +15,19 @@ import AVFoundation
 import SwiftUI
 
 extension SettingsCatalog {
+    /// Settings → Clicky: who answers, the pointer, and agent mode. How Clicky sounds is on Voice.
     func clickyItems() -> [SettingsItem] {
-        let usesRealtime = AccountCapabilities.current().usesRealtime
-        var items: [SettingsItem] = [
+        [
+            SettingsItem(
+                id: "clicky.answerSource", page: .clicky, section: "Answers",
+                title: "Answers come from", detail: "Automatic uses your own keys first, then plans you switched on, then the free credits.",
+                keywords: ["provider", "model", "openai", "anthropic", "claude", "openrouter", "gemini", "groq", "mistral", "grok", "codex", "subscription", "plan", "answers"],
+                view: AnyView(AnswerSourceRow())),
+            SettingsItem(
+                id: "clicky.model", page: .clicky, section: "Answers",
+                title: "Claude model", detail: "When Claude answers: Sonnet is quicker, Opus thinks harder.",
+                keywords: ["model", "claude", "sonnet", "opus", "smarter", "quicker"],
+                view: AnyView(ClaudeModelRow(companionManager: companionManager))),
             SettingsItem(
                 id: "clicky.showPointer", page: .clicky, section: "Pointer",
                 title: "Show the pointer", detail: "Off: it appears only while you talk.",
@@ -40,28 +52,45 @@ extension SettingsCatalog {
                     initialValue: companionManager.isCursorDocked,
                     set: { [companionManager] in companionManager.setCursorDocked($0) }))),
             SettingsItem(
-                id: "clicky.answerSource", page: .clicky, section: "Voice",
-                title: "Answers come from", detail: "Automatic uses your own keys first, then plans you switched on, then the free credits.",
-                keywords: ["provider", "model", "openai", "anthropic", "claude", "openrouter", "gemini", "groq", "mistral", "grok", "codex", "subscription", "plan", "answers"],
-                view: AnyView(AnswerSourceRow())),
+                id: "clicky.agentMode", page: .clicky, section: "Agent",
+                title: "Agent mode", detail: "Clicky can hand work to Codex.",
+                keywords: ["agent", "codex", "tasks", "automation"],
+                view: AnyView(CompanionSwitchRow(
+                    title: "Agent mode", detail: "Clicky can hand work to Codex.",
+                    publisher: companionManager.$isAgentModeEnabled.eraseToAnyPublisher(),
+                    initialValue: companionManager.isAgentModeEnabled,
+                    set: { [companionManager] in companionManager.setAgentModeEnabled($0) }))),
             SettingsItem(
-                id: "clicky.speechVoice", page: .clicky, section: "Voice",
+                id: "clicky.workspace", page: .clicky, section: "Agent",
+                title: "Workspace", detail: "Where agents keep their files.",
+                keywords: ["workspace", "folder", "codex", "files", "directory"],
+                view: AnyView(AgentWorkspaceRow())),
+        ]
+    }
+
+    /// Settings → Voice: the language Clicky speaks and listens in, who speaks the answers (Kokoro
+    /// and the Mac voice with their own rows), and fast voice with hands-free.
+    func voiceItems() -> [SettingsItem] {
+        let usesRealtime = AccountCapabilities.current().usesRealtime
+        var items: [SettingsItem] = [
+            SettingsItem(
+                id: "clicky.language", page: .voice, section: "Language",
+                title: "Language", detail: "Clicky speaks and listens in this.",
+                keywords: ["language", "english", "hindi", "tamil", "spanish", "french", "speak", "reply", "listen"],
+                view: AnyView(ReplyLanguageRow(settings: settings))),
+            SettingsItem(
+                id: "clicky.speechVoice", page: .voice, section: "Voice",
                 title: "Voice", detail: "Who speaks the answers: the cloud voice, or this Mac’s own voice, free and offline.",
                 keywords: ["voice", "speech", "tts", "text to speech", "elevenlabs", "eleven labs", "offline", "on device",
                            "mac voice", "premium voice", "siri", "credits", "allowance", "left"],
-                view: AnyView(SpeechVoiceRows())),
-            SettingsItem(
-                id: "clicky.language", page: .clicky, section: "Voice",
-                title: "Language", detail: "Clicky speaks and listens in this.",
-                keywords: ["language", "english", "hindi", "tamil", "speak", "reply"],
-                view: AnyView(ReplyLanguageRow())),
+                view: AnyView(SpeechVoiceRows(openKeysPage: { [companionManager] in companionManager.showSettings(.keys) }))),
         ]
         // Fast voice and hands-free run on OpenAI Realtime, which only an own OpenAI key can use;
         // a free account would see switches that do nothing, so it gets the way to a key instead.
         if usesRealtime {
             items += [
                 SettingsItem(
-                    id: "clicky.fastVoice", page: .clicky, section: "Voice",
+                    id: "clicky.fastVoice", page: .voice, section: "Fast voice",
                     title: "Fast voice", detail: "Talks back instantly, over OpenAI Realtime.",
                     keywords: ["realtime", "voice", "fast", "openai"],
                     view: AnyView(CompanionSwitchRow(
@@ -70,7 +99,7 @@ extension SettingsCatalog {
                         initialValue: companionManager.isRealtimeVoiceEnabled,
                         set: { [companionManager] in companionManager.setRealtimeVoiceEnabled($0) }))),
                 SettingsItem(
-                    id: "clicky.alwaysListening", page: .clicky, section: "Voice",
+                    id: "clicky.alwaysListening", page: .voice, section: "Fast voice",
                     title: "Always listening", detail: "Hands-free: just talk, no keys. Needs fast voice.",
                     keywords: ["hands-free", "hands free", "always on", "listening"],
                     view: AnyView(CompanionSwitchRow(
@@ -81,35 +110,14 @@ extension SettingsCatalog {
             ]
         } else {
             items.append(SettingsItem(
-                id: "clicky.fastVoiceNeedsKey", page: .clicky, section: "Voice",
+                id: "clicky.fastVoiceNeedsKey", page: .voice, section: "Fast voice",
                 title: "Fast voice and hands-free", detail: "Needs your own OpenAI key. A free account uses the standard voice.",
                 keywords: ["realtime", "voice", "fast", "hands-free", "always listening", "openai", "key"],
                 view: AnyView(SettingsRow(title: "Fast voice and hands-free", detail: "Needs your own OpenAI key. A free account uses the standard voice.") {
-                    Button("Add Key…") { companionManager.showSettings(.account) }
+                    Button("Add Key…") { companionManager.showSettings(.keys) }
                         .pointerCursor()
                 })))
         }
-        items += [
-            SettingsItem(
-                id: "clicky.agentMode", page: .clicky, section: "Agent",
-                title: "Agent mode", detail: "Clicky can hand work to Codex.",
-                keywords: ["agent", "codex", "tasks", "automation"],
-                view: AnyView(CompanionSwitchRow(
-                    title: "Agent mode", detail: "Clicky can hand work to Codex.",
-                    publisher: companionManager.$isAgentModeEnabled.eraseToAnyPublisher(),
-                    initialValue: companionManager.isAgentModeEnabled,
-                    set: { [companionManager] in companionManager.setAgentModeEnabled($0) }))),
-            SettingsItem(
-                id: "clicky.model", page: .clicky, section: "Agent",
-                title: "Model", detail: "Which Claude answers, on the free credits or a Claude key.",
-                keywords: ["model", "claude", "sonnet", "opus"],
-                view: AnyView(ClaudeModelRow(companionManager: companionManager))),
-            SettingsItem(
-                id: "clicky.workspace", page: .clicky, section: "Agent",
-                title: "Workspace", detail: "Where agents keep their files.",
-                keywords: ["workspace", "folder", "codex", "files", "directory"],
-                view: AnyView(AgentWorkspaceRow())),
-        ]
         return items
     }
 }
@@ -242,6 +250,8 @@ private struct AnswerSourceRow: View {
 /// under it names who speaks now and what it costs. Kokoro and the Mac voice each get their own rows
 /// under it; a group, so the form draws them as rows.
 private struct SpeechVoiceRows: View {
+    let openKeysPage: () -> Void
+    @ObservedObject private var dictationSettings = DictationSettings.shared
     @ObservedObject private var shellSettingsRevision = ShellSettingsRevision.shared
     @ObservedObject private var kokoro = KokoroVoice.shared
     @StateObject private var billing = BillingStatusModel()
@@ -275,11 +285,21 @@ private struct SpeechVoiceRows: View {
             if picked == .kokoro || kokoro.state.isBusy { KokoroRows() }
             if SpeechVoiceChoice.current() == .mac || picked == .mac { MacVoiceRow() }
             if offered.count < SpeechVoiceChoice.allCases.count {
-                SettingsRow(title: "More voices", detail: "Add an OpenAI, ElevenLabs, Gemini, Google Cloud, Amazon Polly or Sarvam key under Account, and its voice shows up here.") {
-                    EmptyView()
+                SettingsRow(title: "More voices", detail: moreVoicesSentence) {
+                    Button("Add a Key…", action: openKeysPage)
+                        .fixedSize()
+                        .pointerCursor()
                 }
             }
         }
+    }
+
+    /// Which keys bring more voices. Sarvam's voice speaks Indian languages, so it is named only in India.
+    private var moreVoicesSentence: String {
+        let vendors = dictationSettings.region.offersIndianOptions
+            ? "OpenAI, ElevenLabs, Gemini, Google Cloud, Amazon Polly or Sarvam"
+            : "OpenAI, ElevenLabs, Gemini, Google Cloud or Amazon Polly"
+        return "Add an \(vendors) key under Keys & Plans, and its voice shows up here."
     }
 
     /// Who speaks now and what it costs, for the picked choice.
@@ -288,7 +308,7 @@ private struct SpeechVoiceRows: View {
         if picked != .automatic && picked != speaking {
             switch picked {
             case .kokoro: return "this Mac’s voice until Kokoro is downloaded."
-            default: return "this Mac’s voice: \(picked.title) needs its key under Account."
+            default: return "this Mac’s voice: \(picked.title) needs its key under Keys & Plans."
             }
         }
         switch speaking {
@@ -437,10 +457,11 @@ private final class VoicePreview {
 
 /// The one language OpenClicky speaks and listens in (`language` in shell.json).
 private struct ReplyLanguageRow: View {
+    @ObservedObject var settings: DictationSettings
     @State private var languageCode = ReplyLanguage.currentCode
 
     var body: some View {
-        SettingsRow(title: "Language", detail: "Clicky speaks and listens in this.") {
+        SettingsRow(title: "Language", detail: "Clicky speaks and listens in this. Dictation has its own, on the Dictation page.") {
             Picker("", selection: Binding(
                 get: { languageCode },
                 set: { chosenCode in
@@ -448,7 +469,7 @@ private struct ReplyLanguageRow: View {
                     OpenClickyConfiguration.update { $0.language = chosenCode }
                 }
             )) {
-                ForEach(ReplyLanguage.choices) { choice in Text(choice.name).tag(choice.code) }
+                ForEach(ReplyLanguage.choices(region: settings.region, currentCode: languageCode)) { choice in Text(choice.name).tag(choice.code) }
             }
             .labelsHidden().fixedSize()
             .pointerCursor()
@@ -466,7 +487,7 @@ private struct ClaudeModelRow: View {
     }
 
     var body: some View {
-        SettingsRow(title: "Model", detail: "Which Claude answers, on the free credits or a Claude key.") {
+        SettingsRow(title: "Claude model", detail: "When Claude answers: Sonnet is quicker, Opus thinks harder.") {
             Picker("", selection: Binding(get: { model }, set: { companionManager.setSelectedModel($0) })) {
                 Text("Sonnet").tag("claude-sonnet-4-6")
                 Text("Opus").tag("claude-opus-4-6")
@@ -474,6 +495,7 @@ private struct ClaudeModelRow: View {
             .pickerStyle(.segmented)
             .labelsHidden()
             .fixedSize()
+            .tint(SettingsLook.accent)
             .pointerCursor()
         }
         .onReceive(companionManager.$selectedModel) { model = $0 }
