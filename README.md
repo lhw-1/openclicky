@@ -8,6 +8,7 @@ when it is more than a question, hand the task to a Codex agent. MIT licensed.
 
 <p align="center">
   <a href="https://github.com/prasanthsasikumar/openclicky/releases/latest"><img alt="Download for macOS" src="https://img.shields.io/badge/Download_for_macOS-F0452B?style=for-the-badge&logo=apple&logoColor=white"></a>
+  <a href="docs/linux.md"><img alt="Linux (early)" src="https://img.shields.io/badge/Linux_(early)-22201C?style=for-the-badge&logo=linux&logoColor=white"></a>
   <a href="https://openclicky.flowsxr.com"><img alt="Website" src="https://img.shields.io/badge/Website-22201C?style=for-the-badge&logo=safari&logoColor=white"></a>
   <a href="https://discord.gg/zGGERnM5eq"><img alt="Join the Discord" src="https://img.shields.io/badge/Discord-5865F2?style=for-the-badge&logo=discord&logoColor=white"></a>
   <a href="docs/architecture.md"><img alt="How it works" src="https://img.shields.io/badge/How_it_works-5E5A52?style=for-the-badge"></a>
@@ -18,6 +19,7 @@ when it is more than a question, hand the task to a Codex agent. MIT licensed.
   <a href="https://github.com/prasanthsasikumar/openclicky/releases/latest"><img alt="Latest release" src="https://img.shields.io/github/v/release/prasanthsasikumar/openclicky?label=release&color=F0452B"></a>
   <img alt="macOS 14.2 or later" src="https://img.shields.io/badge/macOS-14.2%2B-22201C?logo=apple">
   <img alt="Apple Silicon and Intel, notarized" src="https://img.shields.io/badge/Apple_Silicon_%2B_Intel-notarized-22201C">
+  <a href="docs/linux.md"><img alt="Linux, X11" src="https://img.shields.io/badge/Linux-X11-22201C?logo=linux&logoColor=white"></a>
   <a href="LICENSE"><img alt="MIT licence" src="https://img.shields.io/badge/licence-MIT-5E5A52"></a>
 </p>
 
@@ -53,6 +55,14 @@ Gujarati, Punjabi, Odia and English, with the words appearing while you speak), 
 free account or your OpenAI key. The same key or account polishes takes with a model (punctuation, "three
 p.m." → "3 PM", your style's rules) and powers **Hey Clicky**: hold fn + ⌃, say "make it formal", and
 the selected text is rewritten.
+
+### On Linux too (early)
+
+An early Linux client, contributed by [Maya Okonkwo](https://github.com/mayaokonkwo): ask about your
+screen and the pointer points, step-by-step guides, offline dictation and spoken answers, with the
+same keys and the same `~/.openclicky` files as the Mac. Python and GTK 3, X11 only for now (no
+Wayland). Download the `.whl` from the [latest release](https://github.com/prasanthsasikumar/openclicky/releases/latest)
+and follow [OpenClicky on Linux](docs/linux.md).
 
 ### See it work
 
@@ -143,6 +153,7 @@ Notion / Sheets / Slack, and Wispr Flow import.
 | [Dictation design](docs/superpowers/specs/2026-10-06-dictation-kivi-port-design.md) | the take loop, engines, formatting, the space, the orb, installation — what was built and why |
 | [Kivi, reverse-engineered](docs/research/2026-10-06-kivi-reverse-engineering.md) | the report the dictation product shape was taken from |
 | [Dictation hand test](docs/dictation-hand-test.md) | what to try by hand after a build, step by step |
+| [OpenClicky on Linux](docs/linux.md) | the early Linux client: install, shortcuts, settings, what works and what does not yet |
 | [Skill authoring](docs/skills.md) | `SKILL.md` format, matching, budgets, activation |
 | [`app-skills/`](app-skills/) | the 16 app-teaching skills and how to add one |
 | [CONTRIBUTING.md](CONTRIBUTING.md) | setup, test commands, where help is welcome |
@@ -150,7 +161,7 @@ Notion / Sheets / Slack, and Wispr Flow import.
 ## Next
 
 - Dictation: rich paste for Notion / Sheets / Slack, history sync between Macs, Wispr Flow import, a
-  Windows client.
+  Windows client, Wayland for the Linux client.
 - Shell (`macos/OpenClicky`): stream agent milestones onto the cursor bubble, Keychain token entry
   (upstream PR #80 is a good template), active-document reader.
 - Voice: wake word, spoken task-finished summaries, Deepgram/Whisper STT fallback.
