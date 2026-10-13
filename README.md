@@ -95,15 +95,20 @@ words", "moved to text box". The first run happens on the island under the notch
 | **Language & script** | auto-detect or pin a language; native script or roman letters for Indian languages. |
 | **Installed like an app** | self-installs from the dmg, updates itself (Sparkle), opens at login if you want, frees the fn key from Emoji & Symbols with one click. |
 
-The Mac app is derived from Farza's MIT-licensed [Clicky](https://github.com/farzaa/clicky); HeyClicky
-is a separate product and this project is not affiliated with it. The dictation product shape follows
+The idea comes from Google DeepMind's [AI pointer](https://deepmind.google/blog/ai-pointer/)
+("Reimagining the mouse pointer for the AI era", May 2026): a pointer that understands what is on
+your screen and why it matters to you. OpenClicky is an independent, open-source take on it and is not
+affiliated with Google. Parts of the Mac app's first version came from Farza's MIT-licensed
+[Clicky](https://github.com/farzaa/clicky); HeyClicky is a separate product and this project is not
+affiliated with it either. The dictation product shape follows
 Sarvam's Kivi, studied in [docs/research/2026-10-06-kivi-reverse-engineering.md](docs/research/2026-10-06-kivi-reverse-engineering.md);
 no Kivi code, art or fonts are used.
 
-**Thank you.** To the [Sarvam AI](https://www.sarvam.ai) team behind Kivi: the way it handles dictation (one key
-anywhere, a style per app, a history you can search, an orb that shows every step) taught us how dictation
-on a Mac should feel, and much of OpenClicky's dictation and settings is modelled on it. To Farza, whose open
-Clicky gave the app its start.
+**Thank you.** To Adrien Baranes, Rob Marchant and the Google DeepMind team, whose AI pointer showed
+what a pointer could become and is where OpenClicky began. To the [Sarvam AI](https://www.sarvam.ai) team
+behind Kivi: the way it handles dictation (one key anywhere, a style per app, a history you can search,
+an orb that shows every step) taught us how dictation on a Mac should feel, and much of OpenClicky's
+dictation and settings is modelled on it. And to Farza, for open-sourcing Clicky.
 
 ## What is inside
 
@@ -111,7 +116,7 @@ Modeled on the HeyClicky idea, built as a **headless agent core plus a native sh
 
 - **`macos/OpenClicky`** — the native app. `Dictation/` is the take loop (the key, the engines, the
   formatter, the paste, the store), the orb, the main window and onboarding; the rest is the shell
-  forked from Farza's MIT-licensed Clicky: the cursor buddy, ScreenCaptureKit capture, the
+  (which started from Clicky's code): the cursor buddy, ScreenCaptureKit capture, the
   companion shortcuts, in-process OpenAI Realtime voice, and an **Agent mode** that hands "make /
   fix / run…" requests to a Codex thread.
 - **`agent/`** — a TypeScript CLI that drives the **OpenAI Codex CLI** over JSON-RPC stdio (the "do
