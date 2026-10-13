@@ -8,6 +8,7 @@ when it is more than a question, hand the task to a Codex agent. MIT licensed.
 
 <p align="center">
   <a href="https://github.com/prasanthsasikumar/openclicky/releases/latest"><img alt="Download for macOS" src="https://img.shields.io/badge/Download_for_macOS-F0452B?style=for-the-badge&logo=apple&logoColor=white"></a>
+  <a href="windows/README.md"><img alt="Windows (new)" src="https://img.shields.io/badge/Windows_(new)-22201C?style=for-the-badge&logo=windows&logoColor=white"></a>
   <a href="docs/linux.md"><img alt="Linux (early)" src="https://img.shields.io/badge/Linux_(early)-22201C?style=for-the-badge&logo=linux&logoColor=white"></a>
   <a href="https://openclicky.flowsxr.com"><img alt="Website" src="https://img.shields.io/badge/Website-22201C?style=for-the-badge&logo=safari&logoColor=white"></a>
   <a href="https://discord.gg/zGGERnM5eq"><img alt="Join the Discord" src="https://img.shields.io/badge/Discord-5865F2?style=for-the-badge&logo=discord&logoColor=white"></a>
@@ -63,6 +64,14 @@ screen and the pointer points, step-by-step guides, offline dictation and spoken
 same keys and the same `~/.openclicky` files as the Mac. Python and GTK 3, X11 only for now (no
 Wayland). Download the `.whl` from the [latest release](https://github.com/prasanthsasikumar/openclicky/releases/latest)
 and follow [OpenClicky on Linux](docs/linux.md).
+
+### On Windows too (new)
+
+A native Windows port, contributed by [Tan Wei Jie (Justin)](https://github.com/weijietan97): dictation,
+ask out loud with the pointer, the agent lane, skills, the island and every settings page, in C# and WPF.
+Hold Ctrl + Win to talk and right Ctrl to dictate; private offline dictation is Parakeet. x64 and ARM64,
+Windows 10 (2004 or later) and 11. Installers will be attached to releases; until then, build it from
+[`windows/`](windows/README.md).
 
 ### See it work
 
@@ -167,8 +176,8 @@ Notion / Sheets / Slack, and Wispr Flow import.
 
 ## Next
 
-- Dictation: rich paste for Notion / Sheets / Slack, history sync between Macs, Wispr Flow import, a
-  Windows client, Wayland for the Linux client.
+- Dictation: rich paste for Notion / Sheets / Slack, history sync between Macs, Wispr Flow import,
+  Wayland for the Linux client. The Windows client is in [`windows/`](windows/README.md).
 - Shell (`macos/OpenClicky`): stream agent milestones onto the cursor bubble, Keychain token entry
   (upstream PR #80 is a good template), active-document reader.
 - Voice: wake word, spoken task-finished summaries, Deepgram/Whisper STT fallback.
@@ -176,6 +185,28 @@ Notion / Sheets / Slack, and Wispr Flow import.
 - Skills: the approval queue + "My Skills" filter, team sharing, and more app skills (HeyClicky covers 89 apps).
 - Pointing: drawing/circling on screen (HeyClicky's spatial context and hand-drawn annotations).
 - Agent: Composio + cua-driver end-to-end once those services are configured; barge-in/always-on voice.
+
+## Code signing policy
+
+Windows releases are signed. Free code signing is provided by [SignPath.io](https://about.signpath.io),
+with a certificate from the [SignPath Foundation](https://signpath.org). Only binaries built by this
+repository's GitHub Actions workflow (`.github/workflows/windows-release.yml`) from its public source are
+signed, and only OpenClicky's own files: the third-party libraries it ships keep their publishers'
+signatures.
+
+- Committers and reviewers: [contributors to this repository](https://github.com/prasanthsasikumar/openclicky/graphs/contributors)
+- Approvers: [@prasanthsasikumar](https://github.com/prasanthsasikumar)
+
+**Privacy.** OpenClicky reaches other networked systems only for what you use it for:
+
+- the AI vendors whose keys you add (OpenAI, Anthropic and others), called directly with your key;
+- the hosted OpenClicky backend when you use a free account (first-run setup without keys of your own
+  starts a guest account, identified by a device hash, with no email);
+- downloads of the optional offline models (Kokoro, Parakeet) and update checks against this
+  repository's GitHub Releases.
+
+Dictation with the offline engine, your history, dictionary and settings stay on your computer.
+Analytics are off unless a build is given a PostHog key.
 
 ## License and contributing
 
