@@ -5,7 +5,7 @@ The Mac recordings say "hold the fn key" and "control and option"; a Windows PC 
 app says these four lines the Windows way (RecordedVoice.WindowsSentence) with this PC's voice
 unless a Windows recording sits next to the Mac one, which this script makes in the same voice as
 every other recorded line (OpenAI speech, marin; see macos/OpenClicky/scripts/record-voice-lines.py).
-The dictation line names the default key (left Ctrl); a person who picked another key hears the
+The dictation line names the default key (right Ctrl); a person who picked another key hears the
 sentence from this PC's voice instead. Keep the texts in step with RecordedVoice.WindowsSentence.
 
     OPENAI_API_KEY=... windows/scripts/record-windows-voice-lines.py
@@ -19,10 +19,10 @@ import sys
 import urllib.request
 
 LINES = {
-    "tour-dictate": "Hold left control, say a sentence, then let go. Your words land wherever your cursor is.",
-    "tour-talk": "Your turn. Hold control and the Windows key, and ask me about anything on your screen.",
-    "tour-act": "Now give me a task. Hold control and the Windows key, and tell me what to do.",
-    "settings-tour-shortcuts": "Shortcuts shows every key at a glance. Hold control and the Windows key to talk to me.",
+    "tour-dictate": "Hold right control, say a sentence, then let go. Your words land wherever your cursor is.",
+    "tour-talk": "Your turn. Hold right control and the Windows key, and ask me about anything on your screen.",
+    "tour-act": "Now, give me a task: hold right control and the Windows key, and tell me what to do.",
+    "settings-tour-shortcuts": "Shortcuts shows every key at a glance. Hold right control and the Windows key to talk to me.",
 }
 
 INSTRUCTIONS = "Warm, friendly and unhurried, like showing a parent around a new app. Clear and calm."

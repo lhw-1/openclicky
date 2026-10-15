@@ -69,7 +69,7 @@ in `OpenClicky.Core/Platform/` implemented in `OpenClicky.Windows/Platform/`.
 | The notch island | a top-center island on each monitor; collapsed it is the Mac's "thin handle line on displays without a notch" |
 | ⌃ control | Ctrl |
 | ⌥ option | Win (the Windows key) |
-| Talk: hold ⌃⌥ | hold **Ctrl + Win** |
+| Talk: hold ⌃⌥ | hold **Right Ctrl + Win** (the dictation Ctrl; left Ctrl + Win works too) |
 | Text: tap ⌃ twice | tap **Ctrl** twice |
 | Hands-free: dictation key + ⌃ twice | dictation key + **Ctrl** twice |
 | Dictation key: fn (default), right ⌥, right ⌘, right ⌃ | **Right Ctrl** (default), Right Alt, Right Shift, Caps Lock — fn is invisible to Windows. A right-hand key's own flag is taken out of the companion shortcuts exactly as on the Mac (left/right told apart by the hook's vk codes) |

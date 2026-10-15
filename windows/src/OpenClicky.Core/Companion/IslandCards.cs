@@ -148,11 +148,11 @@ public sealed record FirstRunTourCardInputs(
     bool OffersMicrophoneChange = false,
     bool SuggestsBuiltInMicrophone = false);
 
-/// <summary>The tour's cards, worded as on the Mac with the Windows keys and names ("control + windows", "this pc", the
+/// <summary>The tour's cards, worded as on the Mac with the Windows keys and names ("right ctrl + windows", "this pc", the
 /// island at the top). The Mac's speech-recognition and "free fn" cards have no Windows counterpart.</summary>
 public static class FirstRunTourCards
 {
-    public static readonly IReadOnlyList<string> TalkKeys = new[] { "Ctrl", "Win" };
+    public static readonly IReadOnlyList<string> TalkKeys = new[] { "R Ctrl", "Win" };
 
     public static FirstRunTourCard Make(FirstRunTourStep step, FirstRunTourCardInputs inputs)
     {
@@ -187,7 +187,7 @@ public static class FirstRunTourCards
             case FirstRunTourStep.Talk:
                 return new FirstRunTourCard(step, inputs.CanAsk ? "your turn: ask me something" : "you can ask me things too",
                     inputs.CanAsk
-                        ? "hold control + windows and ask “what’s this?” about anything on your screen. i answer out loud and point."
+                        ? "hold right ctrl + windows and ask “what’s this?” about anything on your screen. i answer out loud and point."
                         : "about anything on your screen, out loud, and i’ll point at it. add your email to switch it on, free.",
                     TalkKeys, null, inputs.Status, inputs.StatusIsGood, null, false, null,
                     inputs.CanAsk ? "next" : "add email", "skip");
@@ -210,8 +210,8 @@ public static class FirstRunTourCards
 
     /// <summary>What to try on the task step: the agent (own keys) works in apps; a free account has the quick actions.</summary>
     public static string TaskExamples(bool usesAgent) => usesAgent
-        ? "hold control + windows and say “add a note to my notes: buy milk”, or “organize my downloads folder so it’s easier to find things”."
-        : "hold control + windows and say “make a folder on my desktop called hello clicky”, or “open notepad”.";
+        ? "hold right ctrl + windows and say “add a note to my notes: buy milk”, or “organize my downloads folder so it’s easier to find things”."
+        : "hold right ctrl + windows and say “make a folder on my desktop called hello clicky”, or “open notepad”.";
 
     /// <summary>The keycaps' press, pressed down together and held, then let go, every 2.4 s (KeyboardSketch.pressAmount).</summary>
     public static double PressAmount(double timeSeconds)

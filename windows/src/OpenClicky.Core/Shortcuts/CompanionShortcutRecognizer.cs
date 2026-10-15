@@ -7,7 +7,8 @@
 //                                                     that the next tap ends; two quick taps cancel;
 //                                                     esc cancels
 //    Hey Clicky  dictation key + Ctrl held            the take is an edit instruction, not words to type
-//    Talk        hold Ctrl + Win                      (push-to-talk to the companion; released = send)
+//    Talk        hold right Ctrl + Win                (push-to-talk to the companion; released = send;
+//                                                     the dictation Ctrl is talk's Ctrl, the left one works too)
 //    Text        tap Ctrl twice                       (opens the text composer in the island)
 //    Hands-free  tap dictation key + Ctrl twice       (toggles always-on listening)
 //  A pure state machine — no hook structs — so it is unit-testable.
@@ -125,9 +126,13 @@ public sealed class CompanionShortcutRecognizer
     /// <summary>Talk's modifiers came together while the dictation key was held: not a Ctrl+Win question
     /// until one of them is let go, so one gesture never opens a take and a question at once.</summary>
     private bool talkHeldBackByDictation;
-    /// <summary>Left Ctrl dictating is also talk's Ctrl: this press of it went to Ctrl+Win (Win was down, or
+    /// <summary>A Ctrl dictating is also talk's Ctrl: this press of it went to Ctrl+Win (Win was down, or
     /// joined the hold), so it is no take until it comes back up.</summary>
     private bool dictationKeyPressIsTalk;
+
+    /// <summary>Right Ctrl (the default) or left Ctrl dictates: Ctrl+Win is then that key plus Win, so
+    /// everything stays on one hand and the other Ctrl is free for copy and paste.</summary>
+    private bool DictationKeyIsAControl => dictationKey.ModifierFlag() == CompanionModifiers.Control;
 
     public CompanionShortcutRecognizer(DictationHotkey dictationKey = DictationHotkeys.Default)
     {
@@ -196,11 +201,11 @@ public sealed class CompanionShortcutRecognizer
         {
             if (dictationKeyPressIsTalk)
             {
-                // A repeat of a left Ctrl press that talk took (Win was let go first): still no take.
+                // A repeat of a Ctrl press that talk took (Win was let go first): still no take.
             }
-            else if (dictationKey == DictationHotkey.LeftControl && talkModifiersDown)
+            else if (DictationKeyIsAControl && talkModifiersDown)
             {
-                // Win, then left Ctrl: talk, and the press is talk's until it comes up.
+                // Win, then the dictation Ctrl: talk, and the press is talk's until it comes up.
                 dictationKeyPressIsTalk = true;
             }
             else if (IsTalkHeld && talkModifiersDown)
@@ -257,10 +262,10 @@ public sealed class CompanionShortcutRecognizer
             keyEventDuringDictationHold = false;
             keyWentDownDuringDictationHold = false;
         }
-        else if (IsDictationKeyHeld && dictationKey == DictationHotkey.LeftControl && !editModifierJoinedDuringHold && talkModifiersDown)
+        else if (IsDictationKeyHeld && DictationKeyIsAControl && !editModifierJoinedDuringHold && talkModifiersDown)
         {
-            // Win joined the held left Ctrl: the hold was talk's Ctrl, not a take. The take opened by the
-            // press is cancelled as a shortcut first, so the microphone is free for the question.
+            // Win joined the held dictation Ctrl: the hold was talk's Ctrl, not a take. The take opened by
+            // the press is cancelled as a shortcut first, so the microphone is free for the question.
             ResetDictationState();
             dictationKeyPressIsTalk = true;
             dictationGaveWayToTalk = true;
@@ -340,8 +345,8 @@ public sealed class CompanionShortcutRecognizer
     {
         var keyFlag = dictationKey.ModifierFlag();
         if ((trackedFlags & keyFlag) == 0) return trackedFlags;
-        // Left Ctrl dictating is also talk's Ctrl: with Win down it is Ctrl.
-        if (dictationKey == DictationHotkey.LeftControl && (trackedFlags & CompanionModifiers.Windows) != 0) return trackedFlags;
+        // A Ctrl dictating is also talk's Ctrl: with Win down it is Ctrl.
+        if (DictationKeyIsAControl && (trackedFlags & CompanionModifiers.Windows) != 0) return trackedFlags;
         var twin = dictationKey.SideBits().Twin;
         var twinIsDown = twin != PhysicalModifiers.None && (modifiers & twin) != 0;
         return twinIsDown ? trackedFlags : trackedFlags & ~keyFlag;

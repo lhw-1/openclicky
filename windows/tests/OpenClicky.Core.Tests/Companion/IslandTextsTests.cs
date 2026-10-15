@@ -50,7 +50,7 @@ public class IslandTextsTests
     {
         var grid = IslandTexts.ShortcutGrid(DictationHotkey.RightControl, isAlwaysListening: true);
         Assert.Equal(new[] { "talk", "type", "dictate", "hands-free" }, grid.Select(shortcut => shortcut.Title));
-        Assert.Equal(new[] { "Ctrl", "Win" }, grid[0].Keys);
+        Assert.Equal(new[] { "R Ctrl", "Win" }, grid[0].Keys);
         Assert.Equal("tap ×2", grid[1].Gesture);
         Assert.Equal(new[] { "R Ctrl" }, grid[2].Keys);
         Assert.Equal(new[] { "R Ctrl", "Ctrl" }, grid[3].Keys);
@@ -77,7 +77,7 @@ public class IslandTextsTests
         Assert.Equal("dock in the drawer", IslandTexts.DockButtonTitle(false, HUDPlacement.Right));
         Assert.Equal("release pointer", IslandTexts.DockButtonTitle(true, HUDPlacement.Notch));
         var explanation = IslandTexts.ExplainMessage(DictationHotkey.RightAlt);
-        Assert.Contains("hold control + windows", explanation);
+        Assert.Contains("hold right ctrl + windows", explanation);
         Assert.Contains("hold right alt to dictate", explanation);
         Assert.DoesNotContain("option", explanation);
     }
@@ -174,8 +174,8 @@ public class FirstRunTourCardsTests
         Assert.Equal(0, dictate.PracticeIndex);
         Assert.Equal("Microphone Array", dictate.MicrophoneName);
         var talk = FirstRunTourCards.Make(FirstRunTourStep.Talk, Inputs);
-        Assert.Equal(new[] { "Ctrl", "Win" }, talk.Keys);
-        Assert.Contains("hold control + windows", talk.Detail);
+        Assert.Equal(new[] { "R Ctrl", "Win" }, talk.Keys);
+        Assert.Contains("hold right ctrl + windows", talk.Detail);
         Assert.Equal("next", talk.PrimaryTitle);
         Assert.Contains("add a note", FirstRunTourCards.Make(FirstRunTourStep.Act, Inputs).Detail);
         Assert.Contains("open notepad", FirstRunTourCards.Make(FirstRunTourStep.Act, Inputs with { UsesAgent = false }).Detail);
@@ -214,7 +214,7 @@ public class OrbSettingsTests
         Assert.True(settings.OrbHidesWhenIdle);
         Assert.True(preferences.GetBool(OrbSettings.Keys.OrbHidesWhenIdleDefaultApplied));
         Assert.Null(settings.OrbPosition);
-        Assert.Equal(DictationHotkey.LeftControl, settings.DictationKey);
+        Assert.Equal(DictationHotkey.RightControl, settings.DictationKey);
     }
 
     [Fact]

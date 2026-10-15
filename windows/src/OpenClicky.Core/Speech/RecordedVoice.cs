@@ -80,9 +80,9 @@ public sealed class RecordedVoice
     public static string? WindowsSentence(Line line, string dictationKeyName) => line switch
     {
         Line.TourDictate => $"hold {dictationKeyName}, say a sentence, then let go. your words land wherever your cursor is.",
-        Line.TourTalk => "your turn. hold control and the windows key, and ask me about anything on your screen.",
-        Line.TourAct => "now give me a task. hold control and the windows key, and tell me what to do.",
-        Line.SettingsTourShortcuts => "shortcuts shows every key at a glance. hold control and the windows key to talk to me.",
+        Line.TourTalk => "your turn. hold right control and the windows key, and ask me about anything on your screen.",
+        Line.TourAct => "now give me a task. hold right control and the windows key, and tell me what to do.",
+        Line.SettingsTourShortcuts => "shortcuts shows every key at a glance. hold right control and the windows key to talk to me.",
         _ => null,
     };
 
@@ -92,7 +92,7 @@ public sealed class RecordedVoice
     private readonly Func<string, CancellationToken, Task<byte[]>>? renderSentence;
     private readonly Func<bool>? dictationKeyIsDefault;
 
-    /// <summary>The lines whose Windows recording names the dictation key (as "left control", the default).</summary>
+    /// <summary>The lines whose Windows recording names the dictation key (as "right control", the default).</summary>
     private static bool NamesTheDictationKey(Line line) => line == Line.TourDictate;
     private readonly object stateLock = new();
     private CancellationTokenSource? currentLine;

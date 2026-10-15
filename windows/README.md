@@ -21,7 +21,7 @@ second time (or pick "Open OpenClicky" in the tray menu) to open its window.
 | Shortcut | What |
 |---|---|
 | hold **Right Ctrl** (Settings → Shortcuts) | dictate into the app in front |
-| hold **Ctrl + Win** | ask about your screen (spoken answer, pointing) |
+| hold **Right Ctrl + Win** | ask about your screen (spoken answer, pointing) |
 | tap **Ctrl** twice | type a question in the island |
 | tap the dictation key + **Ctrl** twice | hands-free (Realtime, always listening) |
 

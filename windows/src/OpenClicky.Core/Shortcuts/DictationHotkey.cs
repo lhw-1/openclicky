@@ -4,8 +4,8 @@
 //
 //  The one key that is held (or tapped) to dictate anywhere. A single key, because it has to work
 //  on top of whatever app is in front without being a shortcut that app already has. The Mac uses
-//  fn by default; fn is invisible to Windows, so here it is Left Ctrl by default, with Right Ctrl,
-//  Right Alt, Right Shift and Caps Lock as alternatives.
+//  fn by default; fn is invisible to Windows, so here it is Right Ctrl by default (the left Ctrl is
+//  the copy-and-paste hand), with Left Ctrl, Right Alt, Right Shift and Caps Lock as alternatives.
 //
 
 namespace OpenClicky.Core.Shortcuts;
@@ -83,9 +83,9 @@ public static class VirtualKeys
 public static class DictationHotkeys
 {
     public static readonly IReadOnlyList<DictationHotkey> AllCases =
-        new[] { DictationHotkey.LeftControl, DictationHotkey.RightControl, DictationHotkey.RightAlt, DictationHotkey.RightShift, DictationHotkey.CapsLock };
+        new[] { DictationHotkey.RightControl, DictationHotkey.LeftControl, DictationHotkey.RightAlt, DictationHotkey.RightShift, DictationHotkey.CapsLock };
 
-    public const DictationHotkey Default = DictationHotkey.LeftControl;
+    public const DictationHotkey Default = DictationHotkey.RightControl;
 
     /// <summary>The value stored in preferences (same idea as the Swift enum's raw value).</summary>
     public static string RawValue(this DictationHotkey hotkey) => hotkey switch
@@ -99,7 +99,7 @@ public static class DictationHotkeys
     };
 
     /// <summary>Reads a stored raw value. Anything unknown — including the Mac-only values "fn",
-    /// "rightOption" and "rightCommand" from a shared or migrated preference — falls back to Left Ctrl,
+    /// "rightOption" and "rightCommand" from a shared or migrated preference — falls back to Right Ctrl,
     /// as the Mac falls back to fn.</summary>
     public static DictationHotkey FromRawValue(string? rawValue)
     {

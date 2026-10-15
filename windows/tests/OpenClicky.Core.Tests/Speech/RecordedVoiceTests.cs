@@ -96,12 +96,12 @@ public class RecordedVoiceTests
     {
         foreach (var line in Enum.GetValues<RecordedVoice.Line>())
         {
-            if (RecordedVoice.WindowsSentence(line, "left control") is null) continue;
+            if (RecordedVoice.WindowsSentence(line, "right control") is null) continue;
             Assert.True(File.Exists(Path.Combine(AssetsFolder(), RecordedVoice.WindowsFileName(line))), $"{RecordedVoice.WindowsFileName(line)} is missing");
         }
     }
 
-    /// <summary>The dictate recording says "left control", the default key; with another key chosen the
+    /// <summary>The dictate recording says "right control", the default key; with another key chosen the
     /// sentence names that key instead. The other three lines name Ctrl+Win, which never changes.</summary>
     [Fact]
     public async Task TheDictateRecordingPlaysOnlyWhileTheDefaultKeyIsChosen()

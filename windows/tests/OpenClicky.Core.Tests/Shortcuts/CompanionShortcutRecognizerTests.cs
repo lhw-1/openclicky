@@ -220,9 +220,9 @@ public class DictationHotkeyTests
     [InlineData("fn")]
     [InlineData("rightOption")]
     [InlineData("rightCommand")]
-    public void UnknownStoredValuesFallBackToLeftControl(string? rawValue)
+    public void UnknownStoredValuesFallBackToRightControl(string? rawValue)
     {
-        Assert.Equal(DictationHotkey.LeftControl, DictationHotkeys.FromRawValue(rawValue));
+        Assert.Equal(DictationHotkey.RightControl, DictationHotkeys.FromRawValue(rawValue));
     }
 
     [Fact]
@@ -556,6 +556,43 @@ public class DictationKeyGestureMatrixTests
         keyboard.Press(PhysicalKey.LeftControl);
         keyboard.Wait(1);
         keyboard.Release(PhysicalKey.LeftControl);
+        Assert.Equal(new[] { TalkPressed, TalkReleased, DictationPressed, DictationReleased(wasTap: false) }, keyboard.Events);
+    }
+
+    /// <summary>The default: right Ctrl dictates and is talk's Ctrl too (everything on the right hand, the
+    /// left Ctrl free for copy and paste). Win joining the held right Ctrl cancels the take and asks.</summary>
+    [Fact]
+    public void WithRightControlDictatingRightControlThenWinIsTalk()
+    {
+        var keyboard = new SimulatedKeyboard(DictationHotkey.RightControl);
+        keyboard.Press(PhysicalKey.RightControl);
+        keyboard.Wait(0.1);
+        keyboard.Press(PhysicalKey.LeftWindows);
+        keyboard.Wait(1);
+        keyboard.Release(PhysicalKey.LeftWindows);
+        keyboard.Release(PhysicalKey.RightControl);
+        Assert.Equal(new[]
+        {
+            DictationPressed, DictationReleased(wasTap: false, keyWasPressedDuringHold: true), TalkPressed, TalkReleased,
+        }, keyboard.Events);
+        Assert.False(keyboard.Recognizer.IsDictationKeyHeld);
+    }
+
+    [Fact]
+    public void WithRightControlDictatingWinThenRightControlIsTalkOnly()
+    {
+        var keyboard = new SimulatedKeyboard(DictationHotkey.RightControl);
+        keyboard.Press(PhysicalKey.LeftWindows);
+        keyboard.Wait(0.05);
+        keyboard.Press(PhysicalKey.RightControl);
+        keyboard.Wait(1);
+        keyboard.Release(PhysicalKey.RightControl);
+        keyboard.Release(PhysicalKey.LeftWindows);
+        keyboard.Wait(1);
+        // The next right Ctrl hold is a take again.
+        keyboard.Press(PhysicalKey.RightControl);
+        keyboard.Wait(1);
+        keyboard.Release(PhysicalKey.RightControl);
         Assert.Equal(new[] { TalkPressed, TalkReleased, DictationPressed, DictationReleased(wasTap: false) }, keyboard.Events);
     }
 
