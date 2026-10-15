@@ -180,7 +180,8 @@ public sealed partial class CompanionManager : ObservableObject, ICompanionSetti
         // The lines whose Mac recording names Mac keys are said the Windows way by this PC's voice.
         RecordedVoice = new RecordedVoice(services.CreateAudioPlayer(),
             windowsSentence: line => Speech.RecordedVoice.WindowsSentence(line, global::OpenClicky.Core.Shortcuts.DictationHotkeys.DisplayName(DictationSettings.DictationKey)),
-            renderSentence: (sentence, cancellationToken) => systemVoice.AudioAsync(sentence, cancellationToken: cancellationToken));
+            renderSentence: (sentence, cancellationToken) => systemVoice.AudioAsync(sentence, cancellationToken: cancellationToken),
+            dictationKeyIsDefault: () => DictationSettings.DictationKey == global::OpenClicky.Core.Shortcuts.DictationHotkeys.Default);
         BuddyDictationManager = new BuddyDictationManager(
             BuddyTranscriptionProviderFactory.MakeDefaultProvider(services.OfflineSpeech),
             services.MainThread, services.CreateAudioCapture, services.MicrophonePermission);

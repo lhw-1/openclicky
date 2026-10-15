@@ -81,12 +81,54 @@ public class RecordedVoiceTests
         }
     }
 
+    /// <summary>A folder with the Mac recordings only: no Windows ones, so the sentences are what plays.</summary>
+    private static string MacRecordingsOnlyFolder()
+    {
+        var folder = Path.Combine(Path.GetTempPath(), $"openclicky-mac-recordings-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(folder);
+        foreach (var file in Directory.GetFiles(AssetsFolder(), "*.mp3").Where(file => !file.EndsWith("-windows.mp3", StringComparison.Ordinal)))
+            File.Copy(file, Path.Combine(folder, Path.GetFileName(file)));
+        return folder;
+    }
+
+    [Fact]
+    public void TheWindowsRecordingsShipForEveryLineWithAWindowsSentence()
+    {
+        foreach (var line in Enum.GetValues<RecordedVoice.Line>())
+        {
+            if (RecordedVoice.WindowsSentence(line, "left control") is null) continue;
+            Assert.True(File.Exists(Path.Combine(AssetsFolder(), RecordedVoice.WindowsFileName(line))), $"{RecordedVoice.WindowsFileName(line)} is missing");
+        }
+    }
+
+    /// <summary>The dictate recording says "left control", the default key; with another key chosen the
+    /// sentence names that key instead. The other three lines name Ctrl+Win, which never changes.</summary>
+    [Fact]
+    public async Task TheDictateRecordingPlaysOnlyWhileTheDefaultKeyIsChosen()
+    {
+        var player = new ControlledPlayer();
+        var rendered = new List<string>();
+        var voice = new RecordedVoice(player, AssetsFolder(),
+            windowsSentence: line => RecordedVoice.WindowsSentence(line, "caps lock"),
+            renderSentence: (text, _) => { rendered.Add(text); return Task.FromResult(new byte[] { 1 }); },
+            dictationKeyIsDefault: () => false);
+        Assert.True(voice.Play(RecordedVoice.Line.TourDictate));
+        await Task.Delay(50);
+        Assert.Contains("caps lock", Assert.Single(rendered));
+        player.CurrentPlayback.SetResult();
+        player.CurrentPlayback = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        Assert.True(voice.Play(RecordedVoice.Line.TourTalk));
+        await Task.Delay(50);
+        Assert.Single(rendered);
+        Assert.Equal(2, player.PlayCount);
+    }
+
     [Fact]
     public async Task ALineThatNamesMacKeysIsSaidTheWindowsWayInsteadOfPlayed()
     {
         var player = new ControlledPlayer();
         var rendered = new List<string>();
-        var voice = new RecordedVoice(player, AssetsFolder(),
+        var voice = new RecordedVoice(player, MacRecordingsOnlyFolder(),
             windowsSentence: line => RecordedVoice.WindowsSentence(line, "right control"),
             renderSentence: (text, _) => { rendered.Add(text); return Task.FromResult(new byte[] { 1, 2, 3 }); });
         Assert.True(voice.Play(RecordedVoice.Line.TourDictate));

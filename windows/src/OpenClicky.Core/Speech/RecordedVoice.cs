@@ -90,6 +90,10 @@ public sealed class RecordedVoice
     private readonly string folder;
     private readonly Func<Line, string?>? windowsSentence;
     private readonly Func<string, CancellationToken, Task<byte[]>>? renderSentence;
+    private readonly Func<bool>? dictationKeyIsDefault;
+
+    /// <summary>The lines whose Windows recording names the dictation key (as "left control", the default).</summary>
+    private static bool NamesTheDictationKey(Line line) => line == Line.TourDictate;
     private readonly object stateLock = new();
     private CancellationTokenSource? currentLine;
     /// <summary>Tells whoever played the current line that it ended, exactly once.</summary>
@@ -97,14 +101,18 @@ public sealed class RecordedVoice
 
     /// <param name="windowsSentence">The Windows wording of a line, or null to play its recording.</param>
     /// <param name="renderSentence">This PC's voice, rendering a sentence to audio the player takes.</param>
+    /// <param name="dictationKeyIsDefault">Whether the dictation key is still the default the dictate
+    /// recording names; with another key the sentence (naming that key) is said instead. Null = default.</param>
     public RecordedVoice(IAudioPlayer player, string? folder = null,
                          Func<Line, string?>? windowsSentence = null,
-                         Func<string, CancellationToken, Task<byte[]>>? renderSentence = null)
+                         Func<string, CancellationToken, Task<byte[]>>? renderSentence = null,
+                         Func<bool>? dictationKeyIsDefault = null)
     {
         this.player = player;
         this.folder = folder ?? DefaultFolder;
         this.windowsSentence = windowsSentence;
         this.renderSentence = renderSentence;
+        this.dictationKeyIsDefault = dictationKeyIsDefault;
     }
 
     public bool IsPlaying
@@ -120,7 +128,8 @@ public sealed class RecordedVoice
     public bool Play(Line line, Action? onFinished = null)
     {
         var windowsRecording = Path.Combine(folder, WindowsFileName(line));
-        if (File.Exists(windowsRecording) && ReadRecording(windowsRecording) is { } windowsAudio)
+        var windowsRecordingFits = !NamesTheDictationKey(line) || (dictationKeyIsDefault?.Invoke() ?? true);
+        if (windowsRecordingFits && File.Exists(windowsRecording) && ReadRecording(windowsRecording) is { } windowsAudio)
         {
             StartLine(_ => Task.FromResult(windowsAudio), onFinished);
             return true;
