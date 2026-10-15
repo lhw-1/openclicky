@@ -60,6 +60,66 @@ public class RecordedVoiceTests
         Assert.Equal(0, player.PlayCount);
     }
 
+    /// <summary>The Mac recordings say "hold the fn key" and "control and option"; a tester's PC said
+    /// "function" for a key it does not have. Those lines are said the Windows way by this PC's voice.</summary>
+    [Fact]
+    public void WindowsSentencesNameTheKeysAsWindowsHasThem()
+    {
+        var dictate = RecordedVoice.WindowsSentence(RecordedVoice.Line.TourDictate, "caps lock");
+        Assert.Contains("caps lock", dictate);
+        Assert.Contains("windows key", RecordedVoice.WindowsSentence(RecordedVoice.Line.TourTalk, "right control"));
+        Assert.Contains("windows key", RecordedVoice.WindowsSentence(RecordedVoice.Line.TourAct, "right control"));
+        Assert.Contains("windows key", RecordedVoice.WindowsSentence(RecordedVoice.Line.SettingsTourShortcuts, "right control"));
+        Assert.Null(RecordedVoice.WindowsSentence(RecordedVoice.Line.TourHello, "right control"));
+        Assert.Null(RecordedVoice.WindowsSentence(RecordedVoice.Line.NoticeEmptyAnswer, "right control"));
+        foreach (var line in Enum.GetValues<RecordedVoice.Line>())
+        {
+            var sentence = RecordedVoice.WindowsSentence(line, "right control");
+            if (sentence is null) continue;
+            Assert.DoesNotContain("option", sentence);
+            Assert.DoesNotContain("fn", sentence.Split(' '));
+        }
+    }
+
+    [Fact]
+    public async Task ALineThatNamesMacKeysIsSaidTheWindowsWayInsteadOfPlayed()
+    {
+        var player = new ControlledPlayer();
+        var rendered = new List<string>();
+        var voice = new RecordedVoice(player, AssetsFolder(),
+            windowsSentence: line => RecordedVoice.WindowsSentence(line, "right control"),
+            renderSentence: (text, _) => { rendered.Add(text); return Task.FromResult(new byte[] { 1, 2, 3 }); });
+        Assert.True(voice.Play(RecordedVoice.Line.TourDictate));
+        await Task.Delay(50);
+        Assert.Equal(1, player.PlayCount);
+        Assert.Contains("right control", Assert.Single(rendered));
+        // A line with no Windows sentence still plays its recording.
+        player.CurrentPlayback.SetResult();
+        player.CurrentPlayback = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        Assert.True(voice.Play(RecordedVoice.Line.TourHello));
+        await Task.Delay(50);
+        Assert.Equal(2, player.PlayCount);
+        Assert.Single(rendered);
+    }
+
+    [Fact]
+    public async Task AWindowsRecordingWinsOverTheSpokenSentence()
+    {
+        var folder = Path.Combine(Path.GetTempPath(), $"openclicky-recorded-voice-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(folder);
+        File.Copy(Path.Combine(AssetsFolder(), "tour-hello.mp3"), Path.Combine(folder, RecordedVoice.WindowsFileName(RecordedVoice.Line.TourDictate)));
+        var player = new ControlledPlayer();
+        var rendered = 0;
+        var voice = new RecordedVoice(player, folder,
+            windowsSentence: line => RecordedVoice.WindowsSentence(line, "right control"),
+            renderSentence: (_, _) => { rendered++; return Task.FromResult(new byte[] { 1 }); });
+        Assert.True(voice.Play(RecordedVoice.Line.TourDictate));
+        await Task.Delay(50);
+        Assert.Equal(1, player.PlayCount);
+        Assert.Equal(0, rendered);
+        Assert.Equal("tour-dictate-windows.mp3", RecordedVoice.WindowsFileName(RecordedVoice.Line.TourDictate));
+    }
+
     [Fact]
     public async Task ALineReportsItsEndOnceWhetherItEndsIsCutOffOrStopped()
     {

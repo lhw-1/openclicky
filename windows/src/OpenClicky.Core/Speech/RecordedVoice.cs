@@ -4,6 +4,11 @@
 // narration, and the notices that used to be read by the system voice ("i didn't get an
 // answer…"). Anything not recorded here is spoken the way it was before.
 //
+// The recordings that name the Mac's keys ("hold the fn key", "control and option") are not played
+// here: a tester's PC said "function" for a key it does not have (2026-10-14). For those lines the
+// sentence is said the Windows way (WindowsSentence) by this PC's voice, unless a Windows recording
+// (<line>-windows.mp3, made with the Mac's record-voice-lines.py) sits next to the Mac one.
+//
 // Gap: the Mac plays these at volume 0.85; IAudioPlayer has no volume, so they play at full volume.
 
 using OpenClicky.Core.Configuration;
@@ -64,17 +69,42 @@ public sealed class RecordedVoice
 
     public static string FileName(Line line) => $"{line.RawValue()}.mp3";
 
+    /// <summary>A recording made for Windows, which wins over the spoken sentence when it ships.</summary>
+    public static string WindowsFileName(Line line) => $"{line.RawValue()}-windows.mp3";
+
+    /// <summary>
+    /// What a line says on Windows when its Mac recording names the Mac's keys, with the dictation
+    /// key as the person has it ("right control", "caps lock"); null for every other line, whose
+    /// recording is right on both.
+    /// </summary>
+    public static string? WindowsSentence(Line line, string dictationKeyName) => line switch
+    {
+        Line.TourDictate => $"hold {dictationKeyName}, say a sentence, then let go. your words land wherever your cursor is.",
+        Line.TourTalk => "your turn. hold control and the windows key, and ask me about anything on your screen.",
+        Line.TourAct => "now give me a task. hold control and the windows key, and tell me what to do.",
+        Line.SettingsTourShortcuts => "shortcuts shows every key at a glance. hold control and the windows key to talk to me.",
+        _ => null,
+    };
+
     private readonly IAudioPlayer player;
     private readonly string folder;
+    private readonly Func<Line, string?>? windowsSentence;
+    private readonly Func<string, CancellationToken, Task<byte[]>>? renderSentence;
     private readonly object stateLock = new();
     private CancellationTokenSource? currentLine;
     /// <summary>Tells whoever played the current line that it ended, exactly once.</summary>
     private Action? finishCurrentLine;
 
-    public RecordedVoice(IAudioPlayer player, string? folder = null)
+    /// <param name="windowsSentence">The Windows wording of a line, or null to play its recording.</param>
+    /// <param name="renderSentence">This PC's voice, rendering a sentence to audio the player takes.</param>
+    public RecordedVoice(IAudioPlayer player, string? folder = null,
+                         Func<Line, string?>? windowsSentence = null,
+                         Func<string, CancellationToken, Task<byte[]>>? renderSentence = null)
     {
         this.player = player;
         this.folder = folder ?? DefaultFolder;
+        this.windowsSentence = windowsSentence;
+        this.renderSentence = renderSentence;
     }
 
     public bool IsPlaying
@@ -89,17 +119,41 @@ public sealed class RecordedVoice
     /// </summary>
     public bool Play(Line line, Action? onFinished = null)
     {
-        var path = Path.Combine(folder, FileName(line));
-        byte[] audio;
-        try
+        var windowsRecording = Path.Combine(folder, WindowsFileName(line));
+        if (File.Exists(windowsRecording) && ReadRecording(windowsRecording) is { } windowsAudio)
         {
-            audio = File.ReadAllBytes(path);
+            StartLine(_ => Task.FromResult(windowsAudio), onFinished);
+            return true;
         }
-        catch (Exception error) when (error is IOException or UnauthorizedAccessException)
+        if (windowsSentence?.Invoke(line) is { } sentence && renderSentence is { } render)
+        {
+            StartLine(cancellationToken => render(sentence, cancellationToken), onFinished);
+            return true;
+        }
+        if (ReadRecording(Path.Combine(folder, FileName(line))) is not { } audio)
         {
             AppLog.Write($"recorded voice: {FileName(line)} is not in the bundle");
             return false;
         }
+        StartLine(_ => Task.FromResult(audio), onFinished);
+        return true;
+    }
+
+    private static byte[]? ReadRecording(string path)
+    {
+        try
+        {
+            return File.ReadAllBytes(path);
+        }
+        catch (Exception error) when (error is IOException or UnauthorizedAccessException)
+        {
+            return null;
+        }
+    }
+
+    /// <summary>Cuts off whatever was playing and plays what <paramref name="audioSource"/> gives (a recording, or a sentence rendered now).</summary>
+    private void StartLine(Func<CancellationToken, Task<byte[]>> audioSource, Action? onFinished)
+    {
         StopCurrentLine();
         var cancellation = new CancellationTokenSource();
         var finished = 0;
@@ -112,14 +166,14 @@ public sealed class RecordedVoice
             currentLine = cancellation;
             finishCurrentLine = FinishOnce;
         }
-        _ = PlayAsync(audio, cancellation, FinishOnce);
-        return true;
+        _ = PlayAsync(audioSource, cancellation, FinishOnce);
     }
 
-    private async Task PlayAsync(byte[] audio, CancellationTokenSource cancellation, Action finishOnce)
+    private async Task PlayAsync(Func<CancellationToken, Task<byte[]>> audioSource, CancellationTokenSource cancellation, Action finishOnce)
     {
         try
         {
+            var audio = await audioSource(cancellation.Token).ConfigureAwait(false);
             await player.PlayToCompletionAsync(audio, cancellation.Token).ConfigureAwait(false);
         }
         catch (Exception error) when (error is not OperationCanceledException)
