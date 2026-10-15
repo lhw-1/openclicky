@@ -374,12 +374,14 @@ public sealed partial class CompanionManager : ObservableObject, ICompanionSetti
         set => preferences.Set(HasCompletedOnboardingKey, value);
     }
 
-    // MARK: - Permissions (only the microphone exists on Windows)
+    // MARK: - Permissions (the microphone, and online speech once Windows speech asks for it)
 
-    /// <summary>Every permission the cards ask for is in (the Mac's four collapse to the microphone).</summary>
+    /// <summary>Every permission setup needs is in (the Mac's four collapse to the microphone). Online speech is
+    /// asked for only when Windows speech needs it, so it does not hold up setup.</summary>
     public bool AllPermissionsGranted => HasMicrophonePermission;
 
-    public PermissionStatus PermissionStatus => new(Microphone: HasMicrophonePermission);
+    public PermissionStatus PermissionStatus =>
+        new(Microphone: HasMicrophonePermission, OnlineSpeech: !services.OfflineSpeech.OnlineSpeechWasRefused);
 
     private CancellationTokenSource? permissionPolling;
 
@@ -414,10 +416,26 @@ public sealed partial class CompanionManager : ObservableObject, ICompanionSetti
         }
     }
 
-    /// <summary>Wires the permission card's buttons; the grant opens Settings → Privacy → Microphone.</summary>
+    /// <summary>Wires the permission card's buttons; the microphone's grant opens Settings → Privacy → Microphone,
+    /// online speech's "turn on" switches it on directly (Settings → Privacy → Speech when that fails).</summary>
     private void StartPermissionPrompts()
     {
-        PermissionPromptController.PerformRequest = _ => services.MicrophonePermission.OpenPrivacySettings();
+        PermissionPromptController.PerformRequest = step =>
+        {
+            if (step != PermissionStep.OnlineSpeech)
+            {
+                services.MicrophonePermission.OpenPrivacySettings();
+                return;
+            }
+            if (services.OfflineSpeech.AcceptOnlineSpeech())
+            {
+                AppLog.Write("permissions: online speech recognition switched on from the island");
+                RefreshAllPermissions();
+                return;
+            }
+            AppLog.Write("permissions: could not switch online speech recognition on; opening speech settings");
+            services.OfflineSpeech.OpenSpeechPrivacySettings();
+        };
         PermissionPromptController.OpenSettings = () => ShowSettings();
         PermissionPromptController.Update(PermissionStatus);
         Island.PermissionPrompt = PermissionPromptController.CurrentPrompt;

@@ -323,6 +323,7 @@ public sealed class DictationSettings : ObservableObject
         /// <summary>Set once the person flips "also polish takes heard on this pc" themselves.</summary>
         public const string PolishOfflineTakesChosen = "dictation.polishOfflineTakesChosen";
         public const string DictationKey = "dictation.key";
+        public const string TapKeepsListening = "dictation.tapKeepsListening";
         public const string OrbVisible = "dictation.orb.visible";
         public const string OrbLook = "dictation.orb.look";
         public const string OrbTheme = "dictation.orb.theme";
@@ -364,6 +365,7 @@ public sealed class DictationSettings : ObservableObject
             defaults.Set(Keys.PolishOfflineTakesChosen, true);
         }
         dictationKey = DictationHotkeys.FromRawValue(defaults.GetString(Keys.DictationKey));
+        tapKeepsListening = defaults.GetBool(Keys.TapKeepsListening, defaultValue: false);
         orbVisible = defaults.GetBool(Keys.OrbVisible, defaultValue: true);
         orbLook = defaults.GetEnum(Keys.OrbLook, OrbLook.Pill);
         orbTheme = defaults.GetEnum(Keys.OrbTheme, OrbTheme.Black);
@@ -500,6 +502,15 @@ public sealed class DictationSettings : ObservableObject
     {
         get => dictationKey;
         set => Store(ref dictationKey, value, () => defaults.Set(Keys.DictationKey, value.RawValue()), nameof(DictationKey));
+    }
+
+    private bool tapKeepsListening;
+    /// <summary>Off (the default, as on the Mac): the key is held while you talk and a quick tap does nothing.
+    /// On: a tap starts a take that keeps listening until the next tap.</summary>
+    public bool TapKeepsListening
+    {
+        get => tapKeepsListening;
+        set => Store(ref tapKeepsListening, value, () => defaults.Set(Keys.TapKeepsListening, value), nameof(TapKeepsListening));
     }
 
     // MARK: the orb
@@ -706,6 +717,7 @@ public sealed class DictationSettings : ObservableObject
     public void ResetShortcutsToDefaults()
     {
         DictationKey = DictationHotkeys.Default;
+        TapKeepsListening = false;
     }
 
     internal static string? EncodePoint(OrbPoint? point) =>

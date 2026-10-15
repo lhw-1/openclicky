@@ -58,6 +58,20 @@ public interface IOfflineSpeechRecognizer
 
     /// <summary>Starts a continuous dictation session; throws <see cref="OfflineSpeechException"/> with the sentence to show.</summary>
     Task<IOfflineSpeechSession> StartAsync(OfflineSpeechOptions options, CancellationToken cancellationToken = default);
+
+    /// <summary>A start was refused because Windows' "Online speech recognition" is off, and it has not been
+    /// switched on since: the island then asks for it as a permission.</summary>
+    bool OnlineSpeechWasRefused => false;
+
+    /// <summary>Whether Windows' "Online speech recognition" is on; null when it cannot be read.</summary>
+    bool? IsOnlineSpeechAccepted() => null;
+
+    /// <summary>Switches "Online speech recognition" on for this user, once the person said yes on the island's
+    /// card. False when it could not be written (the card then opens Windows' speech settings).</summary>
+    bool AcceptOnlineSpeech() => false;
+
+    /// <summary>Opens Settings → Privacy &amp; security → Speech.</summary>
+    void OpenSpeechPrivacySettings() { }
 }
 
 /// <summary>An installed voice (OneCore / WinRT).</summary>

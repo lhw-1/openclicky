@@ -257,7 +257,7 @@ public abstract record DesktopAction
                      "Make a new folder. Use this instead of the agent for a single folder.",
                      new JsonObject
                      {
-                         ["name"] = new JsonObject { ["type"] = "string", ["description"] = "The folder's name, without any slashes." },
+                         ["name"] = new JsonObject { ["type"] = "string", ["description"] = "The folder's name, without any slashes. The request was spoken, so write numbers said as words in digits ('twenty three' → '23') unless the person spelled them out." },
                          ["location"] = LocationProperty(),
                      },
                      "name"),

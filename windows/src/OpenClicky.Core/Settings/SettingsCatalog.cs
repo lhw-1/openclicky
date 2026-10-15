@@ -125,11 +125,12 @@ public sealed class SettingsCatalog
         var rightHandKeyNote = key switch
         {
             DictationHotkey.RightControl => " Edits, hands-free and Ctrl twice use the left Ctrl.",
+            DictationHotkey.LeftControl => " Edits, hands-free and Ctrl twice use the right Ctrl.",
             DictationHotkey.RightAlt => " A key typed with right Alt held (é, €) cancels the take.",
             DictationHotkey.RightShift => " A key typed with right Shift held (a capital) cancels the take.",
             _ => "",
         };
-        return "Hold to talk anywhere. Tap to start a take, tap again to finish." + rightHandKeyNote;
+        return "Hold to talk anywhere." + rightHandKeyNote;
     }
 
     public IReadOnlyList<SettingsItem> DictationKeyItems() =>
@@ -145,6 +146,13 @@ public sealed class SettingsCatalog
             Id = "keyboard.where", Page = DictationSettingsPage.Dictation, Section = "Key",
             Title = "Where the key is", Detail = "A sketch of a keyboard with the dictation key held.",
             Keywords = ["where", "keyboard", "right control", "right alt", "right shift", "caps lock", "left", "laptop"],
+        },
+        new()
+        {
+            Id = "keyboard.tapKeepsListening", Page = DictationSettingsPage.Dictation, Section = "Key",
+            Title = "Tap to keep listening",
+            Detail = "Off: hold the key while you talk, as on the Mac. On: a quick tap starts a take and the next tap finishes it.",
+            Keywords = ["tap", "toggle", "hold", "push to talk", "latch", "keep listening"],
         },
     ];
 

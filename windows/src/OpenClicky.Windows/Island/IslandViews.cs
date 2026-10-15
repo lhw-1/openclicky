@@ -359,7 +359,7 @@ internal sealed class PermissionCardView : Grid, IIslandContent
         detail.LineHeight = 16;
         copy.Children.Add(detail);
         var dashes = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(0, 8, 0, 0) };
-        foreach (var step in PermissionSteps.AllCases)
+        foreach (var step in PermissionSteps.Relevant(prompt.Status))
         {
             var fill = prompt.Status.IsGranted(step) ? DS.HUD.LiveBrush : step == prompt.Step ? DS.HUD.PointerBrush : DS.HUD.SurfaceRaisedBrush;
             dashes.Children.Add(Dash(16, fill));

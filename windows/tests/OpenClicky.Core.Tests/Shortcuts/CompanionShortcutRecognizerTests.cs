@@ -26,7 +26,7 @@ public class CompanionShortcutRecognizerTests
     [Fact]
     public void HoldingControlAndWindowsIsTalk()
     {
-        var recognizer = new CompanionShortcutRecognizer();
+        var recognizer = new CompanionShortcutRecognizer(DictationHotkey.RightControl);
         Assert.Empty(Flags(recognizer, LCtrl, VirtualKeys.LeftControl, 0));
         Assert.Equal(new[] { TalkPressed }, Flags(recognizer, LCtrl | LWin, VirtualKeys.LeftWindows, 0.05));
         Assert.Equal(new[] { TalkReleased }, Flags(recognizer, LCtrl, VirtualKeys.LeftWindows, 2.0));
@@ -36,7 +36,7 @@ public class CompanionShortcutRecognizerTests
     [Fact]
     public void TappingControlTwiceOpensTheTextComposer()
     {
-        var recognizer = new CompanionShortcutRecognizer();
+        var recognizer = new CompanionShortcutRecognizer(DictationHotkey.RightControl);
         Assert.Empty(Flags(recognizer, LCtrl, VirtualKeys.LeftControl, 0));
         Assert.Empty(Flags(recognizer, None, VirtualKeys.LeftControl, 0.1));
         Assert.Empty(Flags(recognizer, LCtrl, VirtualKeys.LeftControl, 0.3));
@@ -46,7 +46,7 @@ public class CompanionShortcutRecognizerTests
     [Fact]
     public void SlowControlTapsDoNotOpenTheComposer()
     {
-        var recognizer = new CompanionShortcutRecognizer();
+        var recognizer = new CompanionShortcutRecognizer(DictationHotkey.RightControl);
         Flags(recognizer, LCtrl, VirtualKeys.LeftControl, 0);
         Flags(recognizer, None, VirtualKeys.LeftControl, 0.1);
         Flags(recognizer, LCtrl, VirtualKeys.LeftControl, 1.0);
@@ -56,7 +56,7 @@ public class CompanionShortcutRecognizerTests
     [Fact]
     public void ControlShortcutsLikeControlCAreNotTaps()
     {
-        var recognizer = new CompanionShortcutRecognizer();
+        var recognizer = new CompanionShortcutRecognizer(DictationHotkey.RightControl);
         Flags(recognizer, LCtrl, VirtualKeys.LeftControl, 0);
         Assert.Empty(Key(recognizer, 'C', true, LCtrl, 0.05));
         Key(recognizer, 'C', false, LCtrl, 0.1);
@@ -68,7 +68,7 @@ public class CompanionShortcutRecognizerTests
     [Fact]
     public void ATalkPressInsideTheTapWindowIsNotAControlTap()
     {
-        var recognizer = new CompanionShortcutRecognizer();
+        var recognizer = new CompanionShortcutRecognizer(DictationHotkey.RightControl);
         Flags(recognizer, LCtrl, VirtualKeys.LeftControl, 0);
         Flags(recognizer, LCtrl | LWin, VirtualKeys.LeftWindows, 0.05);
         Flags(recognizer, LCtrl, VirtualKeys.LeftWindows, 0.1);
@@ -82,7 +82,7 @@ public class CompanionShortcutRecognizerTests
     [Fact]
     public void HoldingTheDictationKeyIsADictationTake()
     {
-        var recognizer = new CompanionShortcutRecognizer();
+        var recognizer = new CompanionShortcutRecognizer(DictationHotkey.RightControl);
         Assert.Equal(new[] { DictationPressed }, Flags(recognizer, RCtrl, VirtualKeys.RightControl, 0));
         Assert.Equal(new[] { DictationReleased(wasTap: false) }, Flags(recognizer, None, VirtualKeys.RightControl, 3.0));
     }
@@ -90,7 +90,7 @@ public class CompanionShortcutRecognizerTests
     [Fact]
     public void AQuickPressIsATap()
     {
-        var recognizer = new CompanionShortcutRecognizer();
+        var recognizer = new CompanionShortcutRecognizer(DictationHotkey.RightControl);
         Flags(recognizer, RCtrl, VirtualKeys.RightControl, 0);
         Assert.Equal(new[] { DictationReleased(wasTap: true) }, Flags(recognizer, None, VirtualKeys.RightControl, 0.2));
     }
@@ -98,7 +98,7 @@ public class CompanionShortcutRecognizerTests
     [Fact]
     public void TwoQuickTapsCancel()
     {
-        var recognizer = new CompanionShortcutRecognizer();
+        var recognizer = new CompanionShortcutRecognizer(DictationHotkey.RightControl);
         Flags(recognizer, RCtrl, VirtualKeys.RightControl, 0);
         Flags(recognizer, None, VirtualKeys.RightControl, 0.1);
         Flags(recognizer, RCtrl, VirtualKeys.RightControl, 0.3);
@@ -108,7 +108,7 @@ public class CompanionShortcutRecognizerTests
     [Fact]
     public void TheKeyWithAnArrowKeyIsNotATap()
     {
-        var recognizer = new CompanionShortcutRecognizer();
+        var recognizer = new CompanionShortcutRecognizer(DictationHotkey.RightControl);
         const int leftArrow = 0x25;
         Flags(recognizer, RCtrl, VirtualKeys.RightControl, 0);
         Key(recognizer, leftArrow, true, RCtrl, 0.05);
@@ -119,7 +119,7 @@ public class CompanionShortcutRecognizerTests
     [Fact]
     public void ControlJoiningAHeldKeyIsHeyClicky()
     {
-        var recognizer = new CompanionShortcutRecognizer();
+        var recognizer = new CompanionShortcutRecognizer(DictationHotkey.RightControl);
         Assert.Equal(new[] { DictationPressed }, Flags(recognizer, RCtrl, VirtualKeys.RightControl, 0));
         Assert.Equal(new[] { DictationEditModifierJoined }, Flags(recognizer, RCtrl | LCtrl, VirtualKeys.LeftControl, 0.1));
         Assert.Empty(Flags(recognizer, RCtrl, VirtualKeys.LeftControl, 2.0));
@@ -129,7 +129,7 @@ public class CompanionShortcutRecognizerTests
     [Fact]
     public void TheKeyPressedWhileControlIsDownIsHeyClickyFromTheStart()
     {
-        var recognizer = new CompanionShortcutRecognizer();
+        var recognizer = new CompanionShortcutRecognizer(DictationHotkey.RightControl);
         Flags(recognizer, LCtrl, VirtualKeys.LeftControl, 0);
         Assert.Equal(new[] { DictationEditPressed }, Flags(recognizer, LCtrl | RCtrl, VirtualKeys.RightControl, 0.05));
     }
@@ -137,7 +137,7 @@ public class CompanionShortcutRecognizerTests
     [Fact]
     public void TappingTheKeyAndControlTwiceTogglesHandsFree()
     {
-        var recognizer = new CompanionShortcutRecognizer();
+        var recognizer = new CompanionShortcutRecognizer(DictationHotkey.RightControl);
         Flags(recognizer, LCtrl, VirtualKeys.LeftControl, 0);
         Flags(recognizer, LCtrl | RCtrl, VirtualKeys.RightControl, 0.02);
         Assert.Equal(new[] { DictationReleased(wasTap: true) }, Flags(recognizer, LCtrl, VirtualKeys.RightControl, 0.1));
@@ -148,7 +148,7 @@ public class CompanionShortcutRecognizerTests
     [Fact]
     public void TheKeyWithControlAndWindowsIsTalkNotDictation()
     {
-        var recognizer = new CompanionShortcutRecognizer();
+        var recognizer = new CompanionShortcutRecognizer(DictationHotkey.RightControl);
         Flags(recognizer, LCtrl, VirtualKeys.LeftControl, 0);
         Flags(recognizer, LCtrl | LWin, VirtualKeys.LeftWindows, 0.01);
         Assert.Empty(Flags(recognizer, RCtrl | LCtrl | LWin, VirtualKeys.RightControl, 0.02));
@@ -169,7 +169,7 @@ public class CompanionShortcutRecognizerTests
     [Fact]
     public void CapsLockIsAnOrdinaryKeyWhenItDoesNotDictate()
     {
-        var recognizer = new CompanionShortcutRecognizer();
+        var recognizer = new CompanionShortcutRecognizer(DictationHotkey.RightControl);
         Flags(recognizer, LCtrl, VirtualKeys.LeftControl, 0);
         Assert.Empty(Key(recognizer, VirtualKeys.CapsLock, true, LCtrl | PhysicalModifiers.CapsLock, 0.05));
         Flags(recognizer, PhysicalModifiers.CapsLock, VirtualKeys.LeftControl, 0.1);
@@ -179,7 +179,7 @@ public class CompanionShortcutRecognizerTests
     [Fact]
     public void EscapeIsReported()
     {
-        var recognizer = new CompanionShortcutRecognizer();
+        var recognizer = new CompanionShortcutRecognizer(DictationHotkey.RightControl);
         Assert.Equal(new[] { EscapePressed }, Key(recognizer, VirtualKeys.Escape, true, None, 0));
     }
 
@@ -197,7 +197,7 @@ public class CompanionShortcutRecognizerTests
     [Fact]
     public void ChangingTheKeyResetsTheDictationState()
     {
-        var recognizer = new CompanionShortcutRecognizer();
+        var recognizer = new CompanionShortcutRecognizer(DictationHotkey.RightControl);
         Flags(recognizer, RCtrl, VirtualKeys.RightControl, 0);
         Assert.True(recognizer.IsDictationKeyHeld);
         recognizer.DictationKey = DictationHotkey.RightShift;
@@ -220,9 +220,9 @@ public class DictationHotkeyTests
     [InlineData("fn")]
     [InlineData("rightOption")]
     [InlineData("rightCommand")]
-    public void UnknownStoredValuesFallBackToRightControl(string? rawValue)
+    public void UnknownStoredValuesFallBackToLeftControl(string? rawValue)
     {
-        Assert.Equal(DictationHotkey.RightControl, DictationHotkeys.FromRawValue(rawValue));
+        Assert.Equal(DictationHotkey.LeftControl, DictationHotkeys.FromRawValue(rawValue));
     }
 
     [Fact]
@@ -261,10 +261,15 @@ internal static class PhysicalKeyExtensions
     public static PhysicalKey ForDictationKey(DictationHotkey hotkey) => hotkey switch
     {
         DictationHotkey.RightControl => PhysicalKey.RightControl,
+        DictationHotkey.LeftControl => PhysicalKey.LeftControl,
         DictationHotkey.RightAlt => PhysicalKey.RightAlt,
         DictationHotkey.RightShift => PhysicalKey.RightShift,
         _ => PhysicalKey.CapsLock,
     };
+
+    /// <summary>The Ctrl the companion shortcuts use: the left one, unless left Ctrl dictates.</summary>
+    public static PhysicalKey CompanionControl(DictationHotkey hotkey) =>
+        hotkey == DictationHotkey.LeftControl ? PhysicalKey.RightControl : PhysicalKey.LeftControl;
 }
 
 /// <summary>Plays key presses into a recogniser and collects every event it reports.</summary>
@@ -365,10 +370,10 @@ public class DictationKeyGestureMatrixTests
         var keyboard = new SimulatedKeyboard(hotkey);
         keyboard.Press(key);
         keyboard.Wait(0.2);
-        keyboard.Press(PhysicalKey.LeftControl);
+        keyboard.Press(PhysicalKeyExtensions.CompanionControl(hotkey));
         Assert.False(keyboard.Recognizer.IsTalkHeld);
         keyboard.Wait(2);
-        keyboard.Release(PhysicalKey.LeftControl);
+        keyboard.Release(PhysicalKeyExtensions.CompanionControl(hotkey));
         keyboard.Wait(0.05);
         keyboard.Release(key);
         Assert.Equal(new[] { DictationPressed, DictationEditModifierJoined, DictationReleased(wasTap: false) }, keyboard.Events);
@@ -379,13 +384,13 @@ public class DictationKeyGestureMatrixTests
     {
         var key = PhysicalKeyExtensions.ForDictationKey(hotkey);
         var keyboard = new SimulatedKeyboard(hotkey);
-        keyboard.Press(PhysicalKey.LeftControl);
+        keyboard.Press(PhysicalKeyExtensions.CompanionControl(hotkey));
         keyboard.Wait(0.05);
         keyboard.Press(key);
         keyboard.Wait(2);
         keyboard.Release(key);
         keyboard.Wait(0.05);
-        keyboard.Release(PhysicalKey.LeftControl);
+        keyboard.Release(PhysicalKeyExtensions.CompanionControl(hotkey));
         Assert.Equal(new[] { DictationEditPressed, DictationReleased(wasTap: false) }, keyboard.Events);
     }
 
@@ -394,7 +399,7 @@ public class DictationKeyGestureMatrixTests
     {
         var key = PhysicalKeyExtensions.ForDictationKey(hotkey);
         var keyboard = new SimulatedKeyboard(hotkey);
-        keyboard.Press(PhysicalKey.LeftControl);
+        keyboard.Press(PhysicalKeyExtensions.CompanionControl(hotkey));
         keyboard.Wait(0.02);
         keyboard.Press(key);
         keyboard.Wait(0.08);
@@ -404,7 +409,7 @@ public class DictationKeyGestureMatrixTests
         keyboard.Wait(0.08);
         keyboard.Release(key);
         keyboard.Wait(0.05);
-        keyboard.Release(PhysicalKey.LeftControl);
+        keyboard.Release(PhysicalKeyExtensions.CompanionControl(hotkey));
         Assert.Equal(new[]
         {
             DictationEditPressed, DictationReleased(wasTap: true),
@@ -416,13 +421,13 @@ public class DictationKeyGestureMatrixTests
     public void HoldingControlAndWindowsIsTalkWhateverTheDictationKey(DictationHotkey hotkey)
     {
         var keyboard = new SimulatedKeyboard(hotkey);
-        keyboard.Press(PhysicalKey.LeftControl);
+        keyboard.Press(PhysicalKeyExtensions.CompanionControl(hotkey));
         keyboard.Wait(0.05);
         keyboard.Press(PhysicalKey.LeftWindows);
         keyboard.Wait(2);
         keyboard.Release(PhysicalKey.LeftWindows);
         keyboard.Wait(0.05);
-        keyboard.Release(PhysicalKey.LeftControl);
+        keyboard.Release(PhysicalKeyExtensions.CompanionControl(hotkey));
         Assert.Equal(new[] { TalkPressed, TalkReleased }, keyboard.Events);
     }
 
@@ -430,13 +435,13 @@ public class DictationKeyGestureMatrixTests
     public void TappingControlTwiceOpensTheComposerOnly(DictationHotkey hotkey)
     {
         var keyboard = new SimulatedKeyboard(hotkey);
-        keyboard.Press(PhysicalKey.LeftControl);
+        keyboard.Press(PhysicalKeyExtensions.CompanionControl(hotkey));
         keyboard.Wait(0.1);
-        keyboard.Release(PhysicalKey.LeftControl);
+        keyboard.Release(PhysicalKeyExtensions.CompanionControl(hotkey));
         keyboard.Wait(0.15);
-        keyboard.Press(PhysicalKey.LeftControl);
+        keyboard.Press(PhysicalKeyExtensions.CompanionControl(hotkey));
         keyboard.Wait(0.1);
-        keyboard.Release(PhysicalKey.LeftControl);
+        keyboard.Release(PhysicalKeyExtensions.CompanionControl(hotkey));
         Assert.Equal(new[] { TextComposerRequested }, keyboard.Events);
     }
 
@@ -474,14 +479,14 @@ public class DictationKeyGestureMatrixTests
         var keyboard = new SimulatedKeyboard(hotkey);
         keyboard.Press(key);
         keyboard.Wait(0.2);
-        keyboard.Press(PhysicalKey.LeftControl);
+        keyboard.Press(PhysicalKeyExtensions.CompanionControl(hotkey));
         keyboard.Wait(0.05);
         keyboard.Press(PhysicalKey.LeftWindows);
         keyboard.Wait(1);
         keyboard.Release(key);
         keyboard.Wait(0.5);
         keyboard.Release(PhysicalKey.LeftWindows);
-        keyboard.Release(PhysicalKey.LeftControl);
+        keyboard.Release(PhysicalKeyExtensions.CompanionControl(hotkey));
         Assert.Equal(new[] { DictationPressed, DictationEditModifierJoined, DictationReleased(wasTap: false) }, keyboard.Events);
     }
 
@@ -490,7 +495,7 @@ public class DictationKeyGestureMatrixTests
     {
         var key = PhysicalKeyExtensions.ForDictationKey(hotkey);
         var keyboard = new SimulatedKeyboard(hotkey);
-        keyboard.Press(PhysicalKey.LeftControl);
+        keyboard.Press(PhysicalKeyExtensions.CompanionControl(hotkey));
         keyboard.Press(PhysicalKey.LeftWindows);
         keyboard.Wait(0.5);
         keyboard.Press(key);
@@ -498,7 +503,7 @@ public class DictationKeyGestureMatrixTests
         keyboard.Release(key);
         keyboard.Wait(0.5);
         keyboard.Release(PhysicalKey.LeftWindows);
-        keyboard.Release(PhysicalKey.LeftControl);
+        keyboard.Release(PhysicalKeyExtensions.CompanionControl(hotkey));
         Assert.Equal(new[] { TalkPressed, TalkReleased }, keyboard.Events);
     }
 
@@ -515,6 +520,43 @@ public class DictationKeyGestureMatrixTests
         keyboard.Release(PhysicalKey.LeftControl);
         keyboard.Release(PhysicalKey.LeftWindows);
         Assert.Equal(new[] { TalkPressed, TalkReleased }, keyboard.Events);
+    }
+
+    /// <summary>With left Ctrl dictating, left Ctrl is also talk's Ctrl: Win joining the hold cancels the take
+    /// (before talk starts, so the microphone is free) and asks instead.</summary>
+    [Fact]
+    public void WithLeftControlDictatingLeftControlThenWinIsTalk()
+    {
+        var keyboard = new SimulatedKeyboard(DictationHotkey.LeftControl);
+        keyboard.Press(PhysicalKey.LeftControl);
+        keyboard.Wait(0.1);
+        keyboard.Press(PhysicalKey.LeftWindows);
+        keyboard.Wait(1);
+        keyboard.Release(PhysicalKey.LeftWindows);
+        keyboard.Release(PhysicalKey.LeftControl);
+        Assert.Equal(new[]
+        {
+            DictationPressed, DictationReleased(wasTap: false, keyWasPressedDuringHold: true), TalkPressed, TalkReleased,
+        }, keyboard.Events);
+        Assert.False(keyboard.Recognizer.IsDictationKeyHeld);
+    }
+
+    [Fact]
+    public void WithLeftControlDictatingWinThenLeftControlIsTalkOnly()
+    {
+        var keyboard = new SimulatedKeyboard(DictationHotkey.LeftControl);
+        keyboard.Press(PhysicalKey.LeftWindows);
+        keyboard.Wait(0.05);
+        keyboard.Press(PhysicalKey.LeftControl);
+        keyboard.Wait(1);
+        keyboard.Release(PhysicalKey.LeftControl);
+        keyboard.Release(PhysicalKey.LeftWindows);
+        keyboard.Wait(1);
+        // The next left Ctrl hold is a take again.
+        keyboard.Press(PhysicalKey.LeftControl);
+        keyboard.Wait(1);
+        keyboard.Release(PhysicalKey.LeftControl);
+        Assert.Equal(new[] { TalkPressed, TalkReleased, DictationPressed, DictationReleased(wasTap: false) }, keyboard.Events);
     }
 
     /// <summary>Both Ctrls down, then the right one (the dictation key) comes up: Ctrl is still held by the

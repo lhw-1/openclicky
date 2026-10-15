@@ -22,6 +22,7 @@ internal sealed partial class SettingsRowFactory
     public static string DictationKeyTitle(DictationHotkey key) => key switch
     {
         DictationHotkey.RightControl => "Right Ctrl",
+        DictationHotkey.LeftControl => "Left Ctrl",
         DictationHotkey.RightAlt => "Right Alt (AltGr)",
         DictationHotkey.RightShift => "Right Shift",
         _ => "Caps Lock",
@@ -42,6 +43,9 @@ internal sealed partial class SettingsRowFactory
             case "keyboard.dictationKey":
                 return LiveSettingsCard(() => Ui.Row(item.Title, SettingsCatalog.DictationKeyDetail(Settings.DictationKey), query,
                     Ui.Picker(DictationHotkeys.AllCases.Select(key => (key, DictationKeyTitle(key))), Settings.DictationKey, key => Settings.DictationKey = key, 170)));
+            case "keyboard.tapKeepsListening":
+                return LiveSettingsCard(() => Ui.Row(item.Title, item.Detail, query,
+                    Ui.Toggle(Settings.TapKeepsListening, isOn => Settings.TapKeepsListening = isOn)));
             case "keyboard.where":
                 return new LiveContent(() => Ui.Card(KeyboardSketch.WithCaption(Settings.DictationKey, animates: !Settings.ReduceAnimation)),
                     Changes.Of(Settings, nameof(DictationSettings.DictationKey), nameof(DictationSettings.ReduceAnimation)));

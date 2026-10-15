@@ -86,11 +86,36 @@ public class IslandTextsTests
 public class PermissionPromptTests
 {
     [Fact]
-    public void OnlyTheMicrophoneIsAskedForOnWindows()
+    public void OnlineSpeechIsAskedForOnlyOnceWindowsSpeechRefused()
     {
         Assert.Equal(PermissionStep.Microphone, PermissionPromptController.NextStep(new PermissionStatus()));
         Assert.Null(PermissionPromptController.NextStep(new PermissionStatus(Microphone: true)));
-        Assert.Single(PermissionSteps.AllCases);
+        Assert.Equal(PermissionStep.OnlineSpeech, PermissionPromptController.NextStep(new PermissionStatus(Microphone: true, OnlineSpeech: false)));
+        Assert.Equal(new[] { PermissionStep.Microphone }, PermissionSteps.Relevant(new PermissionStatus()));
+        Assert.Equal("step 1 of 1", new PermissionPrompt(PermissionStep.Microphone, new PermissionStatus()).ProgressLabel);
+        Assert.Equal("step 2 of 2", new PermissionPrompt(PermissionStep.OnlineSpeech, new PermissionStatus(true, false)).ProgressLabel);
+    }
+
+    [Fact]
+    public void TurningOnOnlineSpeechDropsTheCardAtOnce()
+    {
+        var controller = new PermissionPromptController();
+        controller.PerformRequest = _ => controller.Update(new PermissionStatus(Microphone: true));
+        controller.Update(new PermissionStatus(Microphone: true, OnlineSpeech: false));
+        Assert.Equal("turn on", controller.CurrentPrompt!.ButtonTitle);
+        Assert.Contains("microsoft", controller.CurrentPrompt.Detail);
+        controller.Grant();
+        Assert.Null(controller.CurrentPrompt);
+    }
+
+    [Fact]
+    public void WhenOnlineSpeechCannotBeSwitchedOnTheCardPointsAtSettings()
+    {
+        var controller = new PermissionPromptController();
+        controller.Update(new PermissionStatus(Microphone: true, OnlineSpeech: false));
+        controller.Grant();
+        Assert.Equal(PermissionPromptStage.Waiting, controller.CurrentPrompt!.Stage);
+        Assert.Contains("in settings", controller.CurrentPrompt.Detail);
     }
 
     [Fact]
@@ -189,7 +214,7 @@ public class OrbSettingsTests
         Assert.True(settings.OrbHidesWhenIdle);
         Assert.True(preferences.GetBool(OrbSettings.Keys.OrbHidesWhenIdleDefaultApplied));
         Assert.Null(settings.OrbPosition);
-        Assert.Equal(DictationHotkey.RightControl, settings.DictationKey);
+        Assert.Equal(DictationHotkey.LeftControl, settings.DictationKey);
     }
 
     [Fact]

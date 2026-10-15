@@ -289,7 +289,9 @@ public sealed class DictationTakeController : ObservableObject, IDisposable
     public string EngineDisplayName => Capture.TranscriptionProviderDisplayName;
 
     /// <summary>The hint pill under a resting orb ("tooltips" in Settings → the orb).</summary>
-    public string IdleHint => $"tap / hold {Settings.DictationKey.KeycapLabel()} to talk";
+    public string IdleHint => Settings.TapKeepsListening
+        ? $"tap / hold {Settings.DictationKey.KeycapLabel()} to talk"
+        : $"hold {Settings.DictationKey.KeycapLabel()} to talk";
 
     // MARK: keyboard
 
@@ -359,6 +361,11 @@ public sealed class DictationTakeController : ObservableObject, IDisposable
                         // The key was held for a shortcut (right Ctrl + C), not to talk: finishing
                         // would paste room noise or end in "didn't catch that".
                         CancelTake("cancelled, that was a shortcut");
+                    }
+                    else if (shortcutEvent.WasTap && !Settings.TapKeepsListening)
+                    {
+                        // Hold to talk: a tap is too short to have said anything.
+                        CancelTake("cancelled, a tap (hold the key to talk)");
                     }
                     else if (shortcutEvent.WasTap)
                     {

@@ -106,6 +106,7 @@ public static class IslandTexts
     public static string ShortKeycapLabel(DictationHotkey dictationKey) => dictationKey switch
     {
         DictationHotkey.RightControl => "R Ctrl",
+        DictationHotkey.LeftControl => "L Ctrl",
         DictationHotkey.RightAlt => "R Alt",
         DictationHotkey.RightShift => "R Shift",
         DictationHotkey.CapsLock => "Caps",

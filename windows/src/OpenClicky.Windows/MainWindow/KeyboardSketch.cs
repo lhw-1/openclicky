@@ -51,6 +51,7 @@ internal sealed class KeyboardSketch : FrameworkElement
     public static string Caption(DictationHotkey key) => key switch
     {
         DictationHotkey.RightControl => "Right Ctrl is right of the space bar, after Alt, by the arrows. Some laptops have none: then pick another key.",
+        DictationHotkey.LeftControl => "Left Ctrl is the bottom-left key, left of Fn and Win.",
         DictationHotkey.RightAlt => "Right Alt (AltGr on many keyboards) is the key just right of the space bar.",
         DictationHotkey.RightShift => "Right Shift is the long key above the arrows, under Enter.",
         _ => "Caps Lock sits on the left, above Shift.",
@@ -111,6 +112,7 @@ internal sealed class KeyboardSketch : FrameworkElement
     private (int Row, int Index) PressedKey => key switch
     {
         DictationHotkey.RightControl => (4, 6),
+        DictationHotkey.LeftControl => (4, 0),
         DictationHotkey.RightAlt => (4, 5),
         DictationHotkey.RightShift => (3, UpperRows[3].Length - 1),
         _ => (2, 0),

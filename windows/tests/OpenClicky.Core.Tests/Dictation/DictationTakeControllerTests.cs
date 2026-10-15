@@ -93,6 +93,8 @@ internal sealed class TakeHarness : IDisposable
         Settings = new DictationSettings(Preferences.InMemory())
         {
             Sounds = false,
+            // Most tests here walk the tap-to-keep-listening takes; the hold-only default has its own test.
+            TapKeepsListening = true,
             Engine = DictationEngineChoice.Offline,
             ReadNearbyText = false,
             PolishWithModel = true,
@@ -239,6 +241,18 @@ public sealed class DictationTakeControllerTests
     });
 
     [Fact]
+    public Task WithHoldToTalkATapCancelsTheTake() => TakeHarness.Run(async h =>
+    {
+        h.Settings.TapKeepsListening = false;
+        h.Handle(Pressed);
+        await h.WaitForState(TakeState.Listening);
+        h.Handle(Tapped);
+        await TakeHarness.WaitUntil(() => h.State == TakeState.Idle, 4);
+        Assert.Equal(TakeState.Idle, h.State);
+        Assert.Equal("hold left Ctrl to talk", h.Controller.IdleHint);
+    });
+
+    [Fact]
     public Task ATapKeepsListeningUntilTheNextPress() => TakeHarness.Run(async h =>
     {
         h.Handle(Pressed);
@@ -246,7 +260,7 @@ public sealed class DictationTakeControllerTests
         h.Handle(Tapped);
         Assert.Equal(TakeState.Listening, h.State);
         Assert.Equal(0, h.Capture.Stops);
-        Assert.Equal("say it, then tap right Ctrl", h.Orb.Hint);
+        Assert.Equal("say it, then tap left Ctrl", h.Orb.Hint);
         h.Handle(Pressed);
         Assert.Equal(TakeState.Finishing, h.State);
         Assert.Equal(1, h.Capture.Stops);
@@ -1143,7 +1157,7 @@ public sealed class DictationTakeControllerTests
         h.Handle(CompanionShortcutEvent.EscapePressed);
         await TakeHarness.WaitUntil(() => h.Orb.Phase == DictationOrbPhase.Idle, 4);
         Assert.Equal(DictationOrbPhase.Idle, h.Orb.Phase);
-        Assert.Equal("tap / hold right Ctrl to talk", h.Orb.Hint);
+        Assert.Equal("tap / hold left Ctrl to talk", h.Orb.Hint);
     });
 
     [Fact]

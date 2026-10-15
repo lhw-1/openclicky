@@ -21,6 +21,53 @@ public sealed class WindowsSpeechRecognizer : IOfflineSpeechRecognizer
 {
     private const int PrivacyPolicyNotAcceptedHResult = unchecked((int)0x80045509);
 
+    /// <summary>Where Settings → Privacy &amp; security → Speech keeps the "Online speech recognition" switch (per user).</summary>
+    private const string OnlineSpeechPrivacyKey = @"Software\Microsoft\Speech_OneCore\Settings\OnlineSpeechPrivacy";
+    private const string OnlineSpeechAcceptedValue = "HasAccepted";
+
+    private volatile bool onlineSpeechWasRefused;
+
+    public bool OnlineSpeechWasRefused => onlineSpeechWasRefused && IsOnlineSpeechAccepted() != true;
+
+    public bool? IsOnlineSpeechAccepted()
+    {
+        try
+        {
+            using var key = Microsoft.Win32.Registry.CurrentUser.OpenSubKey(OnlineSpeechPrivacyKey);
+            return key?.GetValue(OnlineSpeechAcceptedValue) is int accepted ? accepted == 1 : false;
+        }
+        catch (Exception exception) when (exception is System.Security.SecurityException or UnauthorizedAccessException or IOException)
+        {
+            return null;
+        }
+    }
+
+    public bool AcceptOnlineSpeech()
+    {
+        try
+        {
+            using var key = Microsoft.Win32.Registry.CurrentUser.CreateSubKey(OnlineSpeechPrivacyKey);
+            key.SetValue(OnlineSpeechAcceptedValue, 1, Microsoft.Win32.RegistryValueKind.DWord);
+            onlineSpeechWasRefused = false;
+            return true;
+        }
+        catch (Exception exception) when (exception is System.Security.SecurityException or UnauthorizedAccessException or IOException)
+        {
+            return false;
+        }
+    }
+
+    public void OpenSpeechPrivacySettings()
+    {
+        try
+        {
+            System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo("ms-settings:privacy-speech") { UseShellExecute = true });
+        }
+        catch (System.ComponentModel.Win32Exception)
+        {
+        }
+    }
+
     public bool UsesDefaultMicrophoneOnly => true;
 
     public IReadOnlyList<string> SupportedLanguages() =>
@@ -84,9 +131,12 @@ public sealed class WindowsSpeechRecognizer : IOfflineSpeechRecognizer
         }
     }
 
-    private static OfflineSpeechException PrivacyFailure(Exception exception) =>
-        new(OfflineSpeechFailure.SpeechPrivacyPolicyNotAccepted,
-            "windows dictation needs online speech recognition switched on in settings, privacy & security, speech.", exception);
+    private OfflineSpeechException PrivacyFailure(Exception exception)
+    {
+        onlineSpeechWasRefused = true;
+        return new(OfflineSpeechFailure.SpeechPrivacyPolicyNotAccepted,
+            "windows dictation needs online speech recognition. turn it on from the card on the island.", exception);
+    }
 
     /// <summary>With no capture device at all the recogniser fails with an "internal speech error" COMException.</summary>
     private static OfflineSpeechException Unavailable(Exception exception) =>

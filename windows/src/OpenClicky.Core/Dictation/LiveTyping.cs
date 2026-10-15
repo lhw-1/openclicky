@@ -330,12 +330,13 @@ public static class LiveTypingModifierGuard
         LiveTypingModifiers.Shift | LiveTypingModifiers.Control | LiveTypingModifiers.Alt | LiveTypingModifiers.Windows;
 
     /// <summary>
-    /// The flag the dictation key itself sets, by the Windows dictation keys: Right Ctrl → Control,
+    /// The flag the dictation key itself sets, by the Windows dictation keys: Right / Left Ctrl → Control,
     /// Right Alt → Alt, Right Shift → Shift, Caps Lock → none (it changes nothing about unicode text).
     /// </summary>
     public static LiveTypingModifiers OwnModifier(DictationHotkey dictationKey) => dictationKey switch
     {
         DictationHotkey.RightControl => LiveTypingModifiers.Control,
+        DictationHotkey.LeftControl => LiveTypingModifiers.Control,
         DictationHotkey.RightAlt => LiveTypingModifiers.Alt,
         DictationHotkey.RightShift => LiveTypingModifiers.Shift,
         _ => LiveTypingModifiers.None,

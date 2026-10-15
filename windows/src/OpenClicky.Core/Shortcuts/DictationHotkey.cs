@@ -4,8 +4,8 @@
 //
 //  The one key that is held (or tapped) to dictate anywhere. A single key, because it has to work
 //  on top of whatever app is in front without being a shortcut that app already has. The Mac uses
-//  fn by default; fn is invisible to Windows, so here it is Right Ctrl by default, with Right Alt,
-//  Right Shift and Caps Lock as alternatives.
+//  fn by default; fn is invisible to Windows, so here it is Left Ctrl by default, with Right Ctrl,
+//  Right Alt, Right Shift and Caps Lock as alternatives.
 //
 
 namespace OpenClicky.Core.Shortcuts;
@@ -13,6 +13,7 @@ namespace OpenClicky.Core.Shortcuts;
 public enum DictationHotkey
 {
     RightControl,
+    LeftControl,
     RightAlt,
     RightShift,
     CapsLock,
@@ -82,14 +83,15 @@ public static class VirtualKeys
 public static class DictationHotkeys
 {
     public static readonly IReadOnlyList<DictationHotkey> AllCases =
-        new[] { DictationHotkey.RightControl, DictationHotkey.RightAlt, DictationHotkey.RightShift, DictationHotkey.CapsLock };
+        new[] { DictationHotkey.LeftControl, DictationHotkey.RightControl, DictationHotkey.RightAlt, DictationHotkey.RightShift, DictationHotkey.CapsLock };
 
-    public const DictationHotkey Default = DictationHotkey.RightControl;
+    public const DictationHotkey Default = DictationHotkey.LeftControl;
 
     /// <summary>The value stored in preferences (same idea as the Swift enum's raw value).</summary>
     public static string RawValue(this DictationHotkey hotkey) => hotkey switch
     {
         DictationHotkey.RightControl => "rightControl",
+        DictationHotkey.LeftControl => "leftControl",
         DictationHotkey.RightAlt => "rightAlt",
         DictationHotkey.RightShift => "rightShift",
         DictationHotkey.CapsLock => "capsLock",
@@ -97,7 +99,7 @@ public static class DictationHotkeys
     };
 
     /// <summary>Reads a stored raw value. Anything unknown — including the Mac-only values "fn",
-    /// "rightOption" and "rightCommand" from a shared or migrated preference — falls back to Right Ctrl,
+    /// "rightOption" and "rightCommand" from a shared or migrated preference — falls back to Left Ctrl,
     /// as the Mac falls back to fn.</summary>
     public static DictationHotkey FromRawValue(string? rawValue)
     {
@@ -112,6 +114,7 @@ public static class DictationHotkeys
     public static int VirtualKey(this DictationHotkey hotkey) => hotkey switch
     {
         DictationHotkey.RightControl => VirtualKeys.RightControl,
+        DictationHotkey.LeftControl => VirtualKeys.LeftControl,
         DictationHotkey.RightAlt => VirtualKeys.RightAlt,
         DictationHotkey.RightShift => VirtualKeys.RightShift,
         DictationHotkey.CapsLock => VirtualKeys.CapsLock,
@@ -122,6 +125,7 @@ public static class DictationHotkeys
     public static CompanionModifiers ModifierFlag(this DictationHotkey hotkey) => hotkey switch
     {
         DictationHotkey.RightControl => CompanionModifiers.Control,
+        DictationHotkey.LeftControl => CompanionModifiers.Control,
         DictationHotkey.RightAlt => CompanionModifiers.Alt,
         DictationHotkey.RightShift => CompanionModifiers.Shift,
         DictationHotkey.CapsLock => CompanionModifiers.CapsLock,
@@ -133,6 +137,7 @@ public static class DictationHotkeys
     public static (PhysicalModifiers Own, PhysicalModifiers Twin) SideBits(this DictationHotkey hotkey) => hotkey switch
     {
         DictationHotkey.RightControl => (PhysicalModifiers.RightControl, PhysicalModifiers.LeftControl),
+        DictationHotkey.LeftControl => (PhysicalModifiers.LeftControl, PhysicalModifiers.RightControl),
         DictationHotkey.RightAlt => (PhysicalModifiers.RightAlt, PhysicalModifiers.LeftAlt),
         DictationHotkey.RightShift => (PhysicalModifiers.RightShift, PhysicalModifiers.LeftShift),
         DictationHotkey.CapsLock => (PhysicalModifiers.CapsLock, PhysicalModifiers.None),
@@ -143,6 +148,7 @@ public static class DictationHotkeys
     public static string KeycapLabel(this DictationHotkey hotkey) => hotkey switch
     {
         DictationHotkey.RightControl => "right Ctrl",
+        DictationHotkey.LeftControl => "left Ctrl",
         DictationHotkey.RightAlt => "right Alt",
         DictationHotkey.RightShift => "right Shift",
         DictationHotkey.CapsLock => "Caps Lock",
@@ -152,6 +158,7 @@ public static class DictationHotkeys
     public static string DisplayName(this DictationHotkey hotkey) => hotkey switch
     {
         DictationHotkey.RightControl => "right control",
+        DictationHotkey.LeftControl => "left control",
         DictationHotkey.RightAlt => "right alt",
         DictationHotkey.RightShift => "right shift",
         DictationHotkey.CapsLock => "caps lock",

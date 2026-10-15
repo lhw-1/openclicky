@@ -125,6 +125,9 @@ public sealed class CompanionShortcutRecognizer
     /// <summary>Talk's modifiers came together while the dictation key was held: not a Ctrl+Win question
     /// until one of them is let go, so one gesture never opens a take and a question at once.</summary>
     private bool talkHeldBackByDictation;
+    /// <summary>Left Ctrl dictating is also talk's Ctrl: this press of it went to Ctrl+Win (Win was down, or
+    /// joined the hold), so it is no take until it comes back up.</summary>
+    private bool dictationKeyPressIsTalk;
 
     public CompanionShortcutRecognizer(DictationHotkey dictationKey = DictationHotkeys.Default)
     {
@@ -188,9 +191,19 @@ public sealed class CompanionShortcutRecognizer
         var talkModifiersDown = Contains(companionFlags, CompanionModifiers.Control | CompanionModifiers.Windows);
 
         var dictationEvents = new List<CompanionShortcutEvent>();
+        var dictationGaveWayToTalk = false;
         if (dictationKeyWentDown)
         {
-            if (IsTalkHeld && talkModifiersDown)
+            if (dictationKeyPressIsTalk)
+            {
+                // A repeat of a left Ctrl press that talk took (Win was let go first): still no take.
+            }
+            else if (dictationKey == DictationHotkey.LeftControl && talkModifiersDown)
+            {
+                // Win, then left Ctrl: talk, and the press is talk's until it comes up.
+                dictationKeyPressIsTalk = true;
+            }
+            else if (IsTalkHeld && talkModifiersDown)
             {
                 // Talk (Ctrl + Win) with the dictation key added by accident is still talk. The key's
                 // press is not tracked, so its release is no event either. (The Mac recomputes the
@@ -244,6 +257,15 @@ public sealed class CompanionShortcutRecognizer
             keyEventDuringDictationHold = false;
             keyWentDownDuringDictationHold = false;
         }
+        else if (IsDictationKeyHeld && dictationKey == DictationHotkey.LeftControl && !editModifierJoinedDuringHold && talkModifiersDown)
+        {
+            // Win joined the held left Ctrl: the hold was talk's Ctrl, not a take. The take opened by the
+            // press is cancelled as a shortcut first, so the microphone is free for the question.
+            ResetDictationState();
+            dictationKeyPressIsTalk = true;
+            dictationGaveWayToTalk = true;
+            dictationEvents.Add(CompanionShortcutEvent.DictationReleased(wasTap: false, keyWasPressedDuringHold: true));
+        }
         else if (IsDictationKeyHeld && !editModifierJoinedDuringHold && Contains(companionFlags, CompanionModifiers.Control))
         {
             // Ctrl pressed while the dictation key is held: Hey Clicky mode for this take.
@@ -262,13 +284,15 @@ public sealed class CompanionShortcutRecognizer
             talkHeldBackByDictation = true;
         }
         var isTalkHeldNow = talkModifiersDown && !talkHeldBackByDictation;
+        if (dictationKeyIsDownNow == false) dictationKeyPressIsTalk = false;
         var events = new List<CompanionShortcutEvent>();
+        if (dictationGaveWayToTalk) events.AddRange(dictationEvents);
         if (isTalkHeldNow != IsTalkHeld)
         {
             IsTalkHeld = isTalkHeldNow;
             events.Add(isTalkHeldNow ? CompanionShortcutEvent.TalkPressed : CompanionShortcutEvent.TalkReleased);
         }
-        events.AddRange(dictationEvents);
+        if (!dictationGaveWayToTalk) events.AddRange(dictationEvents);
 
         // A Ctrl tap: Ctrl alone goes down from no modifiers, and everything comes back up shortly
         // after without any other modifier or key joining in between. The dictation key moving at all
@@ -316,6 +340,8 @@ public sealed class CompanionShortcutRecognizer
     {
         var keyFlag = dictationKey.ModifierFlag();
         if ((trackedFlags & keyFlag) == 0) return trackedFlags;
+        // Left Ctrl dictating is also talk's Ctrl: with Win down it is Ctrl.
+        if (dictationKey == DictationHotkey.LeftControl && (trackedFlags & CompanionModifiers.Windows) != 0) return trackedFlags;
         var twin = dictationKey.SideBits().Twin;
         var twinIsDown = twin != PhysicalModifiers.None && (modifiers & twin) != 0;
         return twinIsDown ? trackedFlags : trackedFlags & ~keyFlag;
@@ -330,6 +356,7 @@ public sealed class CompanionShortcutRecognizer
         lastEditTapCompletedAt = null;
         keyEventDuringDictationHold = false;
         keyWentDownDuringDictationHold = false;
+        dictationKeyPressIsTalk = false;
     }
 
     public void Reset()
