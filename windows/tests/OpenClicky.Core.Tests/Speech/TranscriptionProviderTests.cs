@@ -267,11 +267,20 @@ public class WindowsSpeechTranscriptionTests
         public string LanguageTag => "en-US";
         public string FinalText { get; set; } = "";
         public bool WasCancelled { get; private set; }
+        public bool ThrowsOnCancel { get; set; }
         public void Update(string text) => TranscriptUpdated?.Invoke(text);
         public void Fail(Exception error) => Error?.Invoke(error);
         public Task<string> StopAsync() => Task.FromResult(FinalText);
-        public void Cancel() => WasCancelled = true;
-        public ValueTask DisposeAsync() => ValueTask.CompletedTask;
+        public void Cancel()
+        {
+            WasCancelled = true;
+            if (ThrowsOnCancel) throw new System.Runtime.InteropServices.COMException("already stopped", unchecked((int)0x80131509));
+        }
+        public ValueTask DisposeAsync()
+        {
+            if (ThrowsOnCancel) throw new System.Runtime.InteropServices.COMException("already stopped", unchecked((int)0x80131509));
+            return ValueTask.CompletedTask;
+        }
     }
 
     private sealed class FakeRecognizer(FakeOfflineSession session) : IOfflineSpeechRecognizer
@@ -285,6 +294,19 @@ public class WindowsSpeechTranscriptionTests
             LastOptions = options;
             return StartFailure is { } failure ? Task.FromException<IOfflineSpeechSession>(failure) : Task.FromResult<IOfflineSpeechSession>(session);
         }
+    }
+
+    /// <summary>The recogniser's cancel and dispose throw once the session has stopped by itself; neither may reach the take.</summary>
+    [Fact]
+    public async Task ACancelThatThrowsInTheRecogniserNeverEscapes()
+    {
+        var offline = new FakeOfflineSession { ThrowsOnCancel = true };
+        var log = new TranscriptLog();
+        var provider = new WindowsSpeechTranscriptionProvider(new FakeRecognizer(offline));
+        var session = await provider.StartStreamingSessionAsync([], log.Partial, log.Final, log.Error);
+        Assert.Null(Record.Exception(session.Cancel));
+        Assert.True(offline.WasCancelled);
+        Assert.Null(Record.Exception(session.Cancel));
     }
 
     [Fact]

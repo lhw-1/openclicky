@@ -172,14 +172,22 @@ public sealed class WindowsSpeechRecognizer : IOfflineSpeechRecognizer
             TranscriptUpdated?.Invoke(text);
         }
 
+        // Once the session has ended by itself (a result closed it, the silence timeout, an error)
+        // StopAsync and CancelAsync throw — as a COMException with the invalid-operation HRESULT
+        // (0x80131509), not the InvalidOperationException the projection suggests. A tester's PC hit
+        // it on every release (2026-10-14). Nothing here lets any of that out: the take's text is
+        // what matters, and it is kept whatever the recogniser says about stopping.
         public async Task<string> StopAsync()
         {
             stopped = true;
             try
             {
-                await recognizer.ContinuousRecognitionSession.StopAsync().AsTask().ConfigureAwait(false);
+                if (recognizer.State != SpeechRecognizerState.Idle)
+                {
+                    await recognizer.ContinuousRecognitionSession.StopAsync().AsTask().ConfigureAwait(false);
+                }
             }
-            catch (InvalidOperationException)
+            catch (Exception)
             {
                 // Already stopped (silence timeout or an error).
             }
@@ -191,9 +199,11 @@ public sealed class WindowsSpeechRecognizer : IOfflineSpeechRecognizer
             stopped = true;
             try
             {
-                _ = recognizer.ContinuousRecognitionSession.CancelAsync();
+                if (recognizer.State == SpeechRecognizerState.Idle) return;
+                _ = recognizer.ContinuousRecognitionSession.CancelAsync().AsTask().ContinueWith(
+                    _ => { }, TaskContinuationOptions.OnlyOnFaulted);
             }
-            catch (InvalidOperationException)
+            catch (Exception)
             {
             }
         }
@@ -201,7 +211,13 @@ public sealed class WindowsSpeechRecognizer : IOfflineSpeechRecognizer
         public ValueTask DisposeAsync()
         {
             Cancel();
-            recognizer.Dispose();
+            try
+            {
+                recognizer.Dispose();
+            }
+            catch (Exception)
+            {
+            }
             return ValueTask.CompletedTask;
         }
 

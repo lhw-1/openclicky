@@ -149,9 +149,17 @@ internal sealed class WindowsSpeechTranscriptionSession : IBuddyStreamingTranscr
         }
         speechSession.TranscriptUpdated -= HandleTranscriptUpdated;
         speechSession.Error -= HandleError;
+        // Once the recogniser has stopped by itself, its cancel throws (a COMException, not the
+        // InvalidOperationException the name suggests); so can its dispose. Neither reaches the take.
         try { speechSession.Cancel(); }
         catch (Exception error) { AppLog.Write($"transcription (this pc): cancel failed: {error.Message}"); }
-        _ = speechSession.DisposeAsync().AsTask();
+        try
+        {
+            _ = speechSession.DisposeAsync().AsTask().ContinueWith(
+                disposal => AppLog.Write($"transcription (this pc): dispose failed: {disposal.Exception?.GetBaseException().Message}"),
+                TaskContinuationOptions.OnlyOnFaulted);
+        }
+        catch (Exception error) { AppLog.Write($"transcription (this pc): dispose failed: {error.Message}"); }
     }
 
     private void DeliverFinalTranscriptIfNeeded(string transcriptText)

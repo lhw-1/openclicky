@@ -219,7 +219,28 @@ public sealed partial class BuddyDictationManager : ObservableObject, IDictation
     private void TearDownRecordingAndSession()
     {
         StopCapture();
-        activeTranscriptionSession?.Cancel();
+        CancelActiveTranscriptionSession();
+    }
+
+    /// <summary>
+    /// Lets the open session go, whatever its cancel does. The Windows recogniser's cancel threw a
+    /// COMException on every release once the session had stopped by itself (a tester's PC,
+    /// 2026-10-14): the exception left the take half finished, nothing was pasted, the microphone
+    /// stayed "busy" and the next take failed on the same cancel. A session is never kept for that.
+    /// </summary>
+    private void CancelActiveTranscriptionSession()
+    {
+        var session = activeTranscriptionSession;
+        activeTranscriptionSession = null;
+        if (session is null) return;
+        try
+        {
+            session.Cancel();
+        }
+        catch (Exception error)
+        {
+            AppLog.Write($"dictation: the session's cancel failed ({transcriptionProvider.DisplayName}): {error.GetType().Name}: {error.Message}");
+        }
     }
 
     private void StopCapture()
@@ -274,8 +295,7 @@ public sealed partial class BuddyDictationManager : ObservableObject, IDictation
 
     private async Task StartRecognitionSessionAsync(CancellationToken cancellationToken)
     {
-        activeTranscriptionSession?.Cancel();
-        activeTranscriptionSession = null;
+        CancelActiveTranscriptionSession();
 
         var callbacks = MakeTranscriptionCallbacks(BeginNewSessionIdentity());
         var session = await transcriptionProvider.StartStreamingSessionAsync(

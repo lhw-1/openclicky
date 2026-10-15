@@ -20,9 +20,15 @@ public class BuddyDictationManagerTests : IDisposable
         public int FramesHeard;
         public bool FinalRequested;
         public bool Cancelled;
+        /// <summary>The Windows recogniser's CancelAsync on a session already stopped: a COMException (0x80131509).</summary>
+        public bool ThrowsOnCancel;
         public void AppendAudio(AudioFrame frame) => Interlocked.Increment(ref FramesHeard);
         public void RequestFinalTranscript() => FinalRequested = true;
-        public void Cancel() => Cancelled = true;
+        public void Cancel()
+        {
+            Cancelled = true;
+            if (ThrowsOnCancel) throw new System.Runtime.InteropServices.COMException("The text associated with this error code could not be found.", unchecked((int)0x80131509));
+        }
     }
 
     private sealed class FakeProvider : IBuddyTranscriptionProvider
@@ -80,6 +86,28 @@ public class BuddyDictationManagerTests : IDisposable
         Assert.Equal("hello world", harness.Submitted[0]);
         Assert.False(harness.Manager.IsDictationInProgress);
         Assert.False(harness.Capture.HasListeners);
+    }
+
+    /// <summary>A tester's PC (2026-10-14): the Windows recogniser's cancel threw on every release, the
+    /// exception left the take half finished (nothing pasted, "the microphone is still busy"), and the
+    /// next take failed on the same cancel. A session that throws on cancel is let go of all the same.</summary>
+    [Fact]
+    public async Task ASessionWhoseCancelThrowsStillFinishesTheTakeAndTheNextOneStarts()
+    {
+        var harness = await StartedHarnessAsync();
+        var session = harness.Provider.Sessions.Single();
+        session.ThrowsOnCancel = true;
+        await mainThread.InvokeAsync(harness.Manager.StopPushToTalkFromKeyboardShortcut);
+        session.Callbacks.OnFinalTranscriptReady("hello world");
+        Assert.True(await Eventually.TrueAsync(() => harness.Submitted.Count == 1));
+        Assert.Equal("hello world", harness.Submitted[0]);
+        Assert.True(session.Cancelled);
+        Assert.False(harness.Manager.IsDictationInProgress);
+
+        await mainThread.RunAsync(() => harness.Manager.StartPushToTalkFromKeyboardShortcutAsync("", harness.Drafts.Add, harness.Submitted.Add));
+        Assert.Equal(2, harness.Provider.Sessions.Count);
+        Assert.True(harness.Manager.IsRecordingFromKeyboardShortcut);
+        Assert.Null(harness.Manager.LastErrorMessage);
     }
 
     [Fact]
