@@ -236,6 +236,16 @@ public sealed class AppComposition : ICompanionHost, IDisposable
     public void Quit()
     {
         AppLog.Write("quit");
+        // Stopped now, with the windows still open: at Application.Exit they are closed already,
+        // and hiding a closed window throws ("Cannot set Visibility … after a Window has closed").
+        try
+        {
+            Dispose();
+        }
+        catch (Exception error)
+        {
+            AppLog.Write($"quit: stop failed: {error.Message}");
+        }
         application.Shutdown();
     }
 
