@@ -28,6 +28,16 @@ enum PermissionStep: String, CaseIterable, Identifiable {
 
     var id: String { rawValue }
 
+    /// The permission's name in the checklist under every card.
+    var shortName: String {
+        switch self {
+        case .microphone: return "microphone"
+        case .accessibility: return "accessibility"
+        case .screenRecording: return "screen recording"
+        case .screenContent: return "screen content"
+        }
+    }
+
     /// What the permission is for, in the card's own words (lowercase, one sentence).
     var headline: String {
         switch self {
@@ -89,8 +99,18 @@ struct PermissionStatus: Equatable {
     }
 }
 
+/// One line of the checklist under a card: a permission and whether it has landed.
+struct PermissionChecklistItem: Equatable {
+    let step: PermissionStep
+    let isGranted: Bool
+}
+
 struct PermissionPrompt: Equatable {
     enum Stage: Equatable {
+        /// The first card on a fresh Mac: says four permissions are coming and lists them, so
+        /// the prompts that follow are expected (a tester was taken aback by them one by one).
+        /// Its button grants the first permission, so it costs no extra tap.
+        case overview
         /// The button still offers to ask for the permission.
         case ask
         /// The request is out: macOS has the ball, and the card explains where to look.
@@ -102,9 +122,33 @@ struct PermissionPrompt: Equatable {
     let status: PermissionStatus
     var stage: Stage = .ask
 
-    var headline: String { step.headline }
-    var detail: String { stage == .waiting ? step.waitingDetail : step.detail }
-    var buttonTitle: String { stage == .waiting ? step.waitingButtonTitle : step.buttonTitle }
+    var headline: String {
+        switch stage {
+        case .overview: return "four permissions to set up:"
+        case .ask, .waiting: return step.headline
+        }
+    }
+
+    var detail: String {
+        switch stage {
+        case .overview: return "macOS asks for each in turn, and i'll say what it's for. first, accessibility, so i can paste and point."
+        case .ask: return step.detail
+        case .waiting: return step.waitingDetail
+        }
+    }
+
+    var buttonTitle: String {
+        switch stage {
+        case .overview: return "let's start"
+        case .ask: return step.buttonTitle
+        case .waiting: return step.waitingButtonTitle
+        }
+    }
+
+    /// Every permission in asking order, ticked once granted: the checklist under the card.
+    var checklist: [PermissionChecklistItem] {
+        PermissionStep.allCases.map { PermissionChecklistItem(step: $0, isGranted: status.isGranted($0)) }
+    }
 
     /// Whether to offer the escape hatch for a stale Accessibility row: the list shows OpenClicky
     /// switched on, but it was approved under a signature the running app no longer has (an update
@@ -137,6 +181,9 @@ final class PermissionPromptController: ObservableObject {
     /// The ✕ on the card: the user gets on with their day and we stop nagging until relaunch.
     private(set) var isDismissedForThisLaunch = false
 
+    /// The overview is the first card once per launch, and only while nothing has been granted.
+    private var hasShownOverview = false
+
     /// Performs the macOS request for a step. Injected so tests never open System Settings.
     var performRequest: @MainActor (PermissionStep) -> Void = PermissionPromptController.requestFromSystem(_:)
     /// Clears the app's own Accessibility row and relaunches. Injected so tests never touch TCC.
@@ -165,7 +212,15 @@ final class PermissionPromptController: ObservableObject {
             setPrompt(nil)
             return
         }
-        let stage = currentPrompt?.step == step ? (currentPrompt?.stage ?? .ask) : .ask
+        let stage: PermissionPrompt.Stage
+        if currentPrompt?.step == step {
+            stage = currentPrompt?.stage ?? .ask
+        } else if !hasShownOverview, status == PermissionStatus() {
+            stage = .overview
+        } else {
+            stage = .ask
+        }
+        if stage == .overview { hasShownOverview = true }
         setPrompt(PermissionPrompt(step: step, status: status, stage: stage))
     }
 
@@ -287,8 +342,6 @@ struct PermissionPromptView: View {
                         .lineSpacing(2)
                         .lineLimit(2)
                         .fixedSize(horizontal: false, vertical: true)
-                    progressDashes
-                        .padding(.top, 6)
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
 
@@ -319,6 +372,10 @@ struct PermissionPromptView: View {
                 }
                 .fixedSize()
             }
+
+            // Under the whole row, so the four names have the card's width.
+            checklistRow
+                .padding(.leading, DS.HUD.tileSize + 14)
 
             if prompt.offersAccessibilityTrustReset {
                 Button(action: { controller.resetAccessibilityTrust() }) {
@@ -355,23 +412,30 @@ struct PermissionPromptView: View {
         }
     }
 
-    /// One dash per permission: filled for the ones already granted, half-lit for the one being
-    /// asked for, dim for the rest.
-    private var progressDashes: some View {
-        HStack(spacing: 5) {
-            ForEach(PermissionStep.allCases) { step in
-                Capsule()
-                    .fill(dashColor(for: step))
-                    .frame(width: 16, height: 3)
+    /// The four permissions by name: a tick for the ones already granted, lit for the one being
+    /// asked for, dim for the rest. The same row on every card, so the person always sees how
+    /// many are left (it replaced a row of nameless dashes).
+    private var checklistRow: some View {
+        HStack(spacing: 12) {
+            ForEach(prompt.checklist, id: \.step) { item in
+                HStack(spacing: 3) {
+                    Image(systemName: item.isGranted ? "checkmark.circle.fill" : "circle")
+                        .font(.system(size: 9, weight: .semibold))
+                    Text(item.step.shortName)
+                        .font(.system(size: 10.5, weight: item.step == prompt.step ? .semibold : .regular))
+                }
+                .foregroundColor(checklistColor(for: item))
             }
         }
+        .lineLimit(1)
+        .minimumScaleFactor(0.85)
         .accessibilityElement()
-        .accessibilityLabel("step \((PermissionStep.allCases.firstIndex(of: prompt.step) ?? 0) + 1) of \(PermissionStep.allCases.count)")
+        .accessibilityLabel("step \((PermissionStep.allCases.firstIndex(of: prompt.step) ?? 0) + 1) of \(PermissionStep.allCases.count): " + prompt.checklist.map { "\($0.step.shortName) \($0.isGranted ? "granted" : "not yet")" }.joined(separator: ", "))
     }
 
-    private func dashColor(for step: PermissionStep) -> Color {
-        if prompt.status.isGranted(step) { return DS.HUD.live }
-        if step == prompt.step { return DS.HUD.pointer }
-        return DS.HUD.surfaceRaised
+    private func checklistColor(for item: PermissionChecklistItem) -> Color {
+        if item.isGranted { return DS.HUD.live }
+        if item.step == prompt.step { return DS.HUD.pointer }
+        return DS.HUD.text3
     }
 }

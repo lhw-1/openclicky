@@ -99,6 +99,53 @@ struct PermissionPromptTests {
         #expect(controller.currentPrompt?.stage == .ask)
     }
 
+    /// A tester on a fresh Mac was taken aback by four prompts in a row: the first card now says
+    /// how many are coming and lists them, and its one button still grants the first.
+    @Test func theFirstCardListsAllFourPermissionsBeforeAsking() {
+        let spy = Spy()
+        let controller = makeController(spy)
+
+        controller.update(with: PermissionStatus())
+        let overview = controller.currentPrompt
+        #expect(overview?.stage == .overview)
+        #expect(overview?.step == .accessibility)
+        #expect(overview?.headline.contains("four") == true)
+        #expect(overview?.buttonTitle.contains("start") == true)
+        #expect(overview?.detail.contains("accessibility") == true)
+        #expect(overview?.checklist.map(\.step) == PermissionStep.allCases)
+        #expect(overview?.checklist.allSatisfy { !$0.isGranted } == true)
+
+        controller.grant()
+        #expect(spy.requestedSteps == [.accessibility])
+        #expect(controller.currentPrompt?.stage == .waiting)
+    }
+
+    @Test func theOverviewIsSkippedOnceAnythingIsGrantedAndNeverComesBack() {
+        let spy = Spy()
+        let controller = makeController(spy)
+
+        // A relaunch after Screen Recording: something is granted already, no overview.
+        controller.update(with: PermissionStatus(accessibility: true))
+        #expect(controller.currentPrompt?.stage == .ask)
+
+        let freshController = makeController(spy)
+        freshController.update(with: PermissionStatus())
+        freshController.grant()
+        freshController.update(with: PermissionStatus(accessibility: true))
+        #expect(freshController.currentPrompt?.step == .microphone)
+        #expect(freshController.currentPrompt?.stage == .ask)
+        // The checklist on a later card shows what landed.
+        #expect(freshController.currentPrompt?.checklist.first { $0.step == .accessibility }?.isGranted == true)
+        #expect(freshController.currentPrompt?.checklist.first { $0.step == .microphone }?.isGranted == false)
+        // Taken away and brought back (the poll reports no change): still no overview.
+        freshController.update(with: PermissionStatus())
+        #expect(freshController.currentPrompt?.stage == .ask)
+    }
+
+    @Test func everyPermissionHasAShortNameForTheChecklist() {
+        #expect(PermissionStep.allCases.map(\.shortName) == ["accessibility", "microphone", "screen recording", "screen content"])
+    }
+
     @Test func theProgressDotsFollowWhatIsAlreadyGranted() {
         let spy = Spy()
         let controller = makeController(spy)

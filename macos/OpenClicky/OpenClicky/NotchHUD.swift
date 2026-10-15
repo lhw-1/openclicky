@@ -192,8 +192,9 @@ final class NotchHUDModel: ObservableObject {
         return cardTopInset + 110 + (hasExamplePrompts ? 38 : 0)
     }
     var permissionHeight: CGFloat {
-        // The stale-row escape hatch adds a line under the card's row.
-        let contentHeight: CGFloat = permissionPrompt?.offersAccessibilityTrustReset == true ? 118 : 96
+        // Headline, two lines of copy and the named checklist; the stale-row escape hatch adds a
+        // line under the card's row.
+        let contentHeight: CGFloat = permissionPrompt?.offersAccessibilityTrustReset == true ? 132 : 110
         return cardTopInset + contentHeight
     }
     var composerHeight: CGFloat { geometry.notchHeight + composerContentHeight }
