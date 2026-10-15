@@ -839,6 +839,9 @@ final class CompanionManager: ObservableObject {
         NotificationCenter.default.addObserver(
             forName: OpenClickyConfiguration.credentialsChangedNotification, object: nil, queue: .main
         ) { [weak self] _ in
+        // Chrome and the Electron apps report nothing focused until told an assistive client is
+        // here; every one coming to the front is told, so dictation and rewrites can read its box.
+        ChromiumAccessibility.startWakingFrontApps()
             Task { @MainActor in
                 guard let self else { return }
                 AppLog.append("shell.json credentials changed; reconnecting realtime")
@@ -1481,6 +1484,9 @@ final class CompanionManager: ObservableObject {
             lastQuestionFailed = false
             // A new press owns the outcome from here: whatever the last release was waiting for is over.
             askOutcome = .listening
+            // A Chromium browser in front gets told an assistive client is here now, so by the
+            // release its text box is readable for "rephrase this" (ChromiumAccessibility).
+            ChromiumAccessibility.wakeFrontApp()
             askLiveWordsShownSincePress = false
 
             // Cancel any pending transient hide so the overlay stays visible

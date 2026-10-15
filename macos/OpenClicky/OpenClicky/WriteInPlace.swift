@@ -80,10 +80,17 @@ struct WritingTarget: Equatable {
         var snapshot = FocusedFieldReader.snapshot()
         // A browser builds a page's accessibility tree on the first request, which comes back with
         // nothing focused (Safari, a freshly opened compose window): asked again a moment later, it
-        // answers with the text box.
-        for _ in 0..<2 where snapshot.role == nil && snapshot.appBundleID != nil {
-            try? await Task.sleep(for: .milliseconds(250))
-            snapshot = FocusedFieldReader.snapshot()
+        // answers with the text box. A Chromium browser builds it only once told an assistive
+        // client is here (ChromiumAccessibility), about two seconds later: the press told it, and
+        // a short hold is given the rest of those seconds here.
+        if snapshot.role == nil, snapshot.appBundleID != nil {
+            let frontAppIsChromium = NSWorkspace.shared.frontmostApplication.map(ChromiumAccessibility.isChromiumBased) ?? false
+            if frontAppIsChromium { ChromiumAccessibility.wakeFrontApp() }
+            let attempts = frontAppIsChromium ? 10 : 2
+            for _ in 0..<attempts where snapshot.role == nil {
+                try? await Task.sleep(for: .milliseconds(250))
+                snapshot = FocusedFieldReader.snapshot()
+            }
         }
         let capturedTarget = target(in: snapshot)
         // What the text box looked like, never its words: enough to see why nothing was offered.

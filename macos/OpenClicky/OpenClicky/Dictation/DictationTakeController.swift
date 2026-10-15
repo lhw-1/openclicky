@@ -530,7 +530,10 @@ final class DictationTakeController: ObservableObject {
         loudestLevelThisTake = nil
         levelSamplesThisTake = 0
         // The focused element is read now (a few AX calls); the window's captions, which can take
-        // hundreds of milliseconds in a browser, are read once the microphone is open.
+        // hundreds of milliseconds in a browser, are read once the microphone is open. A Chromium
+        // browser that was never told an assistive client is here answers with no element at all;
+        // told now, it answers by the time the release looks for a text box again.
+        host.wakeFrontAppAccessibility()
         fieldAtPress = host.readFocusedField()
         focusedTargetAtPress = host.readFocusedTextTarget()
         nearbyTermsAtPress = []

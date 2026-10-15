@@ -47,6 +47,8 @@ extension BuddyDictationManager: DictationCapturing {
 /// What the controller needs from the Mac around a take; injectable so tests paste and type nowhere.
 struct DictationHost {
     var readFocusedField: () -> FocusedFieldSnapshot = { FocusedFieldReader.snapshot() }
+    /// A Chromium browser in front is told an assistive client is here, else it reports no field.
+    var wakeFrontAppAccessibility: () -> Void = { ChromiumAccessibility.wakeFrontApp() }
     var readNearbyTerms: () -> [String] = { FocusedFieldReader.nearbyTerms() }
     var frontAppBundleID: () -> String? = { NSWorkspace.shared.frontmostApplication?.bundleIdentifier }
     var isSecureInputOn: () -> Bool = { IsSecureEventInputEnabled() }
