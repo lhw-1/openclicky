@@ -610,6 +610,9 @@ final class CompanionManager: ObservableObject {
     /// Conversation history so Claude remembers prior exchanges within a session.
     /// Each entry is the user's transcript and Claude's response.
     private var conversationHistory: [(userTranscript: String, assistantResponse: String)] = []
+    /// The last question sent down the ask lane and when: the same one again soon after means the
+    /// answer missed what they meant (`RepeatedQuestion`).
+    private var lastAskQuestion: (transcript: String, askedAt: Date)?
     /// Account notices (a limit, the free service's trouble) already spoken this session: each is
     /// said once, then the lane falls back silently.
     private var spokenAccountNotices: Set<String> = []
@@ -836,12 +839,12 @@ final class CompanionManager: ObservableObject {
         // A key or token changed in shell.json: the open Realtime session was minted with the old
         // one, so replace it rather than keep using it until the next relaunch.
         OpenClickyConfiguration.startWatchingSettingsFile()
-        NotificationCenter.default.addObserver(
-            forName: OpenClickyConfiguration.credentialsChangedNotification, object: nil, queue: .main
-        ) { [weak self] _ in
         // Chrome and the Electron apps report nothing focused until told an assistive client is
         // here; every one coming to the front is told, so dictation and rewrites can read its box.
         ChromiumAccessibility.startWakingFrontApps()
+        NotificationCenter.default.addObserver(
+            forName: OpenClickyConfiguration.credentialsChangedNotification, object: nil, queue: .main
+        ) { [weak self] _ in
             Task { @MainActor in
                 guard let self else { return }
                 AppLog.append("shell.json credentials changed; reconnecting realtime")
@@ -1481,12 +1484,12 @@ final class CompanionManager: ObservableObject {
                 return
             }
             AppLog.append("ask: ⌃⌥ pressed, listening")
-            lastQuestionFailed = false
-            // A new press owns the outcome from here: whatever the last release was waiting for is over.
-            askOutcome = .listening
             // A Chromium browser in front gets told an assistive client is here now, so by the
             // release its text box is readable for "rephrase this" (ChromiumAccessibility).
             ChromiumAccessibility.wakeFrontApp()
+            lastQuestionFailed = false
+            // A new press owns the outcome from here: whatever the last release was waiting for is over.
+            askOutcome = .listening
             askLiveWordsShownSincePress = false
 
             // Cancel any pending transient hide so the overlay stays visible
@@ -1637,6 +1640,8 @@ final class CompanionManager: ObservableObject {
 
             do {
                 // Capture all connected screens so the AI has full context (an account sends at most two)
+                // Where the mouse was when they let go: what "this" points at.
+                let mouseLocationAtRelease = NSEvent.mouseLocation
                 let allScreenCaptures: [CompanionScreenCapture]
                 do {
                     allScreenCaptures = try await CompanionScreenCaptureUtility.captureAllScreensAsJPEG()
@@ -1670,7 +1675,19 @@ final class CompanionManager: ObservableObject {
                     agentActivityText = nil
                 }
 
-                let labeledImages = screenCaptures.map(Self.imageLabeledWithItsPixelSize)
+                var labeledImages = screenCaptures.map(Self.imageLabeledWithItsPixelSize)
+                // The pointer's place in its screenshot goes into the question, and a close-up of
+                // what is around it rides along, so "what is this?" is about the thing pointed at
+                // and not the window with focus.
+                let pointer = PointerInCapture.locate(mouse: mouseLocationAtRelease, in: screenCaptures)
+                if let pointer, let pointedCapture = screenCaptures.first(where: { $0.label == pointer.screenLabel }),
+                   let closeUp = PointerCloseUp.jpeg(from: pointedCapture.imageData, around: pointer) {
+                    labeledImages.append((data: closeUp, label: PointerCloseUp.label()))
+                }
+                let secondsSinceLastQuestion = lastAskQuestion.map { Date().timeIntervalSince($0.askedAt) } ?? .infinity
+                let isRepeatedQuestion = RepeatedQuestion.isRepeat(transcript, of: lastAskQuestion?.transcript, secondsSincePrevious: secondsSinceLastQuestion)
+                lastAskQuestion = (transcript: transcript, askedAt: Date())
+                if isRepeatedQuestion { AppLog.append("ask: the same question again; answering about what is under the pointer") }
                 // The text a "rephrase this" would replace: the highlight, or the box the cursor is in.
                 let writingTarget = await WritingTarget.captureFromFrontApp()
                 guard !Task.isCancelled else { return }
@@ -1714,7 +1731,7 @@ final class CompanionManager: ObservableObject {
                         images: labeledImages,
                         systemPrompt: Self.composeTalkInstructions(base: Self.withReplyLanguage(Self.companionVoiceResponseSystemPrompt) + toolsLine + writeInPlaceLine, skillsBlock: talkSkillsBlock()),
                         conversationHistory: historyForAPI,
-                        userPrompt: Self.askUserPrompt(transcript: transcript, writingTarget: writingTarget),
+                        userPrompt: Self.askUserPrompt(transcript: transcript, writingTarget: writingTarget, pointer: pointer, isRepeatedQuestion: isRepeatedQuestion),
                         tools: askTools,
                         onTextChunk: { accumulatedAnswer in
                             answerSpeaker.receive(accumulatedAnswer: accumulatedAnswer)
@@ -1930,17 +1947,21 @@ final class CompanionManager: ObservableObject {
 
     static let emptyAnswerSentence = "i didn't get an answer. please ask again."
 
-    /// The question as sent: what was said, plus the text it may be about. A text to write over
-    /// carries the exact words (the highlight in full, or the box's text); otherwise a highlight is
-    /// quoted the short way, as context for "what does this mean".
-    static func askUserPrompt(transcript: String, writingTarget: WritingTarget?) -> String {
+    /// The question as sent: what was said, plus the text it may be about, where the pointer is,
+    /// and whether it is the same question again. A text to write over carries the exact words
+    /// (the highlight in full, or the box's text); otherwise a highlight is quoted the short way,
+    /// as context for "what does this mean". Each line of context sits in its own brackets.
+    static func askUserPrompt(transcript: String, writingTarget: WritingTarget?, pointer: PointerInCapture? = nil, isRepeatedQuestion: Bool = false) -> String {
+        var contextLines: [String] = []
         if let writingTarget {
-            return transcript + "\n\n[" + writingTarget.contextLine + "]"
+            contextLines.append(writingTarget.contextLine)
+        } else if let selection = SelectedTextReader.currentSelection() {
+            contextLines.append(SelectedTextReader.contextLine(for: selection))
         }
-        if let selection = SelectedTextReader.currentSelection() {
-            return transcript + "\n\n[" + SelectedTextReader.contextLine(for: selection) + "]"
-        }
-        return transcript
+        if let pointer { contextLines.append(pointer.promptLine) }
+        if isRepeatedQuestion { contextLines.append(RepeatedQuestion.promptLine) }
+        guard !contextLines.isEmpty else { return transcript }
+        return transcript + "\n\n" + contextLines.map { "[" + $0 + "]" }.joined(separator: "\n")
     }
 
     /// An interrupted request: Swift's CancellationError, or URLSession's own (-999) when the task
