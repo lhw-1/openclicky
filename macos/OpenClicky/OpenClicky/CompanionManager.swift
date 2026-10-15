@@ -1013,7 +1013,7 @@ final class CompanionManager: ObservableObject {
             .filter { $0.status != .failed && !$0.displayText.isEmpty }
             .sink { [weak self] _ in self?.noteUse() }
             .store(in: &useCountingCancellables)
-        // Kokoro (and, before macOS 26, Parakeet) download on their own once setup is long done.
+        // Kokoro and Parakeet download on their own once setup is long done.
         // A few seconds in, so the launch itself stays quick.
         DispatchQueue.main.asyncAfter(deadline: .now() + 8) { [weak self] in
             guard let self else { return }
@@ -1021,8 +1021,8 @@ final class CompanionManager: ObservableObject {
         }
     }
 
-    /// The models that download on their own once the welcome tour is done: Kokoro's voice, and on
-    /// a Mac before macOS 26 Parakeet's hearing.
+    /// The models that download on their own once the welcome tour is done: Kokoro's voice and
+    /// Parakeet's hearing.
     func startAutomaticModelDownloads(tourIsFinished: Bool) {
         KokoroVoice.shared.startAutomaticSetup(tourIsFinished: tourIsFinished)
         ParakeetDictation.shared.startAutomaticSetup(tourIsFinished: tourIsFinished, engine: dictationSettings.engine,

@@ -15,6 +15,13 @@ import Testing
 @MainActor
 struct CleanUpSwitchReadersTests {
 
+    @Test func cleanUpWithAModelIsOnFromTheFirstTake() {
+        let defaults = UserDefaults(suiteName: "openclicky-cleanup-fresh-\(UUID().uuidString)")!
+        #expect(DictationSettings(defaults: defaults).polishWithModel)
+        defaults.set(false, forKey: "dictation.polishWithModel")
+        #expect(!DictationSettings(defaults: defaults).polishWithModel)
+    }
+
     private func makeSettings(polishWithModel: Bool, polishOfflineTakes: Bool, engine: DictationEngineChoice) -> DictationSettings {
         let defaults = UserDefaults(suiteName: "openclicky-cleanup-readers-\(UUID().uuidString)")!
         let settings = DictationSettings(defaults: defaults)

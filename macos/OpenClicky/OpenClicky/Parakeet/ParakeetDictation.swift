@@ -9,8 +9,9 @@
 //  languages. No Indian languages: those stay with Apple's recogniser or Sarvam.
 //
 //  The engine is the sherpa-onnx library that already ships for Kokoro; only the model (465 MB)
-//  is downloaded. On a Mac before macOS 26 it downloads on its own once the welcome tour is done
-//  and takes over from the old recogniser; on macOS 26 it is a choice in Settings → Dictation.
+//  is downloaded. It downloads on its own once the welcome tour is done and takes over from
+//  Apple's recogniser on every Mac (macOS 26's included: a tester on 26 only got it after finding
+//  it in Settings, 2026-10-15), unless the person already moved to another engine.
 //
 //  The loaded model lives in a helper process that starts the moment the dictation key goes down
 //  (it loads while the person speaks) and ends after three minutes without a take, or at once
@@ -116,15 +117,12 @@ final class ParakeetDictation: ObservableObject {
     /// on its own (choosing it in Settings clears this).
     nonisolated static let declinedKey = "openclicky.parakeet.declined"
 
-    /// Whether this Mac should get Parakeet without being asked: only before macOS 26, where the
-    /// offline engine is the old recogniser.
-    nonisolated static var isRecommendedForThisMac: Bool {
-        if #available(macOS 26, *) { return false }
-        return true
-    }
+    /// Whether this Mac should get Parakeet without being asked: every Mac. Before macOS 26 the
+    /// offline engine is the old recogniser; on 26 Apple's is better but Parakeet still hears more.
+    nonisolated static var isRecommendedForThisMac: Bool { true }
 
-    /// At launch and when the welcome tour ends: on a Mac before macOS 26 whose dictation is on the
-    /// offline engine, the model downloads in the background and takes over when it is ready.
+    /// At launch and when the welcome tour ends: on a Mac whose dictation is on the offline engine,
+    /// the model downloads in the background and takes over when it is ready.
     func startAutomaticSetup(tourIsFinished: Bool, engine currentEngine: DictationEngineChoice, bareLanguageCode: String?) {
         guard Self.isRecommendedForThisMac, !Self.isInstalled, tourIsFinished, downloadTask == nil,
               currentEngine == .offline, Self.hears(bareLanguageCode: bareLanguageCode),

@@ -19,6 +19,10 @@ struct ParakeetDictationTests {
         #expect(!ParakeetDictation.hears(bareLanguageCode: "ml"))
     }
 
+    @Test func everyMacGetsParakeetWithoutAsking() {
+        #expect(ParakeetDictation.isRecommendedForThisMac)
+    }
+
     @Test func anAutomaticDownloadReplacesOnlyTheOldOfflineEngine() {
         #expect(ParakeetDictation.engineAfterAutomaticDownload(current: .offline) == .parakeet)
         #expect(ParakeetDictation.engineAfterAutomaticDownload(current: .sarvam) == .sarvam)

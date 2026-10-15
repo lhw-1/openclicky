@@ -235,8 +235,10 @@ final class DictationSettings: ObservableObject {
         engine = DictationEngineChoice(rawValue: defaults.string(forKey: Keys.engine) ?? "") ?? .offline
         languageCode = defaults.string(forKey: Keys.language) ?? DictationLanguage.auto.code
         script = DictationScript(rawValue: defaults.string(forKey: Keys.script) ?? "") ?? .native
-        // Off on a fresh install: words type straight in as you speak until "clean up my words with ai" is switched on.
-        polishWithModel = defaults.bool(forKey: Keys.polishWithModel)
+        // On from the first take (a fresh install has nothing stored): a take is cleaned up by
+        // whichever model this Mac has, and falls back to the local clean-up when none answers.
+        // Live typing, which only runs when no model will polish, starts once it is switched off.
+        polishWithModel = defaults.object(forKey: Keys.polishWithModel) == nil ? true : defaults.bool(forKey: Keys.polishWithModel)
         polishOfflineTakes = defaults.bool(forKey: Keys.polishOfflineTakes)
         // Before the explicit flag existed, a stored value could only have come from the toggle.
         if defaults.object(forKey: Keys.polishOfflineTakes) != nil, defaults.object(forKey: Keys.polishOfflineTakesChosen) == nil {
