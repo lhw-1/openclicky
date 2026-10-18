@@ -6,6 +6,7 @@
 //  and what the model is told.
 //
 
+import AppKit
 import Testing
 @testable import OpenClicky
 
@@ -76,5 +77,58 @@ struct WriteInPlaceTests {
         for outcome in [WriteInPlace.Outcome.replaced, .probablyReplaced, .targetGone, .leftOnClipboard, .noAccessibility, .emptyText] {
             #expect(!outcome.spokenSentence.contains("—"))
         }
+    }
+
+    // Gmail in Chrome on a tester's Mac gave Accessibility nothing at all (a second Mac on
+    // 2026-10-18): the words they highlighted are then read by copying them, and a highlight read
+    // that way is replaced on the same footing.
+    private func nothingReadable(app: String = "com.google.Chrome") -> FocusedFieldSnapshot {
+        FocusedFieldSnapshot(appBundleID: app, appName: "Google Chrome", role: nil, isEditable: false, isSecure: false, value: nil, selectedText: nil)
+    }
+
+    @Test func aCopiedHighlightIsTheTargetWhenAccessibilityReadsNothing() {
+        let target = WritingTarget.target(in: nothingReadable(), copiedSelection: "see you at 5.", ownBundleID: "org.openclicky.app")
+        #expect(target?.scope == .selection)
+        #expect(target?.source == .clipboard)
+        #expect(target?.text == "see you at 5.")
+        #expect(target?.appBundleID == "com.google.Chrome")
+    }
+
+    @Test func whatAccessibilityReadsWinsOverTheCopiedHighlight() {
+        let target = WritingTarget.target(in: field(value: "Hi Ravi, see you at 5.", selected: "see you at 5."), copiedSelection: "an older copy", ownBundleID: "x")
+        #expect(target?.source == .accessibility)
+        #expect(target?.text == "see you at 5.")
+    }
+
+    @Test func aCopiedHighlightIsNoTargetWhereAccessibilityCanSeeThereIsNoTextBox() {
+        // A readable element that is not editable (words selected on a web page): nothing to write over.
+        #expect(WritingTarget.target(in: field(value: "a page", editable: false), copiedSelection: "a page", ownBundleID: "x") == nil)
+        #expect(WritingTarget.target(in: field(value: "secret", secure: true), copiedSelection: "secret", ownBundleID: "x") == nil)
+        #expect(WritingTarget.target(in: nothingReadable(app: "org.openclicky.app"), copiedSelection: "mine", ownBundleID: "org.openclicky.app") == nil)
+        #expect(WritingTarget.target(in: nothingReadable(), copiedSelection: " \n", ownBundleID: "x") == nil)
+        #expect(WritingTarget.target(in: nothingReadable(), copiedSelection: nil, ownBundleID: "x") == nil)
+        #expect(WritingTarget.target(in: nothingReadable(), copiedSelection: String(repeating: "a", count: WritingTarget.maximumCharacters + 1), ownBundleID: "x") == nil)
+        // An editable box Accessibility can read but which holds nothing: the copy is still tried.
+        #expect(WritingTarget.target(in: field(value: ""), copiedSelection: "see you", ownBundleID: "x")?.source == .clipboard)
+    }
+
+    @Test func aCopiedHighlightIsOnlyReplacedWhileTheSameWordsAreStillHighlighted() {
+        let target = WritingTarget(scope: .selection, text: "at 5", appBundleID: "com.google.Chrome", appName: nil, source: .clipboard)
+        #expect(target.stillMatches(copiedSelection: "at 5"))
+        #expect(!target.stillMatches(copiedSelection: "at 5 pm"))
+        #expect(!target.stillMatches(copiedSelection: nil))
+    }
+
+    @Test func onlyWordsCountAsACopiedHighlight() {
+        // Files copied from Finder carry their names as text: never a highlight to write over.
+        #expect(SelectionCopier.selectionText(string: "Report.docx", types: [.fileURL, .string]) == nil)
+        #expect(SelectionCopier.selectionText(string: "see you", types: [.string]) == "see you")
+        #expect(SelectionCopier.selectionText(string: " \n", types: [.string]) == nil)
+        #expect(SelectionCopier.selectionText(string: nil, types: []) == nil)
+    }
+
+    @Test func withoutATargetTheModelAsksForAHighlightInsteadOfReadingARewriteOut() {
+        #expect(WriteInPlace.noTargetPromptInstruction.contains("highlight"))
+        #expect(!WriteInPlace.noTargetPromptInstruction.contains("—"))
     }
 }

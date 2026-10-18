@@ -141,8 +141,9 @@ public class AskLanePromptsTests
         var writeAt = prompt.IndexOf(WriteInPlace.PromptInstruction, StringComparison.Ordinal);
         Assert.True(toolsAt > 0 && writeAt > toolsAt);
         Assert.EndsWith(WriteInPlace.PromptInstruction + "\n\nskill block", prompt);
+        // With nothing to write over, the only line after the language says not to read a rewrite out.
         var bare = AskLanePrompts.AskSystemPrompt(false, false, " ", "en");
-        Assert.Equal(AskLanePrompts.WithReplyLanguage(AskLanePrompts.CompanionVoiceResponseSystemPrompt, "en"), bare);
+        Assert.Equal(AskLanePrompts.WithReplyLanguage(AskLanePrompts.CompanionVoiceResponseSystemPrompt, "en") + "\n\n" + WriteInPlace.NoTargetPromptInstruction, bare);
         Assert.DoesNotContain(AskLanePrompts.AccountToolsInstruction, bare);
     }
 

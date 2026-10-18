@@ -67,6 +67,42 @@ public sealed class FrontAppTextInserter : ITextInserter
         clipboard.SetText(text);
     }
 
+    /// <summary>How long Ctrl+C is given to change the clipboard; a browser answers within ~50 ms.</summary>
+    private static readonly TimeSpan CopySelectionWait = TimeSpan.FromMilliseconds(450);
+
+    public string? CopySelection()
+    {
+        if (!CanSendInputToForeground()) return null;
+        var previousClipboard = clipboard.Snapshot();
+        CancelPendingRestore();
+        MarkInserted();
+        // Emptied first, so a stale clipboard text is never read as the highlight; the sequence
+        // number then says whether the app put anything on it.
+        if (!clipboard.SetText("", excludeFromHistory: true)) return null;
+        var sequenceBeforeCopy = clipboard.SequenceNumber;
+        var inputs = new List<INPUT>();
+        AddModifierRelease(inputs, ModifiersReleasedBeforePaste);
+        var controlWasDown = IsPhysicallyDown(VirtualKeys.LeftControl) || IsPhysicallyDown(VirtualKeys.RightControl);
+        if (!controlWasDown) inputs.Add(VirtualKeyInput(VirtualKeys.LeftControl, keyUp: false));
+        inputs.Add(VirtualKeyInput(VirtualKeys.C, keyUp: false));
+        inputs.Add(VirtualKeyInput(VirtualKeys.C, keyUp: true));
+        if (!controlWasDown) inputs.Add(VirtualKeyInput(VirtualKeys.LeftControl, keyUp: true));
+        string? copiedText = null;
+        if (Send([.. inputs]) == inputs.Count)
+        {
+            var deadline = DateTimeOffset.UtcNow + CopySelectionWait;
+            while (DateTimeOffset.UtcNow < deadline)
+            {
+                Thread.Sleep(50);
+                if (clipboard.SequenceNumber == sequenceBeforeCopy) continue;
+                copiedText = clipboard.GetText();
+                break;
+            }
+        }
+        clipboard.Restore(previousClipboard);
+        return string.IsNullOrWhiteSpace(copiedText) ? null : copiedText;
+    }
+
     public bool SelectAll()
     {
         if (!CanSendInputToForeground()) return false;

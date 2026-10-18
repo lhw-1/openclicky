@@ -56,6 +56,9 @@ public sealed class WriteInPlaceHost(IFocusedElementReader reader, ITextInserter
     }
 
     public void CopyToClipboard(string text) => inserter.CopyToClipboard(text);
+
+    /// <summary>Off the caller's thread: the copy waits on the clipboard for up to half a second.</summary>
+    public Task<string?> CopySelectionAsync() => Task.Run(() => inserter.CopySelection());
 }
 
 public sealed class BrowserTabSource(IBrowserTabEnumerator enumerator, IWindowList windowList) : IBrowserTabSource

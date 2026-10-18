@@ -39,8 +39,22 @@ public enum WritingScope
     WholeField,
 }
 
+/// <summary>How the target's words were read, which is also how they are checked before the paste.</summary>
+public enum WritingSource
+{
+    /// <summary>UI Automation read the focused element (the Mac read Accessibility).</summary>
+    Accessibility,
+    /// <summary>
+    /// UI Automation gave nothing to write over, so the highlight was copied (Ctrl+C, the clipboard
+    /// put back): Gmail in Chrome on a tester's Mac read as no focused element at all (2026-10-18),
+    /// and a browser that answers late reads the same here. Checked again the same way before the paste.
+    /// </summary>
+    Clipboard,
+}
+
 /// <summary>The text a rewrite would replace, captured when the question was asked.</summary>
-public sealed record WritingTarget(WritingScope Scope, string Text, string? AppProcessName, string? AppName)
+public sealed record WritingTarget(WritingScope Scope, string Text, string? AppProcessName, string? AppName,
+                                   WritingSource Source = WritingSource.Accessibility)
 {
     /// <summary>The most text sent along for a rewrite: a long email, not a whole document.</summary>
     public const int MaximumCharacters = 6_000;
@@ -62,6 +76,27 @@ public sealed record WritingTarget(WritingScope Scope, string Text, string? AppP
     }
 
     /// <summary>
+    /// The target in a snapshot, or else the highlight that was copied when the snapshot gave none.
+    /// What UI Automation reads wins; the copy only counts where it could not see a text box at all
+    /// (no focused element) or saw an editable one with nothing in it. An element it can read that is
+    /// not editable (words selected on a web page) is nothing to write over, copied or not.
+    /// </summary>
+    public static WritingTarget? Target(WritingFieldSnapshot snapshot, string? copiedSelection, string? ownProcessName = OwnProcessName)
+    {
+        if (Target(snapshot, ownProcessName) is { } readTarget) return readTarget;
+        if (!CopyIsWorthTrying(snapshot, ownProcessName)) return null;
+        if (copiedSelection is null || string.IsNullOrWhiteSpace(copiedSelection) || CharacterCount(copiedSelection) > MaximumCharacters) return null;
+        return new WritingTarget(WritingScope.Selection, copiedSelection, snapshot.AppProcessName, snapshot.AppName, WritingSource.Clipboard);
+    }
+
+    /// <summary>Whether copying the highlight could give a target the snapshot did not.</summary>
+    public static bool CopyIsWorthTrying(WritingFieldSnapshot snapshot, string? ownProcessName = OwnProcessName)
+    {
+        if (snapshot.IsSecure || SameApp(snapshot.AppProcessName, ownProcessName)) return false;
+        return snapshot.Role is null || snapshot.IsEditable;
+    }
+
+    /// <summary>
     /// Whether `snapshot` (read just before pasting) is still this target: the same app, an editable
     /// box, and the same words selected or in the box. Anything else and the rewrite is not pasted.
     /// </summary>
@@ -74,6 +109,9 @@ public sealed record WritingTarget(WritingScope Scope, string Text, string? AppP
             _ => snapshot.Value == Text,
         };
     }
+
+    /// <summary>A copied highlight is still this target while copying again gives the same words.</summary>
+    public bool StillMatches(string? copiedSelection) => Source == WritingSource.Clipboard && copiedSelection == Text;
 
     /// <summary>Added to the question, so the model has the exact words.</summary>
     public string ContextLine
@@ -113,13 +151,25 @@ public sealed record WritingTarget(WritingScope Scope, string Text, string? AppP
             snapshot = host.SnapshotFocusedField();
         }
         var capturedTarget = Target(snapshot, ownProcessName);
+        // Nothing readable to write over: the highlight, if there is one, is copied instead.
+        if (capturedTarget is null && CopyIsWorthTrying(snapshot, ownProcessName))
+        {
+            capturedTarget = Target(snapshot, await host.CopySelectionAsync(), ownProcessName);
+        }
         // What the text box looked like, never its words: enough to see why nothing was offered.
         var targetDescription = capturedTarget is null
             ? "no target"
-            : $"{(capturedTarget.Scope == WritingScope.Selection ? "highlight" : "whole box")} of {CharacterCount(capturedTarget.Text)} chars";
+            : $"{TargetKind(capturedTarget)} of {CharacterCount(capturedTarget.Text)} chars";
         log?.Invoke($"write in place: {targetDescription} in {snapshot.AppName ?? "?"}, role {snapshot.Role ?? "none"}, editable {(snapshot.IsEditable ? "true" : "false")}, value {(snapshot.Value is null ? -1 : CharacterCount(snapshot.Value))} chars");
         return capturedTarget;
     }
+
+    /// <summary>How the log names the target: a highlight read by UI Automation, one copied, or the whole box.</summary>
+    internal static string TargetKind(WritingTarget target) => target.Scope switch
+    {
+        WritingScope.Selection => target.Source == WritingSource.Clipboard ? "copied highlight" : "highlight",
+        _ => "whole box",
+    };
 
     /// <summary>Process names compared without case and with or without ".exe".</summary>
     internal static bool SameApp(string? first, string? second)
@@ -168,6 +218,11 @@ public interface IWriteInPlaceHost
     /// <summary>Reads the field back and judges whether `text` landed.</summary>
     Task<WriteInPlaceLanding> VerifyLandingAsync(string text, WritingFieldSnapshot before);
     void CopyToClipboard(string text);
+    /// <summary>
+    /// The highlighted text in the app in front, read by copying it (Ctrl+C) and putting the
+    /// clipboard back; null when nothing was copied. For the apps UI Automation cannot read.
+    /// </summary>
+    Task<string?> CopySelectionAsync();
 }
 
 public enum WriteInPlaceOutcome
@@ -233,6 +288,10 @@ public static class WriteInPlace
     public const string PromptInstruction =
         "writing in place: when the user asks you to rephrase, rewrite, shorten, fix or translate the text quoted as highlighted or in their text box, call write_in_place with the complete new text, and say only a few words about what you changed (for example \"made it warmer and shorter.\"). openclicky puts it in their email and tells them how to undo it. never read the new text out.";
 
+    /// <summary>Added to the ask prompt when no text to write over was found, so a rewrite is not read out instead.</summary>
+    public const string NoTargetPromptInstruction =
+        "writing in place: no text to write over was found this time. if the user asks you to rephrase, rewrite, shorten, fix or translate text that was not quoted to you as highlighted or in their text box, do not read a new version out: tell them in one sentence to highlight the text and ask again.";
+
     /// <summary>
     /// Replaces the target with `newText`: selects the box's text when the whole box is the target,
     /// pastes, checks it landed, and leaves the original on the clipboard.
@@ -244,6 +303,21 @@ public static class WriteInPlace
         if (string.IsNullOrWhiteSpace(newText)) return WriteInPlaceOutcome.EmptyText;
         var trimmedNewText = KeepingSurroundingSpace(target.Text, newText);
         if (!host.CanReadFocusedFields) return WriteInPlaceOutcome.NoAccessibility;
+        if (target.Source == WritingSource.Clipboard)
+        {
+            // UI Automation could not read this box: the highlight is checked the way it was read,
+            // and the paste cannot be read back either, so it counts as probably landed.
+            if (!target.StillMatches(await host.CopySelectionAsync()))
+            {
+                log?.Invoke("write in place: the copied highlight is gone, nothing pasted");
+                return WriteInPlaceOutcome.TargetGone;
+            }
+            host.Insert(trimmedNewText);
+            await delay(TimeSpan.FromMilliseconds(400));
+            host.CopyToClipboard(target.Text);
+            log?.Invoke($"write in place: copied highlight in {target.AppName ?? "an app"}, posted");
+            return WriteInPlaceOutcome.ProbablyReplaced;
+        }
         var before = host.SnapshotFocusedField();
         if (!target.StillMatches(before))
         {

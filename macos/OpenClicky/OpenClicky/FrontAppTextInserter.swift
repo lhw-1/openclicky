@@ -147,8 +147,16 @@ enum FrontAppTextInserter {
         pasteboard.setString(text, forType: .string)
     }
 
+    /// Forgets a paste's pending clipboard restore: the caller is about to change the pasteboard
+    /// itself and put it back (`SelectionCopier`).
+    @MainActor
+    static func cancelPendingClipboardRestore() {
+        pendingClipboardRestore?.cancel()
+        pendingClipboardRestore = nil
+    }
+
     /// Copies every item and type on the pasteboard so it can be put back after the paste.
-    private static func snapshot(of pasteboard: NSPasteboard) -> [NSPasteboardItem] {
+    static func snapshot(of pasteboard: NSPasteboard) -> [NSPasteboardItem] {
         (pasteboard.pasteboardItems ?? []).map { item in
             let copiedItem = NSPasteboardItem()
             for type in item.types {

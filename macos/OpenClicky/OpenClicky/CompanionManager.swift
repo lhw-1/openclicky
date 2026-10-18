@@ -1704,9 +1704,10 @@ final class CompanionManager: ObservableObject {
                     answeringSource: ProviderRouter.route(for: .claude, credentials: ProviderRouter.currentCredentials()).answeringSource
                 ) ? MacAction.anthropicToolDefinitions() : []
                 let toolsLine = tools.isEmpty ? "" : "\n\n" + Self.accountToolsInstruction
-                // Offered whatever the lane setup, but only when there is text to write over.
+                // Offered whatever the lane setup, but only when there is text to write over;
+                // without one the model is told not to read a rewrite out.
                 let askTools = writingTarget == nil ? tools : tools + [WriteInPlace.anthropicToolDefinition()]
-                let writeInPlaceLine = writingTarget == nil ? "" : "\n\n" + WriteInPlace.promptInstruction
+                let writeInPlaceLine = "\n\n" + (writingTarget == nil ? WriteInPlace.noTargetPromptInstruction : WriteInPlace.promptInstruction)
                 // The answer is spoken while it is still being written: each finished sentence goes to
                 // the voice, and the pointer moves when the voice starts (the prompt puts the tag first).
                 let answerSpeaker = makeAnswerSpeaker(

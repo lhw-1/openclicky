@@ -13,6 +13,7 @@ public static class VirtualKeys
     public const int Escape = 0x1B;
     public const int Space = 0x20;
     public const int A = 0x41;
+    public const int C = 0x43;
     public const int V = 0x56;
     public const int LeftWindows = 0x5B;
     public const int RightWindows = 0x5C;

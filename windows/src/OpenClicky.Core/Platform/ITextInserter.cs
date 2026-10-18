@@ -31,6 +31,13 @@ public interface ITextInserter
     bool SelectAll();
 
     /// <summary>
+    /// Ctrl+C to the app in front, then the copied text (null when nothing was copied within about
+    /// half a second), with the previous clipboard put back either way. How write-in-place reads a
+    /// highlight in an app UI Automation cannot read.
+    /// </summary>
+    string? CopySelection();
+
+    /// <summary>
     /// Types text as KEYEVENTF_UNICODE keystrokes (≤ 20 UTF-16 units per SendInput batch, never
     /// splitting a character), stamped with <see cref="LiveTypingMarker"/>, leaving the clipboard
     /// alone. Line breaks go as Enter. False when input cannot be sent.

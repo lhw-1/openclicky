@@ -102,6 +102,78 @@ public class WriteInPlaceTests
         public void Insert(string text) => Steps.Add("insert " + text);
         public Task<WriteInPlaceLanding> VerifyLandingAsync(string text, WritingFieldSnapshot before) => Task.FromResult(Landing);
         public void CopyToClipboard(string text) => Steps.Add("copy " + text);
+        public string? CopiedSelection { get; set; }
+        public Task<string?> CopySelectionAsync() { Steps.Add("copy selection"); return Task.FromResult(CopiedSelection); }
+    }
+
+    // Gmail in Chrome on a tester's Mac gave Accessibility nothing at all (2026-10-18); a browser
+    // that answers UI Automation late does the same here. The words they highlighted are then read
+    // by copying them, and a highlight read that way is replaced on the same footing.
+    private static WritingFieldSnapshot NothingReadable(string app = "chrome.exe") => new(app, "Google Chrome", null, false, false, null, null);
+
+    [Fact]
+    public void ACopiedHighlightIsTheTargetWhenUiAutomationReadsNothing()
+    {
+        var target = WritingTarget.Target(NothingReadable(), copiedSelection: "see you at 5.", ownProcessName: "OpenClicky.exe");
+        Assert.Equal(WritingScope.Selection, target?.Scope);
+        Assert.Equal(WritingSource.Clipboard, target?.Source);
+        Assert.Equal("see you at 5.", target?.Text);
+        Assert.Equal("chrome.exe", target?.AppProcessName);
+    }
+
+    [Fact]
+    public void WhatUiAutomationReadsWinsOverTheCopiedHighlight()
+    {
+        var target = WritingTarget.Target(Field(value: "Hi Ravi, see you at 5.", selected: "see you at 5."), copiedSelection: "an older copy", ownProcessName: "x");
+        Assert.Equal(WritingSource.Accessibility, target?.Source);
+        Assert.Equal("see you at 5.", target?.Text);
+    }
+
+    [Fact]
+    public void ACopiedHighlightIsNoTargetWhereUiAutomationCanSeeThereIsNoTextBox()
+    {
+        Assert.Null(WritingTarget.Target(Field(value: "a page", editable: false), copiedSelection: "a page", ownProcessName: "x"));
+        Assert.Null(WritingTarget.Target(Field(value: "secret", secure: true), copiedSelection: "secret", ownProcessName: "x"));
+        Assert.Null(WritingTarget.Target(NothingReadable("OpenClicky.exe"), copiedSelection: "mine", ownProcessName: "OpenClicky.exe"));
+        Assert.Null(WritingTarget.Target(NothingReadable(), copiedSelection: " \n", ownProcessName: "x"));
+        Assert.Null(WritingTarget.Target(NothingReadable(), copiedSelection: null, ownProcessName: "x"));
+        Assert.Null(WritingTarget.Target(NothingReadable(), copiedSelection: new string('a', WritingTarget.MaximumCharacters + 1), ownProcessName: "x"));
+        Assert.Equal(WritingSource.Clipboard, WritingTarget.Target(Field(value: ""), copiedSelection: "see you", ownProcessName: "x")?.Source);
+    }
+
+    [Fact]
+    public async Task TheCaptureCopiesTheHighlightWhenUiAutomationReadsNothing()
+    {
+        var host = new FakeHost { Snapshot = NothingReadable(), CopiedSelection = "see you at 5." };
+        var target = await WritingTarget.CaptureFromFrontAppAsync(host, delay: _ => Task.CompletedTask);
+        Assert.Equal(WritingSource.Clipboard, target?.Source);
+        Assert.Equal("see you at 5.", target?.Text);
+        // A box UI Automation reads is never copied from.
+        var readable = new FakeHost { Snapshot = Field(value: "Hi Ravi"), CopiedSelection = "unused" };
+        var readableTarget = await WritingTarget.CaptureFromFrontAppAsync(readable, delay: _ => Task.CompletedTask);
+        Assert.Equal(WritingSource.Accessibility, readableTarget?.Source);
+        Assert.DoesNotContain("copy selection", readable.Steps);
+    }
+
+    [Fact]
+    public async Task ACopiedHighlightIsReplacedOnlyWhileTheSameWordsAreStillHighlighted()
+    {
+        var target = new WritingTarget(WritingScope.Selection, "at 5", "chrome.exe", "Google Chrome", WritingSource.Clipboard);
+        var host = new FakeHost { Snapshot = NothingReadable(), CopiedSelection = "at 5" };
+        Assert.Equal(WriteInPlaceOutcome.ProbablyReplaced, await WriteInPlace.ReplaceAsync(target, "at five", host, delay: _ => Task.CompletedTask));
+        Assert.Equal(new[] { "copy selection", "insert at five", "copy at 5" }, host.Steps);
+        var moved = new FakeHost { Snapshot = NothingReadable(), CopiedSelection = "something else" };
+        Assert.Equal(WriteInPlaceOutcome.TargetGone, await WriteInPlace.ReplaceAsync(target, "at five", moved, delay: _ => Task.CompletedTask));
+        Assert.Equal(new[] { "copy selection" }, moved.Steps);
+    }
+
+    [Fact]
+    public void WithoutATargetTheModelAsksForAHighlightInsteadOfReadingARewriteOut()
+    {
+        Assert.Contains("highlight", WriteInPlace.NoTargetPromptInstruction);
+        Assert.DoesNotContain("—", WriteInPlace.NoTargetPromptInstruction);
+        Assert.Contains(WriteInPlace.NoTargetPromptInstruction, AskLanePrompts.AskSystemPrompt(false, false, ""));
+        Assert.DoesNotContain(WriteInPlace.NoTargetPromptInstruction, AskLanePrompts.AskSystemPrompt(false, true, ""));
     }
 
     [Fact]

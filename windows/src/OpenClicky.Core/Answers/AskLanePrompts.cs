@@ -138,7 +138,7 @@ public static class AskLanePrompts
     public static string AskSystemPrompt(bool quickActionsOffered, bool hasWritingTarget, string skillsBlock, string? languageCode = null)
     {
         var toolsLine = quickActionsOffered ? "\n\n" + AccountToolsInstruction : "";
-        var writeInPlaceLine = hasWritingTarget ? "\n\n" + WriteInPlace.PromptInstruction : "";
+        var writeInPlaceLine = "\n\n" + (hasWritingTarget ? WriteInPlace.PromptInstruction : WriteInPlace.NoTargetPromptInstruction);
         return ComposeTalkInstructions(WithReplyLanguage(CompanionVoiceResponseSystemPrompt, languageCode) + toolsLine + writeInPlaceLine, skillsBlock);
     }
 
