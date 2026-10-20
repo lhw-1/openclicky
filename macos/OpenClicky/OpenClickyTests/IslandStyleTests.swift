@@ -46,7 +46,11 @@ struct IslandStyleTests {
         #expect(!IslandSurface(expansion: .full, width: 512, height: 120, bandBottom: 40, glassLevel: 0, isSideDrawer: false).hasGlassLayer)
         #expect(!IslandSurface(expansion: .peek, width: 218, height: 57, bandBottom: 33, glassLevel: 0.6, isSideDrawer: false).hasGlassLayer)
         #expect(!IslandSurface(expansion: .compact, width: 380, height: 41, bandBottom: 33, glassLevel: 0.6, isSideDrawer: false).hasGlassLayer)
-        #expect(IslandSurface(expansion: .connect, width: 512, height: 150, bandBottom: 33, glassLevel: 0.6, isSideDrawer: false).hasGlassLayer)
+        // Cards are mostly dim text (the permission card above all) and show on any wallpaper:
+        // they stay solid black. Only the open panel melts into glass.
+        #expect(!IslandSurface(expansion: .connect, width: 512, height: 150, bandBottom: 33, glassLevel: 0.6, isSideDrawer: false).hasGlassLayer)
+        #expect(!IslandSurface(expansion: .permission, width: 512, height: 150, bandBottom: 33, glassLevel: 0.6, isSideDrawer: false).hasGlassLayer)
+        #expect(!IslandSurface(expansion: .tour, width: 512, height: 150, bandBottom: 33, glassLevel: 0.6, isSideDrawer: false).hasGlassLayer)
     }
 
     @Test func reduceMotionTurnsSpringsIntoFadesAndDropsThePressScale() {

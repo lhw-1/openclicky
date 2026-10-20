@@ -56,8 +56,10 @@ struct IslandSurface: View {
         }
     }
 
-    /// True when a material view is in the hierarchy at all.
-    var hasGlassLayer: Bool { isOpen && glassLevel > 0 }
+    /// True when a material view is in the hierarchy at all: only the open panel melts. Cards
+    /// (permission, connect, the tour, the composer) are mostly dim text and show on any
+    /// wallpaper, so they stay solid black for contrast.
+    var hasGlassLayer: Bool { expansion == .full && glassLevel > 0 }
 
     private var stops: IslandGlassStops? {
         guard hasGlassLayer else { return nil }
