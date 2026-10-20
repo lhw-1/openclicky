@@ -23,7 +23,7 @@ extension SettingsCatalog {
                 view: AnyView(RegionPicker(settings: settings))),
             SettingsItem(
                 id: "general.appearance", page: .general, section: "",
-                title: "Appearance", detail: "The orb and its transcript box follow this. The island stays black.",
+                title: "Appearance", detail: "The orb and its transcript box follow this. The island stays dark.",
                 keywords: ["light", "dark", "auto", "match the mac", "theme", "mode", "colour", "color"],
                 view: AnyView(AppearancePicker(settings: settings))),
             SettingsItem(
@@ -31,6 +31,21 @@ extension SettingsCatalog {
                 title: "Where OpenClicky lives", detail: "The notch, a drawer on the left or right edge, or hidden until you use a shortcut.",
                 keywords: ["notch", "island", "hud", "side", "edge", "drawer", "hide", "hidden", "position", "placement", "shortcuts only"],
                 view: AnyView(HUDPlacementRow(companionManager: companionManager))),
+            SettingsItem(
+                id: "general.islandGlass", page: .general, section: "",
+                title: "Glass level", detail: "Where the island's black melts into glass. Left is all black.",
+                keywords: ["glass", "blur", "transparent", "frosted", "black", "island", "notch", "material"],
+                view: AnyView(IslandGlassLevelRow())),
+            SettingsItem(
+                id: "general.islandDefault", page: .general, section: "",
+                title: "Default component", detail: "What the open island shows when nothing else is going on.",
+                keywords: ["island", "component", "panel", "shortcuts", "transcript", "agent", "default", "slot"],
+                view: AnyView(IslandDefaultComponentRow())),
+            SettingsItem(
+                id: "general.islandOrder", page: .general, section: "",
+                title: "Component order", detail: "The order of the island's capsule when there is more than one to flip to.",
+                keywords: ["island", "component", "order", "capsule", "arrange", "reorder"],
+                view: AnyView(IslandComponentOrderRow())),
             SettingsItem(
                 id: "general.menuBarIcon", page: .general, section: "",
                 title: "Show in menu bar", detail: "Off is fine: the island is OpenClicky’s home.",
@@ -109,7 +124,7 @@ private struct AppearancePicker: View {
         HStack(alignment: .top, spacing: 16) {
             VStack(alignment: .leading, spacing: 2) {
                 Text(settingsHighlighted("Appearance", query: searchQuery)).font(SettingsLook.rowTitle)
-                Text(settingsHighlighted("The orb and its transcript box follow this. The island stays black.", query: searchQuery))
+                Text(settingsHighlighted("The orb and its transcript box follow this. The island stays dark.", query: searchQuery))
                     .font(SettingsLook.caption).foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
             }
@@ -182,7 +197,7 @@ extension HUDPlacement {
 
     var settingsDetail: String {
         switch self {
-        case .notch: return "Hangs from the notch. Hover it to open."
+        case .notch: return "Hangs from the notch. Hover to peek, click to open."
         case .left: return "A drawer on the left edge of every screen. Hover the handle to open."
         case .right: return "A drawer on the right edge of every screen. Hover the handle to open."
         case .hidden: return "Nothing on screen until you use a shortcut. The menu bar icon opens the panel."
@@ -211,6 +226,82 @@ private struct HUDPlacementRow: View {
             .pointerCursor()
         }
         .onReceive(companionManager.$hudPlacement) { placement = $0 }
+    }
+}
+
+/// Where the island's black melts into glass: 0 is all black, 1 ends the black right under the band.
+private struct IslandGlassLevelRow: View {
+    @State private var level: Double = UserDefaults.standard.object(forKey: IslandGlass.defaultsKey) as? Double ?? IslandGlass.defaultLevel
+
+    var body: some View {
+        SettingsRow(title: "Glass level", detail: "Where the island's black melts into glass. Left is all black.") {
+            Slider(value: Binding(get: { level }, set: { newValue in
+                level = newValue
+                UserDefaults.standard.set(newValue, forKey: IslandGlass.defaultsKey)
+            }), in: 0...1)
+            .controlSize(.small)
+            .frame(width: 140)
+            .accessibilityLabel("glass level")
+        }
+    }
+}
+
+/// The component the open island shows when nothing else is going on.
+private struct IslandDefaultComponentRow: View {
+    @State private var defaultID = IslandComponentSettings(defaults: .standard).defaultID
+
+    var body: some View {
+        SettingsRow(title: "Default component", detail: "What the open island shows when nothing else is going on.") {
+            Picker("", selection: Binding(get: { defaultID }, set: { newValue in
+                defaultID = newValue
+                var settings = IslandComponentSettings(defaults: .standard)
+                settings.defaultID = newValue
+            })) {
+                ForEach(IslandComponentRegistry.all, id: \.id) { component in Text(component.title).tag(component.id) }
+            }
+            .labelsHidden()
+            .fixedSize()
+            .pointerCursor()
+        }
+    }
+}
+
+/// The capsule's order: one row per component with up and down arrows.
+private struct IslandComponentOrderRow: View {
+    @State private var order: [String] = IslandComponentOrderRow.resolvedOrder()
+
+    /// The stored order, with unknown ids dropped and missing ones appended in registration order.
+    @MainActor private static func resolvedOrder() -> [String] {
+        let known = IslandComponentRegistry.all.map(\.id)
+        let stored = IslandComponentSettings(defaults: .standard).order.filter { known.contains($0) }
+        return stored + known.filter { !stored.contains($0) }
+    }
+
+    var body: some View {
+        SettingsRow(title: "Component order", detail: "The order of the island's capsule when there is more than one to flip to.") {
+            VStack(alignment: .trailing, spacing: 4) {
+                ForEach(Array(order.enumerated()), id: \.element) { index, id in
+                    HStack(spacing: 6) {
+                        Text(IslandComponentRegistry.all.first { $0.id == id }?.title ?? id)
+                            .font(SettingsLook.caption)
+                        Button(action: { move(index, by: -1) }) { Image(systemName: "chevron.up") }
+                            .disabled(index == 0)
+                        Button(action: { move(index, by: 1) }) { Image(systemName: "chevron.down") }
+                            .disabled(index == order.count - 1)
+                    }
+                    .buttonStyle(.borderless)
+                    .controlSize(.small)
+                }
+            }
+        }
+    }
+
+    private func move(_ index: Int, by offset: Int) {
+        let target = index + offset
+        guard order.indices.contains(target) else { return }
+        order.swapAt(index, target)
+        var settings = IslandComponentSettings(defaults: .standard)
+        settings.order = order
     }
 }
 

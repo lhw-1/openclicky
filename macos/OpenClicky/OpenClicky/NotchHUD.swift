@@ -239,6 +239,11 @@ final class NotchHUDModel: ObservableObject {
         recomputeSelection()
     }
 
+    /// The default or the order changed in Settings: pick again.
+    func refreshComponentSettings() {
+        recomputeSelection()
+    }
+
     private func recomputeSelection() {
         let selection = IslandComponentSelector.select(registry: registry, order: componentSettings.order, defaultID: componentSettings.defaultID, override: componentOverride, context: context)
         guard selection != self.selection else { return }
@@ -1028,11 +1033,14 @@ final class NotchHUDManager {
             }
             .store(in: &busyCancellables)
         NotificationCenter.default.publisher(for: UserDefaults.didChangeNotification)
-            .map { _ in UserDefaults.standard.object(forKey: IslandGlass.defaultsKey) as? Double ?? IslandGlass.defaultLevel }
-            .removeDuplicates()
             .receive(on: DispatchQueue.main)
-            .sink { [weak self] glassLevel in
-                self?.instances.forEach { $0.model.glassLevel = glassLevel }
+            .sink { [weak self] _ in
+                guard let self else { return }
+                let glassLevel = UserDefaults.standard.object(forKey: IslandGlass.defaultsKey) as? Double ?? IslandGlass.defaultLevel
+                for instance in self.instances {
+                    if instance.model.glassLevel != glassLevel { instance.model.glassLevel = glassLevel }
+                    instance.model.refreshComponentSettings()
+                }
             }
             .store(in: &busyCancellables)
     }
