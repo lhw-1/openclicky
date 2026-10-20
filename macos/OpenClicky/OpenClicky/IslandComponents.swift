@@ -38,6 +38,23 @@ struct IslandContext: Equatable {
     }
 }
 
+extension IslandContext {
+    /// The context from what the app already publishes: the take controller's state and last
+    /// take, the orb's live words, the companion's agent line, the result card's visibility.
+    static func make(takeState: DictationTakeController.TakeState, lastTake: TakeRecord?, liveTranscript: String, agentActivityText: String?, isResultCardUp: Bool, engineCanRun: Bool, placement: HUDPlacement, now: Date) -> IslandContext {
+        IslandContext(
+            isTakeLive: takeState != .idle,
+            takeLandedAt: lastTake?.createdAt,
+            liveTranscript: liveTranscript,
+            agentActivityText: agentActivityText,
+            isResultCardUp: isResultCardUp,
+            engineCanRun: engineCanRun,
+            placement: placement,
+            now: now
+        )
+    }
+}
+
 /// One thing the island's slot can show.
 protocol IslandComponent {
     /// Stable; stored in Settings.

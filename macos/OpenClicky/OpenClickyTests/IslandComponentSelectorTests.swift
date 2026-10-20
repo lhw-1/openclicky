@@ -79,6 +79,16 @@ struct IslandComponentSelectorTests {
         #expect(AgentIslandComponent().preferredHeight == 52)
     }
 
+    @Test func theContextIsBuiltFromWhatTheAppAlreadyPublishes() {
+        let now = Date()
+        let c = IslandContext.make(takeState: .listening, lastTake: nil, liveTranscript: "hi", agentActivityText: nil, isResultCardUp: false, engineCanRun: true, placement: .notch, now: now)
+        #expect(c.isTakeLive)
+        #expect(c.contextualKey == "transcript")
+        #expect(c.liveTranscript == "hi")
+        let d = IslandContext.make(takeState: .idle, lastTake: nil, liveTranscript: "", agentActivityText: nil, isResultCardUp: true, engineCanRun: true, placement: .notch, now: now)
+        #expect(d.contextualKey == "agent")
+    }
+
     @Test func settingsRoundTripWithDefaults() {
         let defaults = UserDefaults(suiteName: "IslandComponentSelectorTests")!
         defaults.removePersistentDomain(forName: "IslandComponentSelectorTests")

@@ -925,6 +925,7 @@ final class NotchHUDManager {
             model.setConnectPrompt(connectPrompt)
             model.setPermissionPrompt(permissionPrompt)
             model.setTourCard(tourCard)
+            model.setContext(latestIslandContext)
             let hudWindow = NotchHUDWindow()
             // The window frame must stay authoritative. An NSHostingView used directly as the
             // content view re-fits the window to SwiftUI's fitting size (the hidden full panel),
@@ -993,6 +994,69 @@ final class NotchHUDManager {
                 self?.instances.forEach { $0.model.setCursorDocked(docked) }
             }
             .store(in: &busyCancellables)
+        observeIslandContext(of: companionManager)
+    }
+
+    /// The moment the island's slot follows, from what the app already publishes. A landed take
+    /// keeps its transcript in front for a few seconds, so a timer re-sends the context while
+    /// that window runs and the slot lets go on time.
+    private var latestIslandContext: IslandContext = .idle
+    private var islandContextTimer: Timer?
+
+    private func observeIslandContext(of companionManager: CompanionManager) {
+        let takeController = companionManager.dictationTakeController
+        let settings = companionManager.dictationSettings
+        Publishers.CombineLatest4(takeController.$state, takeController.$lastTake, companionManager.orbModel.$liveTranscript, companionManager.$agentActivityText)
+            .combineLatest(companionManager.agentResultPanelManager.state.$isVisible, companionManager.$hudPlacement)
+            .map { takeAndAgent, isResultCardUp, placement in
+                let (takeState, lastTake, liveTranscript, agentActivityText) = takeAndAgent
+                return IslandContext.make(
+                    takeState: takeState, lastTake: lastTake, liveTranscript: liveTranscript,
+                    agentActivityText: agentActivityText, isResultCardUp: isResultCardUp,
+                    engineCanRun: DictationEngineResolver.unavailableReason(for: settings.engine) == nil,
+                    placement: placement, now: Date()
+                )
+            }
+            .sink { [weak self] context in
+                self?.applyIslandContext(context)
+            }
+            .store(in: &busyCancellables)
+        companionManager.dictationSettings.$reduceAnimation
+            .removeDuplicates()
+            .sink { [weak self] reduceMotion in
+                self?.instances.forEach { $0.model.reduceMotionProvider = { reduceMotion } }
+            }
+            .store(in: &busyCancellables)
+        NotificationCenter.default.publisher(for: UserDefaults.didChangeNotification)
+            .map { _ in UserDefaults.standard.object(forKey: IslandGlass.defaultsKey) as? Double ?? IslandGlass.defaultLevel }
+            .removeDuplicates()
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] glassLevel in
+                self?.instances.forEach { $0.model.glassLevel = glassLevel }
+            }
+            .store(in: &busyCancellables)
+    }
+
+    private func applyIslandContext(_ context: IslandContext) {
+        latestIslandContext = context
+        instances.forEach { $0.model.setContext(context) }
+        islandContextTimer?.invalidate()
+        islandContextTimer = nil
+        // While a landed take's transcript window runs, tick once a second so it ends on time.
+        if !context.isTakeLive, let landedAt = context.takeLandedAt, Date().timeIntervalSince(landedAt) < IslandContext.landedTranscriptWindow {
+            islandContextTimer = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self] _ in
+                Task { @MainActor in
+                    guard let self else { return }
+                    var refreshed = self.latestIslandContext
+                    refreshed.now = Date()
+                    self.instances.forEach { $0.model.setContext(refreshed) }
+                    if refreshed.contextualKey == nil {
+                        self.islandContextTimer?.invalidate()
+                        self.islandContextTimer = nil
+                    }
+                }
+            }
+        }
     }
 
     private func observeScreenChanges() {
@@ -1235,12 +1299,18 @@ struct NotchHUDView: View {
                 Group {
                     if model.isShowingCaption, let captionText = model.captionText {
                         NotchCaptionView(companionManager: companionManager, captionText: captionText)
+                            .frame(width: model.compactWidth, height: model.compactContentHeight)
+                            .padding(.top, notchHeight)
                     } else {
-                        NotchCompactStatusView(companionManager: companionManager)
+                        // The busy strip sits in the band beside the camera, like a phone's island.
+                        NotchCompactStatusView(
+                            companionManager: companionManager,
+                            notchWidth: model.geometry.hasHardwareNotch && !model.placement.isSideDrawer ? model.geometry.notchWidth : 0,
+                            bandHeight: model.topBandHeight + model.compactStripLip
+                        )
+                        .frame(width: model.compactWidth, height: model.compactHeight)
                     }
                 }
-                .frame(width: model.compactWidth, height: model.compactContentHeight)
-                .padding(.top, notchHeight)
                 .transition(.opacity.combined(with: .scale(scale: 0.92, anchor: .top)))
             case .composer:
                 NotchComposerView(companionManager: companionManager)
@@ -1333,6 +1403,11 @@ struct NotchIslandShape: Shape {
 /// or what was asked while the answer is spoken.
 struct NotchCompactStatusView: View {
     @ObservedObject var companionManager: CompanionManager
+    /// The camera's width: the indicator sits left of it and the words right of it, like a
+    /// phone's island, with black between where the notch is.
+    var notchWidth: CGFloat = 0
+    /// The band the strip's row sits in (the notch's height, or the menu bar band elsewhere).
+    var bandHeight: CGFloat = DS.HUD.stripHeight
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -1340,6 +1415,7 @@ struct NotchCompactStatusView: View {
                 NotchBuddyBadge(companionManager: companionManager)
                     .frame(width: 20, height: 18)
                 Spacer(minLength: 8)
+                    .frame(minWidth: notchWidth > 0 ? notchWidth + 16 : 8)
                 Text(statusText)
                     .font(.system(size: 12))
                     .foregroundColor(DS.HUD.text2)
@@ -1365,7 +1441,7 @@ struct NotchCompactStatusView: View {
                         .accessibilityLabel("stop speaking")
                 }
             }
-            .frame(height: DS.HUD.stripHeight)
+            .frame(height: bandHeight)
 
             if let detailLine = Self.detailLine(
                 voiceState: companionManager.voiceState,
