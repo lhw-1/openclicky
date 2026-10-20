@@ -177,6 +177,22 @@ final class UITour {
             await shoot("\(prefix)-03-peek", window: hud.debugPrimaryWindow)
             hud.debugCloseAll()
 
+            // The slot with the moment's component and the capsule to flip it.
+            var takeContext = IslandContext.idle
+            takeContext.now = Date()
+            takeContext.isTakeLive = true
+            takeContext.liveTranscript = "hello from the island, this is what i said so far"
+            hud.debugSetPrimaryContext(takeContext)
+            hud.debugOpenPrimaryPanel()
+            await shoot("\(prefix)-04-panel-transcript", window: hud.debugPrimaryWindow)
+            var agentContext = IslandContext.idle
+            agentContext.now = Date()
+            agentContext.agentActivityText = "editing Hero.swift"
+            hud.debugSetPrimaryContext(agentContext)
+            await shoot("\(prefix)-04b-panel-agent", window: hud.debugPrimaryWindow)
+            hud.debugSetPrimaryContext(.idle)
+            hud.debugCloseAll()
+
             companionManager.debugSetVoiceState(.listening)
             await shoot("\(prefix)-05-busy-listening", window: hud.debugPrimaryWindow)
             companionManager.debugSetVoiceState(.processing)

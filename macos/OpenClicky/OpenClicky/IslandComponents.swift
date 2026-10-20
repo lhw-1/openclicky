@@ -113,7 +113,9 @@ struct ShortcutsIslandComponent: IslandComponent {
     let symbolName = "keyboard"
     let preferredHeight: CGFloat = 45
     func isAvailable(in context: IslandContext) -> Bool { true }
-    @MainActor func makeView(companionManager: CompanionManager, model: NotchHUDModel) -> AnyView { AnyView(EmptyView()) }
+    @MainActor func makeView(companionManager: CompanionManager, model: NotchHUDModel) -> AnyView {
+        AnyView(NotchPanelBody(model: model, companionManager: companionManager))
+    }
 }
 
 /// The take's words so far, while a take is live and for a moment after it lands.
@@ -121,9 +123,11 @@ struct TranscriptIslandComponent: IslandComponent {
     let id = IslandComponentRegistry.transcriptID
     let title = "Transcript"
     let symbolName = "text.quote"
-    let preferredHeight: CGFloat = 45
+    let preferredHeight: CGFloat = 52
     func isAvailable(in context: IslandContext) -> Bool { context.contextualKey == IslandComponentRegistry.transcriptID }
-    @MainActor func makeView(companionManager: CompanionManager, model: NotchHUDModel) -> AnyView { AnyView(EmptyView()) }
+    @MainActor func makeView(companionManager: CompanionManager, model: NotchHUDModel) -> AnyView {
+        AnyView(TranscriptIslandView(model: model, companionManager: companionManager, orb: companionManager.orbModel, settings: companionManager.dictationSettings))
+    }
 }
 
 /// The working agent's latest line, and its result card's follow-up.
@@ -131,7 +135,9 @@ struct AgentIslandComponent: IslandComponent {
     let id = IslandComponentRegistry.agentID
     let title = "Agent"
     let symbolName = "wand.and.sparkles"
-    let preferredHeight: CGFloat = 45
+    let preferredHeight: CGFloat = 52
     func isAvailable(in context: IslandContext) -> Bool { context.agentActivityText != nil || context.isResultCardUp }
-    @MainActor func makeView(companionManager: CompanionManager, model: NotchHUDModel) -> AnyView { AnyView(EmptyView()) }
+    @MainActor func makeView(companionManager: CompanionManager, model: NotchHUDModel) -> AnyView {
+        AnyView(AgentIslandView(model: model, companionManager: companionManager, result: companionManager.agentResultPanelManager.state))
+    }
 }

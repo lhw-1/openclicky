@@ -71,6 +71,14 @@ struct IslandComponentSelectorTests {
         #expect(t.active == "shortcuts")
     }
 
+    @MainActor
+    @Test func theRealRegistryHasTheThreeBuiltInsInOrder() {
+        #expect(IslandComponentRegistry.all.map(\.id) == ["shortcuts", "transcript", "agent"])
+        #expect(ShortcutsIslandComponent().preferredHeight == 45)
+        #expect(TranscriptIslandComponent().preferredHeight == 52)
+        #expect(AgentIslandComponent().preferredHeight == 52)
+    }
+
     @Test func settingsRoundTripWithDefaults() {
         let defaults = UserDefaults(suiteName: "IslandComponentSelectorTests")!
         defaults.removePersistentDomain(forName: "IslandComponentSelectorTests")

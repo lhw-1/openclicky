@@ -696,9 +696,14 @@ final class NotchHUDManager {
 
     /// Opens the one-line composer on the island under the pointer and gives it the keyboard.
     /// The HUD panel is non-activating, so OpenClicky activates itself for the duration.
-    func openTextComposer() {
-        guard let instance = instanceUnderPointer else { return }
+    /// The agent thread a typed request goes to while the composer was opened as a follow-up
+    /// (the island's agent component); nil sends it wherever a spoken request would go.
+    private(set) var composerThreadId: String?
+
+    func openTextComposer(threadId: String? = nil) {
+        guard let instance = instanceUnderPointer ?? primaryInstance else { return }
         if instances.contains(where: { $0.model.isComposerOpen }) { return }
+        composerThreadId = threadId
         let frontApplication = NSWorkspace.shared.frontmostApplication
         if frontApplication?.processIdentifier != ProcessInfo.processInfo.processIdentifier {
             applicationActiveBeforeComposer = frontApplication
@@ -777,6 +782,7 @@ final class NotchHUDManager {
             previousApplication.activate()
         }
         applicationActiveBeforeComposer = nil
+        composerThreadId = nil
     }
 
     // MARK: Caption (the open panel's (i) while the buddy is docked)
@@ -1088,6 +1094,9 @@ extension NotchHUDManager {
 
     /// The hover tease, without a pointer: the primary island peeks until `debugCloseAll`.
     func debugPeekPrimary() { primaryInstance?.model.setHovering(true) }
+
+    /// A moment for the slot (a live take, a working agent) without the real thing happening.
+    func debugSetPrimaryContext(_ context: IslandContext) { primaryInstance?.model.setContext(context) }
 }
 #endif
 
@@ -1112,9 +1121,16 @@ struct NotchHUDView: View {
         }
     }
 
-    /// The island's width (its flares included) and height for the state it is in.
+    /// The island's width (its flares included) and height for the state it is in. The open
+    /// panel's capsule row hangs below the surface, outside the outline.
     private var surfaceWidth: CGFloat { model.width + topCornerFlare * 2 }
-    private var surfaceHeight: CGFloat { expansion == .collapsed ? notchHeight : model.height }
+    private var surfaceHeight: CGFloat {
+        switch expansion {
+        case .collapsed: return notchHeight
+        case .full: return model.height - (model.showsCapsule ? model.capsuleRowHeight : 0)
+        default: return model.height
+        }
+    }
 
     /// Opening unfolds width first and drops the height a beat later; everything else moves on
     /// the short peek spring. Reduce motion makes all of it a fade.
@@ -1472,7 +1488,7 @@ struct NotchComposerView: View {
                 .foregroundColor(DS.HUD.pointer)
             NotchComposerTextField(
                 text: $requestText,
-                placeholder: "ask clicky anything about your screen…",
+                placeholder: companionManager.notchHUDManager.composerThreadId == nil ? "ask clicky anything about your screen…" : "follow up with the agent…",
                 onSubmit: submitRequest,
                 onEscape: { companionManager.notchHUDManager.closeTextComposer() }
             )
@@ -1489,9 +1505,14 @@ struct NotchComposerView: View {
 
     private func submitRequest() {
         let trimmedRequestText = requestText.trimmingCharacters(in: .whitespacesAndNewlines)
+        let threadId = companionManager.notchHUDManager.composerThreadId
         companionManager.notchHUDManager.closeTextComposer()
         guard !trimmedRequestText.isEmpty else { return }
-        companionManager.submitTypedRequest(trimmedRequestText)
+        if let threadId {
+            companionManager.submitTextToAgent(trimmedRequestText, threadId: threadId)
+        } else {
+            companionManager.submitTypedRequest(trimmedRequestText)
+        }
     }
 }
 

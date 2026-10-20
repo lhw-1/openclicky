@@ -22,16 +22,30 @@ struct NotchFullPanelView: View {
     @ObservedObject var model: NotchHUDModel
     @ObservedObject var companionManager: CompanionManager
 
+    /// The component in the slot right now.
+    private var activeComponent: any IslandComponent {
+        model.registry.first { $0.id == model.selection.active } ?? model.registry[0]
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             NotchBandRow(model: model, companionManager: companionManager)
                 .padding(.top, 6)
                 .frame(height: model.bandRowHeight)
-            NotchPanelBody(model: model, companionManager: companionManager)
+            activeComponent.makeView(companionManager: companionManager, model: model)
                 .padding(.top, model.placement.isSideDrawer ? 6 : 2)
                 .padding(.horizontal, DS.HUD.bodySidePadding)
-                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+                .frame(maxWidth: .infinity, alignment: .topLeading)
+                .frame(height: model.slotHeight, alignment: .top)
+                .id(model.selection.active)
+                .transition(.opacity)
+            if model.showsCapsule {
+                IslandNavigationCapsule(model: model)
+                    .frame(maxWidth: .infinity)
+                    .frame(height: model.capsuleRowHeight, alignment: .bottom)
+            }
         }
+        .animation(.easeInOut(duration: 0.18), value: model.selection)
     }
 }
 
@@ -300,7 +314,8 @@ struct NotchPanelBody: View {
                 .font(.system(size: 17, design: .serif).italic())
                 .foregroundColor(DS.HUD.text)
                 .frame(width: Self.rowHeight, height: Self.rowHeight)
-                .background(RoundedRectangle(cornerRadius: DS.HUD.tileRadius, style: .continuous).fill(DS.HUD.surfaceRaisedSoft))
+                // On the glass band the tile is translucent white; on an all-black panel the raised grey.
+                .background(RoundedRectangle(cornerRadius: DS.HUD.tileRadius, style: .continuous).fill(model.glassLevel > 0 ? DS.HUD.glassTile : DS.HUD.surfaceRaisedSoft))
                 .contentShape(RoundedRectangle(cornerRadius: DS.HUD.tileRadius, style: .continuous))
         }
         .buttonStyle(.plain)
@@ -499,7 +514,8 @@ private final class AgentResultPanel: NSPanel {
 @MainActor
 final class AgentResultPanelManager {
     private var panel: AgentResultPanel?
-    private let state = AgentResultPanelState()
+    /// The card's content, and whether it is up (the island's agent component reads both).
+    let state = AgentResultPanelState()
     private let agentClient = OpenClickyAgentClient()
 
     func show(threadId: String, companionManager: CompanionManager) {
@@ -529,6 +545,7 @@ final class AgentResultPanelManager {
 
     func hide() {
         panel?.orderOut(nil)
+        state.isVisible = false
     }
 
     private func presentPanel(companionManager: CompanionManager) {
@@ -554,11 +571,14 @@ final class AgentResultPanelManager {
         let origin = NSPoint(x: visibleFrame.maxX - panel.frame.width - 20, y: visibleFrame.maxY - panel.frame.height - 12)
         panel.setFrameOrigin(origin)
         panel.makeKeyAndOrderFront(nil)
+        state.isVisible = true
     }
 }
 
 @MainActor
 final class AgentResultPanelState: ObservableObject {
+    /// True while the card is on screen.
+    @Published var isVisible = false
     @Published var threadId: String = ""
     @Published var title: String = ""
     @Published var summary: String = ""
