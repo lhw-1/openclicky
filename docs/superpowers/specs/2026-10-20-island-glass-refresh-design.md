@@ -34,7 +34,7 @@ dictation stats) can occupy, picked by the moment or by the user.
 
 - No new pages or content beyond the three components named below; no media, files, or widgets.
 - No fully clear "glass capsule" mode; black-into-glass is the one open-panel material.
-- No change to the connect, permission, tour and composer cards beyond the new material and corners.
+- No change to the connect, permission, tour and composer cards beyond the new corners and shadow; they stay solid black (their dim copy must read on any wallpaper).
 - No change to where the island lives (notch, side drawer, hidden) or how the side drawer opens.
 - No change to the orb, the main window, or the menu bar.
 
