@@ -86,6 +86,32 @@ struct NotchHUDModelTests {
         #expect(model.expansion == .full)
     }
 
+    @Test func theSlotFollowsTheContextAndTheUsersOverrideSurvivesPartialTranscripts() {
+        let model = notchModel()
+        model.registry = IslandComponentSelectorTests().registry
+        #expect(model.selection.active == "shortcuts")
+        #expect(!model.showsCapsule)
+        #expect(model.fullHeight == model.bandRowHeight + 45)
+        var context = IslandContext.idle
+        context.isTakeLive = true
+        context.liveTranscript = "hello"
+        model.setContext(context)
+        #expect(model.selection.active == "transcript")
+        #expect(model.showsCapsule)
+        #expect(model.fullHeight == model.bandRowHeight + 45 + 36)
+        model.selectComponent("shortcuts")
+        context.liveTranscript = "hello there"
+        model.setContext(context)
+        #expect(model.selection.active == "shortcuts")      // override survives a partial
+        context.isTakeLive = false
+        context.takeLandedAt = nil
+        model.setContext(context)
+        #expect(model.selection.active == "shortcuts")      // contextual key changed: override cleared, default wins
+        context.agentActivityText = "working"
+        model.setContext(context)
+        #expect(model.selection.active == "agent")          // a fresh contextual key is followed again
+    }
+
     @Test func pressIsAFlagTheViewScalesOn() {
         let model = notchModel()
         model.setPressed(true)

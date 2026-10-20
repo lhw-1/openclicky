@@ -209,10 +209,61 @@ final class NotchHUDModel: ObservableObject {
         return cardTopInset + contentHeight
     }
     var composerHeight: CGFloat { geometry.notchHeight + composerContentHeight }
-    /// The band, then one row: 88 pt under a notch (Claude Design's "max 88pt"); a side drawer
-    /// stacks the dock button over the shortcut grid.
+    // MARK: The slot
+
+    /// The components the slot can show; the built-ins unless a test swaps them.
+    var registry: [any IslandComponent] {
+        didSet { recomputeSelection() }
+    }
+    /// The user's default component and order.
+    var componentSettings: IslandComponentSettings {
+        didSet { recomputeSelection() }
+    }
+    /// What the island knows about the moment; set by the HUD manager.
+    @Published private(set) var context: IslandContext = .idle
+    /// The active component and the ones the capsule can flip to.
+    @Published private(set) var selection: IslandComponentSelection
+    /// The user's flip in the capsule; cleared when the moment changes.
+    private var componentOverride: String?
+
+    func setContext(_ context: IslandContext) {
+        guard self.context != context else { return }
+        if context.contextualKey != self.context.contextualKey { componentOverride = nil }
+        self.context = context
+        recomputeSelection()
+    }
+
+    /// The capsule: show this component until the moment changes.
+    func selectComponent(_ id: String) {
+        componentOverride = id
+        recomputeSelection()
+    }
+
+    private func recomputeSelection() {
+        let selection = IslandComponentSelector.select(registry: registry, order: componentSettings.order, defaultID: componentSettings.defaultID, override: componentOverride, context: context)
+        guard selection != self.selection else { return }
+        let heightBefore = fullHeight
+        self.selection = selection
+        if expansion == .full && fullHeight != heightBefore { onLayoutChanged?() }
+    }
+
+    /// The capsule only earns its row when there is something to flip to.
+    var showsCapsule: Bool { selection.available.count > 1 }
+    /// The capsule (28 pt) and the gap above it.
+    let capsuleRowHeight: CGFloat = 36
+
+    /// The active component's height: 45 pt for the shortcuts row under a notch, 92 in a side
+    /// drawer (the dock button stacks over the shortcut grid), else what the component asks for.
+    var slotHeight: CGFloat {
+        let component = registry.first { $0.id == selection.active } ?? registry[0]
+        if placement.isSideDrawer && component.id == IslandComponentRegistry.shortcutsID { return 92 }
+        return component.preferredHeight
+    }
+
+    /// The band, then the slot (88 pt under a notch with the shortcuts, Claude Design's "max 88pt"),
+    /// then the capsule's row when it shows.
     var fullHeight: CGFloat {
-        bandRowHeight + (placement.isSideDrawer ? 92 : 45)
+        bandRowHeight + slotHeight + (showsCapsule ? capsuleRowHeight : 0)
     }
 
     var width: CGFloat {
@@ -299,8 +350,12 @@ final class NotchHUDModel: ObservableObject {
     private var isPinnedOpen = false
     private var collapseTask: Task<Void, Never>?
 
-    init(geometry: NotchGeometry) {
+    init(geometry: NotchGeometry, registry: [any IslandComponent]? = nil, componentSettings: IslandComponentSettings = IslandComponentSettings(defaults: .standard)) {
         self.geometry = geometry
+        let registry = registry ?? IslandComponentRegistry.all
+        self.registry = registry
+        self.componentSettings = componentSettings
+        self.selection = IslandComponentSelector.select(registry: registry, order: componentSettings.order, defaultID: componentSettings.defaultID, override: nil, context: .idle)
     }
 
     func setHovering(_ hovering: Bool) {
