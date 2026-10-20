@@ -250,11 +250,12 @@ struct PermissionPromptTests {
 
         model.setSpeaking(false)
         model.setBusy(false)
-        // A busy CI runner can take longer than the island's grace period to open the panel.
-        for _ in 0..<150 where model.expansion != .full {
+        // A busy CI runner can take longer than the island's grace period. Hovering only peeks;
+        // a click is what opens the panel.
+        for _ in 0..<150 where model.expansion != .peek {
             try await Task.sleep(nanoseconds: 20_000_000)
         }
-        #expect(model.expansion == .full)
+        #expect(model.expansion == .peek)
     }
 
     @Test func thePermissionCardOutranksTheConnectCardAndTheBusyStrip() {

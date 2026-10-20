@@ -184,7 +184,16 @@ final class NotchHUDModel: ObservableObject {
         case .hidden: return 0
         }
     }
-    var compactHeight: CGFloat { geometry.notchHeight + compactContentHeight }
+    /// The busy strip sits in the band beside the camera with an 8 pt lip under it; the caption
+    /// strip keeps its own taller content. A detail line hangs under either.
+    let compactStripLip: CGFloat = 8
+    var compactHeight: CGFloat {
+        if isShowingCaption { return geometry.notchHeight + compactContentHeight }
+        return topBandHeight + compactStripLip + (hasCompactDetailLine ? compactDetailLineHeight : 0)
+    }
+    /// Hovered: the island grows 14 pt on each side and one line under the band, and shows a hint.
+    var peekWidth: CGFloat { placement.isSideDrawer ? collapsedWidth : geometry.notchWidth + 28 }
+    var peekHeight: CGFloat { placement.isSideDrawer ? collapsedHeight : topBandHeight + 24 }
     /// Where a card's content starts: under the notch band on a notch screen; elsewhere the island
     /// covers the menu bar and the content uses that height too.
     var cardTopInset: CGFloat { geometry.hasHardwareNotch ? geometry.notchHeight : 8 }
@@ -208,7 +217,8 @@ final class NotchHUDModel: ObservableObject {
 
     var width: CGFloat {
         switch expansion {
-        case .collapsed, .peek: return collapsedWidth
+        case .collapsed: return collapsedWidth
+        case .peek: return peekWidth
         case .compact: return compactWidth
         case .connect: return connectWidth
         case .permission: return permissionWidth
@@ -220,7 +230,8 @@ final class NotchHUDModel: ObservableObject {
 
     var height: CGFloat {
         switch expansion {
-        case .collapsed, .peek: return collapsedHeight
+        case .collapsed: return collapsedHeight
+        case .peek: return peekHeight
         case .compact: return compactHeight
         case .connect: return connectHeight
         case .permission: return permissionHeight
@@ -372,6 +383,30 @@ final class NotchHUDModel: ObservableObject {
         reconcile()
     }
 
+    /// A click on the island body: opens the panel (or closes it), except where the click already
+    /// means something else: the busy strip while speaking or in a guide is a stop button (the view
+    /// handles that before calling this), and the cards and the composer own their own buttons.
+    func islandClicked() {
+        guard !isSetupInProgress else { return }
+        switch expansion {
+        case .compact:
+            guard !isSpeaking, guideStep == nil else { return }
+        case .connect, .permission, .composer, .tour:
+            return
+        case .collapsed, .peek, .full:
+            break
+        }
+        togglePinned()
+    }
+
+    /// True from mouse-down to mouse-up on the island, so the view can scale it a touch.
+    @Published private(set) var isPressed = false
+
+    func setPressed(_ pressed: Bool) {
+        guard isPressed != pressed else { return }
+        isPressed = pressed
+    }
+
     /// Opens the full panel and keeps it open until a click elsewhere (the menu bar's "open the
     /// island", the only way in when the island is hidden).
     func openPinned() {
@@ -461,12 +496,16 @@ final class NotchHUDModel: ObservableObject {
             // Hovering the connect card must not swap it for the full panel while the user is
             // reaching for its buttons; a click on the island still pins the full panel open.
             target = .connect
-        } else if isHovering && !isSetupInProgress && !isSpeaking && guideStep == nil {
+        } else if isHovering && !isSetupInProgress && !isSpeaking && guideStep == nil && placement.isSideDrawer {
+            // A drawer's handle is too small to peek: hovering it opens the drawer.
             target = .full
+        } else if isHovering && !isSetupInProgress && !isSpeaking && guideStep == nil && !isBusy && captionText == nil {
+            // Hovering only teases; a click opens the panel.
+            target = .peek
         } else {
             target = restingExpansion
         }
-        if target == .full || target == .connect || target == .permission || target == .composer || target == .tour || immediately {
+        if target == .full || target == .peek || target == .connect || target == .permission || target == .composer || target == .tour || immediately {
             setExpansion(target)
             return
         }
@@ -931,7 +970,7 @@ final class NotchHUDManager {
                         model.setHovering(false)
                         continue
                     }
-                    let hoverMargin: CGFloat = model.expansion == .collapsed ? 6 : 14
+                    let hoverMargin: CGFloat = (model.expansion == .collapsed || model.expansion == .peek) ? 6 : 14
                     let hoverRect = model.islandFrame.insetBy(dx: -hoverMargin, dy: -hoverMargin)
                     model.setHovering(hoverRect.contains(mouseLocation))
                 }
@@ -1044,7 +1083,7 @@ struct NotchHUDView: View {
                     .onTapGesture {
                         if expansion == .compact && model.guideStep != nil { companionManager.stopGuide(); return }
                         if expansion == .compact && model.isSpeaking { companionManager.stopSpeaking(); return }
-                        if expansion != .connect && expansion != .permission && expansion != .composer && expansion != .tour { model.togglePinned() }
+                        model.islandClicked()
                     }
             }
 
