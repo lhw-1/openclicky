@@ -26,7 +26,7 @@ struct NotchHUDModelTests {
         let model = notchModel()
         model.setHovering(true)
         #expect(model.expansion == .peek)
-        #expect(model.width == 218)
+        #expect(model.width == 230)   // 190 notch + 20 a side
         #expect(model.height == 57)   // 33 notch + 24 line
     }
 

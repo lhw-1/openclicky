@@ -93,7 +93,7 @@ struct NotchPointerStatus: View {
     var body: some View {
         HStack(spacing: 8) {
             NotchPointerMark(isDimmed: companionManager.isCursorDocked)
-            Text(statusText)
+            Text(Self.statusText(model: model, companionManager: companionManager))
                 .font(.system(size: 12))
                 .foregroundColor(DS.HUD.text2)
                 .lineLimit(1)
@@ -103,7 +103,7 @@ struct NotchPointerStatus: View {
     }
 
     /// From the dock state, the "show the pointer" switch and the "the pointer shows" setting.
-    private var statusText: String {
+    static func statusText(model: NotchHUDModel, companionManager: CompanionManager) -> String {
         if companionManager.isCursorDocked { return model.placement.isSideDrawer ? "pointer is docked in the drawer" : "pointer is docked" }
         if !companionManager.isClickyCursorEnabled { return "pointer shows while you talk" }
         switch companionManager.pointerPresence {
@@ -111,6 +111,38 @@ struct NotchPointerStatus: View {
         case .whileMoving: return "pointer follows while moving"
         case .onShake: return companionManager.isPointerAwake ? "pointer follows your mouse" : "shake the mouse for the pointer"
         }
+    }
+}
+
+/// The peek: the pointer's status and that a click opens the panel, in one dim line.
+struct NotchPeekLine: View {
+    @ObservedObject var model: NotchHUDModel
+    @ObservedObject var companionManager: CompanionManager
+
+    /// The status in fewer words, so it fits beside "click to open" on the peek's one line.
+    static func shortStatusText(companionManager: CompanionManager) -> String {
+        if companionManager.isCursorDocked { return "pointer docked" }
+        if !companionManager.isClickyCursorEnabled { return "pointer while you talk" }
+        switch companionManager.pointerPresence {
+        case .always: return "pointer follows you"
+        case .whileMoving: return "pointer while moving"
+        case .onShake: return companionManager.isPointerAwake ? "pointer follows you" : "shake for the pointer"
+        }
+    }
+
+    var body: some View {
+        HStack(spacing: 6) {
+            NotchPointerMark(isDimmed: companionManager.isCursorDocked)
+            Text(Self.shortStatusText(companionManager: companionManager))
+                .foregroundColor(DS.HUD.text2)
+            Text("· click to open")
+                .foregroundColor(DS.HUD.text3)
+        }
+        .font(.system(size: 11))
+        .lineLimit(1)
+        .minimumScaleFactor(0.8)
+        .padding(.horizontal, 10)
+        .accessibilityElement(children: .combine)
     }
 }
 

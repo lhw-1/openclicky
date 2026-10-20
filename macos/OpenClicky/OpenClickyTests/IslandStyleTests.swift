@@ -13,7 +13,7 @@ import Testing
 struct IslandStyleTests {
     @Test func bottomRadiusFollowsTheState() {
         #expect(IslandCorners.bottomRadius(for: .collapsed, width: 190) == 11)
-        #expect(IslandCorners.bottomRadius(for: .peek, width: 218) == 18)
+        #expect(IslandCorners.bottomRadius(for: .peek, width: 230) == 18)
         #expect(IslandCorners.bottomRadius(for: .compact, width: 380) == 18)
         #expect(IslandCorners.bottomRadius(for: .full, width: 512) == 25.6)
         #expect(IslandCorners.bottomRadius(for: .full, width: 360) == 20)   // clamped low
@@ -39,6 +39,14 @@ struct IslandStyleTests {
         #expect(IslandGlass.stops(level: 0, bandBottom: 40, panelHeight: 120) == nil)
         #expect(IslandGlass.stops(level: -1, bandBottom: 40, panelHeight: 120) == nil)
         #expect(IslandGlass.stops(level: 2, bandBottom: 40, panelHeight: 120) == full) // clamped
+    }
+
+    @Test func theGlassLayerExistsOnlyWhenOpenAndLevelIsAboveZero() {
+        #expect(IslandSurface(expansion: .full, width: 512, height: 120, bandBottom: 40, glassLevel: 0.6, isSideDrawer: false).hasGlassLayer)
+        #expect(!IslandSurface(expansion: .full, width: 512, height: 120, bandBottom: 40, glassLevel: 0, isSideDrawer: false).hasGlassLayer)
+        #expect(!IslandSurface(expansion: .peek, width: 218, height: 57, bandBottom: 33, glassLevel: 0.6, isSideDrawer: false).hasGlassLayer)
+        #expect(!IslandSurface(expansion: .compact, width: 380, height: 41, bandBottom: 33, glassLevel: 0.6, isSideDrawer: false).hasGlassLayer)
+        #expect(IslandSurface(expansion: .connect, width: 512, height: 150, bandBottom: 33, glassLevel: 0.6, isSideDrawer: false).hasGlassLayer)
     }
 
     @Test func reduceMotionTurnsSpringsIntoFadesAndDropsThePressScale() {

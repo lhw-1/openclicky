@@ -191,8 +191,8 @@ final class NotchHUDModel: ObservableObject {
         if isShowingCaption { return geometry.notchHeight + compactContentHeight }
         return topBandHeight + compactStripLip + (hasCompactDetailLine ? compactDetailLineHeight : 0)
     }
-    /// Hovered: the island grows 14 pt on each side and one line under the band, and shows a hint.
-    var peekWidth: CGFloat { placement.isSideDrawer ? collapsedWidth : geometry.notchWidth + 28 }
+    /// Hovered: the island grows 20 pt on each side and one line under the band, and shows a hint.
+    var peekWidth: CGFloat { placement.isSideDrawer ? collapsedWidth : geometry.notchWidth + 40 }
     var peekHeight: CGFloat { placement.isSideDrawer ? collapsedHeight : topBandHeight + 24 }
     /// Where a card's content starts: under the notch band on a notch screen; elsewhere the island
     /// covers the menu bar and the content uses that height too.
@@ -456,6 +456,12 @@ final class NotchHUDModel: ObservableObject {
 
     /// True from mouse-down to mouse-up on the island, so the view can scale it a touch.
     @Published private(set) var isPressed = false
+
+    /// Where the open panel's black melts into glass (Settings → General); 0 is all black.
+    @Published var glassLevel: Double = IslandGlass.defaultLevel
+    /// The "Reduce motion" setting, read when the view animates; set by the HUD manager.
+    var reduceMotionProvider: () -> Bool = { false }
+    var reduceMotion: Bool { reduceMotionProvider() }
 
     func setPressed(_ pressed: Bool) {
         guard isPressed != pressed else { return }
@@ -903,6 +909,8 @@ final class NotchHUDManager {
             let model = NotchHUDModel(geometry: geometry)
             model.placement = placement
             model.hostsDockedCursor = Self.primaryScreen.map(Self.screenID(of:)) == screenID
+            model.glassLevel = UserDefaults.standard.object(forKey: IslandGlass.defaultsKey) as? Double ?? IslandGlass.defaultLevel
+            model.reduceMotionProvider = { [settings = companionManager.dictationSettings] in settings.reduceAnimation }
             model.setBusy(isBusy)
             model.setSpeaking(isSpeaking)
             model.setGuideStep(companionManager.guideStepUnderWay)
@@ -1018,6 +1026,10 @@ final class NotchHUDManager {
         hoverPollTimer = Timer.scheduledTimer(withTimeInterval: 0.05, repeats: true) { [weak self] _ in
             Task { @MainActor in
                 guard let self else { return }
+                #if DEBUG
+                // The UI tour sets the hover itself (the peek shot) while no pointer is over the island.
+                if self.debugKeepsPanelsOpen { return }
+                #endif
                 let mouseLocation = NSEvent.mouseLocation
                 for instance in self.instances {
                     let model = instance.model
@@ -1073,6 +1085,9 @@ extension NotchHUDManager {
     func debugCloseAll() { instances.forEach { $0.model.close() } }
 
     func debugOpenPrimaryPanel() { primaryInstance?.model.openPinned() }
+
+    /// The hover tease, without a pointer: the primary island peeks until `debugCloseAll`.
+    func debugPeekPrimary() { primaryInstance?.model.setHovering(true) }
 }
 #endif
 
@@ -1084,17 +1099,35 @@ struct NotchHUDView: View {
 
     private var expansion: NotchHUDExpansion { model.expansion }
     private var notchHeight: CGFloat { model.geometry.notchHeight }
-    /// The hardware notch's own bottom radius when collapsed, 18 pt for the busy strip, the sheet's 22 pt island radius for cards and the panel.
-    private var bottomCornerRadius: CGFloat {
+    /// How far the top corners curve outward into the menu bar, continuing the notch housing.
+    private var topCornerFlare: CGFloat { IslandCorners.topFlare(for: expansion, isSideDrawer: model.placement.isSideDrawer) }
+
+    /// Where the black band ends and the melt into glass may begin: under the band row of the open
+    /// panel, under the notch band on a card.
+    private var bandBottom: CGFloat {
         switch expansion {
-        case .collapsed: return 11
-        case .compact: return 18
-        default: return DS.HUD.islandRadius
+        case .full: return model.bandRowHeight
+        case .connect, .permission, .tour, .composer: return model.cardTopInset
+        case .collapsed, .peek, .compact: return model.topBandHeight
         }
     }
-    /// How far the top corners curve outward into the menu bar (measured from HeyClicky: ~6 pt).
-    /// A side drawer hangs from a screen edge instead, so it has none.
-    private var topCornerFlare: CGFloat { model.placement.isSideDrawer ? 0 : 6 }
+
+    /// The island's width (its flares included) and height for the state it is in.
+    private var surfaceWidth: CGFloat { model.width + topCornerFlare * 2 }
+    private var surfaceHeight: CGFloat { expansion == .collapsed ? notchHeight : model.height }
+
+    /// Opening unfolds width first and drops the height a beat later; everything else moves on
+    /// the short peek spring. Reduce motion makes all of it a fade.
+    private var isOpening: Bool { expansion == .full || expansion == .connect || expansion == .permission || expansion == .tour || expansion == .composer }
+    private var widthAnimation: Animation {
+        isOpening ? IslandMotion.unfoldWidth(reduceMotion: model.reduceMotion) : IslandMotion.peek(reduceMotion: model.reduceMotion)
+    }
+    private var heightAnimation: Animation {
+        if model.isSettlingGracefully { return .spring(response: 1.3, dampingFraction: 0.92) }
+        return isOpening
+            ? IslandMotion.unfoldHeight(reduceMotion: model.reduceMotion).delay(model.reduceMotion ? 0 : IslandMotion.heightDelay)
+            : IslandMotion.peek(reduceMotion: model.reduceMotion)
+    }
 
     /// Where the island sits in its window: centred at the top under the notch, or against the
     /// screen edge a side drawer hangs from (the window's margin is on the other three sides).
@@ -1106,35 +1139,36 @@ struct NotchHUDView: View {
         }
     }
 
-    /// The island's outline: the notch shape, or a drawer whose screen-side corners are square.
-    @ViewBuilder
+    /// The island's body: black around the camera melting into glass below (`IslandSurface`), in
+    /// the notch outline or a drawer whose screen-side corners are square.
     private var islandBackground: some View {
-        if model.placement.isSideDrawer {
-            let radius = bottomCornerRadius
-            let isLeft = model.placement == .left
-            UnevenRoundedRectangle(
-                topLeadingRadius: isLeft ? 0 : radius,
-                bottomLeadingRadius: isLeft ? 0 : radius,
-                bottomTrailingRadius: isLeft ? radius : 0,
-                topTrailingRadius: isLeft ? radius : 0,
-                style: .continuous
-            )
-            .fill(DS.HUD.island)
-        } else {
-            NotchIslandShape(bottomCornerRadius: bottomCornerRadius, topCornerFlare: topCornerFlare)
-                .fill(DS.HUD.island)
-        }
+        IslandSurface(
+            expansion: expansion,
+            width: model.width,
+            height: surfaceHeight,
+            bandBottom: bandBottom,
+            glassLevel: model.glassLevel,
+            isSideDrawer: model.placement.isSideDrawer,
+            drawerSide: model.placement
+        )
     }
 
     var body: some View {
         ZStack(alignment: .top) {
-            // Solid black, no border, no shadow: the island reads as part of the notch. On a display
+            // Collapsed the island is the notch itself: black, no shadow, no outline. On a display
             // without a notch nothing is drawn while collapsed (no fake notch over the menu bar): only
             // the thin handle below marks where to hover.
             if expansion != .collapsed || (model.placement == .notch && model.geometry.hasHardwareNotch) {
-                // Collapsed, the black is the notch itself.
                 islandBackground
-                    .frame(width: model.width + topCornerFlare * 2, height: expansion == .collapsed ? notchHeight : model.height)
+                    .frame(width: surfaceWidth)
+                    .animation(widthAnimation, value: surfaceWidth)
+                    .frame(height: surfaceHeight)
+                    .animation(heightAnimation, value: surfaceHeight)
+                    .simultaneousGesture(
+                        DragGesture(minimumDistance: 0)
+                            .onChanged { _ in model.setPressed(true) }
+                            .onEnded { _ in model.setPressed(false) }
+                    )
                     .onTapGesture {
                         if expansion == .compact && model.guideStep != nil { companionManager.stopGuide(); return }
                         if expansion == .compact && model.isSpeaking { companionManager.stopSpeaking(); return }
@@ -1147,7 +1181,12 @@ struct NotchHUDView: View {
             // content inside the smaller window.
             switch expansion {
             case .peek:
-                EmptyView()
+                // One line under the band: what the pointer is doing, and that a click opens the panel.
+                NotchPeekLine(model: model, companionManager: companionManager)
+                    .frame(width: model.peekWidth, height: model.peekHeight - model.topBandHeight)
+                    .padding(.top, model.topBandHeight)
+                    .allowsHitTesting(false)
+                    .transition(.opacity)
             case .collapsed:
                 if model.placement == .hidden {
                     // Shortcuts only: nothing on screen until something happens.
@@ -1224,10 +1263,12 @@ struct NotchHUDView: View {
                     .transition(.opacity.combined(with: .scale(scale: 0.96, anchor: .top)))
             }
         }
+        .scaleEffect(model.isPressed ? IslandMotion.pressScale(reduceMotion: model.reduceMotion) : 1, anchor: .top)
+        .animation(.easeOut(duration: IslandMotion.pressDuration), value: model.isPressed)
         .padding(.top, model.placement.isSideDrawer ? model.windowMargin : 0)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: islandAlignment)
         .contentShape(Rectangle())
-        .animation(model.isSettlingGracefully ? .spring(response: 1.3, dampingFraction: 0.92) : .spring(response: 0.42, dampingFraction: 0.84), value: expansion)
+        .animation(model.isSettlingGracefully ? .spring(response: 1.3, dampingFraction: 0.92) : (model.reduceMotion ? IslandMotion.fade : .spring(response: 0.42, dampingFraction: 0.84)), value: expansion)
         .animation(.easeInOut(duration: 0.25), value: companionManager.isCursorDocked)
         .animation(.easeInOut(duration: 0.2), value: companionManager.voiceState)
     }

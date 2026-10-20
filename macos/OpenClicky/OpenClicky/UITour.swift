@@ -173,6 +173,10 @@ final class UITour {
             hud.debugCloseAll()
             if placement != .notch { continue }
 
+            hud.debugPeekPrimary()
+            await shoot("\(prefix)-03-peek", window: hud.debugPrimaryWindow)
+            hud.debugCloseAll()
+
             companionManager.debugSetVoiceState(.listening)
             await shoot("\(prefix)-05-busy-listening", window: hud.debugPrimaryWindow)
             companionManager.debugSetVoiceState(.processing)
