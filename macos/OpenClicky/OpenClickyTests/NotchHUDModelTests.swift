@@ -112,6 +112,19 @@ struct NotchHUDModelTests {
         #expect(model.selection.active == "agent")          // a fresh contextual key is followed again
     }
 
+    @Test func theBusyStripKeepsItsWordsOutFromUnderTheCamera() throws {
+        // 480 wide around a 190 pt notch: two 137 pt columns either side of a 206 pt gap.
+        let columns = try #require(NotchCompactStatusView.columns(stripWidth: 480, notchWidth: 190))
+        #expect(columns.side == 137)
+        #expect(columns.gap == 206)
+        #expect(columns.side * 2 + columns.gap == 480)
+        // Without a camera there are no columns: the row is one line with today's spacing.
+        #expect(NotchCompactStatusView.columns(stripWidth: 380, notchWidth: 0) == nil)
+        let model = notchModel()
+        model.setBusy(true)
+        #expect(model.compactWidth == 480)
+    }
+
     @Test func pressIsAFlagTheViewScalesOn() {
         let model = notchModel()
         model.setPressed(true)

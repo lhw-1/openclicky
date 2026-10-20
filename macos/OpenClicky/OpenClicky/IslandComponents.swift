@@ -15,8 +15,11 @@ import SwiftUI
 /// publishes.
 struct IslandContext: Equatable {
     var isTakeLive = false
+    /// When the last take landed (the live → idle flip), remembered by the HUD manager.
     var takeLandedAt: Date?
     var liveTranscript = ""
+    /// The last take's words as they were pasted, for the moments after it lands.
+    var landedTranscript = ""
     var agentActivityText: String?
     var isResultCardUp = false
     var engineCanRun = true
@@ -41,17 +44,26 @@ struct IslandContext: Equatable {
 extension IslandContext {
     /// The context from what the app already publishes: the take controller's state and last
     /// take, the orb's live words, the companion's agent line, the result card's visibility.
-    static func make(takeState: DictationTakeController.TakeState, lastTake: TakeRecord?, liveTranscript: String, agentActivityText: String?, isResultCardUp: Bool, engineCanRun: Bool, placement: HUDPlacement, now: Date) -> IslandContext {
+    static func make(takeState: DictationTakeController.TakeState, lastTake: TakeRecord?, takeLandedAt: Date?, liveTranscript: String, agentActivityText: String?, isResultCardUp: Bool, engineCanRun: Bool, placement: HUDPlacement, now: Date) -> IslandContext {
         IslandContext(
             isTakeLive: takeState != .idle,
-            takeLandedAt: lastTake?.createdAt,
+            takeLandedAt: takeLandedAt,
             liveTranscript: liveTranscript,
+            landedTranscript: lastTake?.formattedText ?? "",
             agentActivityText: agentActivityText,
             isResultCardUp: isResultCardUp,
             engineCanRun: engineCanRun,
             placement: placement,
             now: now
         )
+    }
+
+    /// The landing time to carry: `now` at the live → idle flip, the previous one while the take
+    /// stays landed, nothing while a take is live.
+    static func landingTime(previous: IslandContext, next: IslandContext, now: Date) -> Date? {
+        if next.isTakeLive { return nil }
+        if previous.isTakeLive { return now }
+        return previous.takeLandedAt
     }
 }
 

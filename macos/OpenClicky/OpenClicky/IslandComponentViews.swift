@@ -124,7 +124,8 @@ struct TranscriptIslandView: View {
     private var words: String {
         let live = model.context.liveTranscript.isEmpty ? orb.liveTranscript : model.context.liveTranscript
         if model.context.isTakeLive { return live.isEmpty ? "listening…" : live }
-        return companionManager.lastTranscript ?? live
+        // Landed: the take's own words as pasted (the orb clears its live buffer on landing).
+        return model.context.landedTranscript.isEmpty ? live : model.context.landedTranscript
     }
 
     var body: some View {
@@ -156,6 +157,13 @@ struct AgentIslandView: View {
     private var isRunning: Bool { activity != nil }
     private var line: String { activity ?? (result.title.isEmpty ? "agent" : result.title) }
 
+    /// The follow-up pill: only while a result card is up and no agent is running. A typed
+    /// follow-up interrupts whatever agent is working, and the card's thread is the only one the
+    /// island knows, so mid-run there is nothing safe to offer.
+    static func showsFollowUp(isRunning: Bool, isResultCardUp: Bool) -> Bool {
+        isResultCardUp && !isRunning
+    }
+
     var body: some View {
         HStack(alignment: .center, spacing: 12) {
             VStack(alignment: .leading, spacing: 6) {
@@ -174,7 +182,7 @@ struct AgentIslandView: View {
                         .lineLimit(1)
                 }
             }
-            if result.isVisible || !result.threadId.isEmpty {
+            if Self.showsFollowUp(isRunning: isRunning, isResultCardUp: result.isVisible || model.context.isResultCardUp), !result.threadId.isEmpty {
                 Button(action: {
                     let threadId = result.threadId
                     model.close()

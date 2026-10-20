@@ -81,12 +81,37 @@ struct IslandComponentSelectorTests {
 
     @Test func theContextIsBuiltFromWhatTheAppAlreadyPublishes() {
         let now = Date()
-        let c = IslandContext.make(takeState: .listening, lastTake: nil, liveTranscript: "hi", agentActivityText: nil, isResultCardUp: false, engineCanRun: true, placement: .notch, now: now)
+        let c = IslandContext.make(takeState: .listening, lastTake: nil, takeLandedAt: nil, liveTranscript: "hi", agentActivityText: nil, isResultCardUp: false, engineCanRun: true, placement: .notch, now: now)
         #expect(c.isTakeLive)
         #expect(c.contextualKey == "transcript")
         #expect(c.liveTranscript == "hi")
-        let d = IslandContext.make(takeState: .idle, lastTake: nil, liveTranscript: "", agentActivityText: nil, isResultCardUp: true, engineCanRun: true, placement: .notch, now: now)
+        let d = IslandContext.make(takeState: .idle, lastTake: nil, takeLandedAt: nil, liveTranscript: "", agentActivityText: nil, isResultCardUp: true, engineCanRun: true, placement: .notch, now: now)
         #expect(d.contextualKey == "agent")
+    }
+
+    @Test func aLandedTakeKeepsItsOwnWordsForEightSecondsFromLandingNotFromItsStart() {
+        let now = Date()
+        // A 20 s take that landed 3 s ago: the window counts from the landing, and the words are
+        // the take's formatted text, not the live buffer the orb has already cleared.
+        let take = TakeRecord(createdAt: now.addingTimeInterval(-23), rawText: "landed words", formattedText: "Landed words.")
+        let c = IslandContext.make(takeState: .idle, lastTake: take, takeLandedAt: now.addingTimeInterval(-3), liveTranscript: "", agentActivityText: nil, isResultCardUp: false, engineCanRun: true, placement: .notch, now: now)
+        #expect(c.contextualKey == "transcript")
+        #expect(c.landedTranscript == "Landed words.")
+        // The landing time is remembered by the manager at the live → idle flip.
+        var live = IslandContext.idle
+        live.isTakeLive = true
+        var idle = IslandContext.idle
+        #expect(IslandContext.landingTime(previous: live, next: idle, now: now) == now)
+        #expect(IslandContext.landingTime(previous: idle, next: idle, now: now) == nil)
+        idle.takeLandedAt = now.addingTimeInterval(-2)
+        #expect(IslandContext.landingTime(previous: idle, next: idle, now: now) == now.addingTimeInterval(-2))
+        #expect(IslandContext.landingTime(previous: idle, next: live, now: now) == nil)
+    }
+
+    @Test func theFollowUpPillShowsOnlyWithACardUpAndNoAgentRunning() {
+        #expect(AgentIslandView.showsFollowUp(isRunning: false, isResultCardUp: true))
+        #expect(!AgentIslandView.showsFollowUp(isRunning: true, isResultCardUp: true))
+        #expect(!AgentIslandView.showsFollowUp(isRunning: false, isResultCardUp: false))
     }
 
     @Test func settingsRoundTripWithDefaults() {

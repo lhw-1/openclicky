@@ -102,7 +102,11 @@ final class NotchHUDModel: ObservableObject {
     let collapsedLipHeight: CGFloat = 0
     /// The busy strip is 380 × 37 and grows by one caption line; the caption strip (the (i) text
     /// while the buddy is docked) is wider and three lines tall.
-    var compactWidth: CGFloat { isShowingCaption ? 400 : DS.HUD.stripWidth }
+    /// The busy strip is wider under a hardware notch, so the words beside the camera have room.
+    var compactWidth: CGFloat {
+        if isShowingCaption { return 400 }
+        return geometry.hasHardwareNotch && placement == .notch ? 480 : DS.HUD.stripWidth
+    }
     var compactContentHeight: CGFloat {
         if isShowingCaption { return 70 }
         return DS.HUD.stripHeight + (hasCompactDetailLine ? compactDetailLineHeight : 0)
@@ -1011,19 +1015,24 @@ final class NotchHUDManager {
     private func observeIslandContext(of companionManager: CompanionManager) {
         let takeController = companionManager.dictationTakeController
         let settings = companionManager.dictationSettings
+        // Whether the engine can run is a few file probes: asked when the engine changes, never
+        // per partial transcript.
+        let engineCanRun = settings.$engine
+            .map { DictationEngineResolver.unavailableReason(for: $0) == nil }
+            .removeDuplicates()
         Publishers.CombineLatest4(takeController.$state, takeController.$lastTake, companionManager.orbModel.$liveTranscript, companionManager.$agentActivityText)
-            .combineLatest(companionManager.agentResultPanelManager.state.$isVisible, companionManager.$hudPlacement)
-            .map { takeAndAgent, isResultCardUp, placement in
+            .combineLatest(companionManager.agentResultPanelManager.state.$isVisible, companionManager.$hudPlacement, engineCanRun)
+            .sink { [weak self] takeAndAgent, isResultCardUp, placement, engineCanRun in
+                guard let self else { return }
                 let (takeState, lastTake, liveTranscript, agentActivityText) = takeAndAgent
-                return IslandContext.make(
-                    takeState: takeState, lastTake: lastTake, liveTranscript: liveTranscript,
+                let now = Date()
+                var context = IslandContext.make(
+                    takeState: takeState, lastTake: lastTake, takeLandedAt: nil, liveTranscript: liveTranscript,
                     agentActivityText: agentActivityText, isResultCardUp: isResultCardUp,
-                    engineCanRun: DictationEngineResolver.unavailableReason(for: settings.engine) == nil,
-                    placement: placement, now: Date()
+                    engineCanRun: engineCanRun, placement: placement, now: now
                 )
-            }
-            .sink { [weak self] context in
-                self?.applyIslandContext(context)
+                context.takeLandedAt = IslandContext.landingTime(previous: self.latestIslandContext, next: context, now: now)
+                self.applyIslandContext(context)
             }
             .store(in: &busyCancellables)
         companionManager.dictationSettings.$reduceAnimation
@@ -1314,7 +1323,8 @@ struct NotchHUDView: View {
                         NotchCompactStatusView(
                             companionManager: companionManager,
                             notchWidth: model.geometry.hasHardwareNotch && !model.placement.isSideDrawer ? model.geometry.notchWidth : 0,
-                            bandHeight: model.topBandHeight + model.compactStripLip
+                            bandHeight: model.topBandHeight + model.compactStripLip,
+                            stripWidth: model.compactWidth
                         )
                         .frame(width: model.compactWidth, height: model.compactHeight)
                     }
@@ -1416,37 +1426,37 @@ struct NotchCompactStatusView: View {
     var notchWidth: CGFloat = 0
     /// The band the strip's row sits in (the notch's height, or the menu bar band elsewhere).
     var bandHeight: CGFloat = DS.HUD.stripHeight
+    /// The strip's width, which the columns beside the camera are cut from.
+    var stripWidth: CGFloat = DS.HUD.stripWidth
+
+    /// The strip's layout around a camera: two columns of `side` either side of a `gap` that
+    /// covers the notch and 8 pt of air each side, so no word ever runs under the housing. Nil
+    /// without a camera: the row is one line.
+    static func columns(stripWidth: CGFloat, notchWidth: CGFloat) -> (side: CGFloat, gap: CGFloat)? {
+        guard notchWidth > 0 else { return nil }
+        let gap = notchWidth + 16
+        return (side: (stripWidth - gap) / 2, gap: gap)
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            HStack(spacing: 12) {
-                NotchBuddyBadge(companionManager: companionManager)
-                    .frame(width: 20, height: 18)
-                Spacer(minLength: 8)
-                    .frame(minWidth: notchWidth > 0 ? notchWidth + 16 : 8)
-                Text(statusText)
-                    .font(.system(size: 12))
-                    .foregroundColor(DS.HUD.text2)
-                    .lineLimit(1)
-                    .truncationMode(.middle)
-                if companionManager.guideStepUnderWay != nil {
-                    // During a guide the whole strip stops the guide on a click; this says so in words,
-                    // because an icon alone was not enough for someone new to it.
-                    HStack(spacing: 5) {
-                        Image(systemName: "stop.circle.fill")
-                            .font(.system(size: 15))
-                        Text("stop guide")
-                            .font(.system(size: 12, weight: .semibold))
+            HStack(spacing: 0) {
+                if let columns = Self.columns(stripWidth: stripWidth, notchWidth: notchWidth) {
+                    NotchBuddyBadge(companionManager: companionManager)
+                        .frame(width: 20, height: 18)
+                        .frame(width: columns.side - 14, alignment: .trailing)
+                    Color.clear.frame(width: columns.gap)
+                    HStack(spacing: 8) {
+                        statusLabel
+                        stopControl
                     }
-                    .foregroundColor(DS.HUD.text)
-                    .accessibilityElement(children: .combine)
-                    .accessibilityLabel("stop the guide")
-                } else if isSpeaking {
-                    // The whole strip stops the voice on a click; this says so.
-                    Image(systemName: "stop.circle.fill")
-                        .font(.system(size: 15))
-                        .foregroundColor(DS.HUD.text)
-                        .accessibilityLabel("stop speaking")
+                    .frame(width: columns.side - 14, alignment: .leading)
+                } else {
+                    NotchBuddyBadge(companionManager: companionManager)
+                        .frame(width: 20, height: 18)
+                    Spacer(minLength: 8)
+                    statusLabel
+                    stopControl.padding(.leading, 12)
                 }
             }
             .frame(height: bandHeight)
@@ -1483,6 +1493,37 @@ struct NotchCompactStatusView: View {
                     .help("click to stop speaking")
             }
         }
+    }
+
+    private var statusLabel: some View {
+        Text(statusText)
+            .font(.system(size: 12))
+            .foregroundColor(DS.HUD.text2)
+            .lineLimit(1)
+            .truncationMode(.middle)
+    }
+
+    @ViewBuilder
+    private var stopControl: some View {
+        if companionManager.guideStepUnderWay != nil {
+                    // During a guide the whole strip stops the guide on a click; this says so in words,
+                    // because an icon alone was not enough for someone new to it.
+                    HStack(spacing: 5) {
+                        Image(systemName: "stop.circle.fill")
+                            .font(.system(size: 15))
+                        Text("stop guide")
+                            .font(.system(size: 12, weight: .semibold))
+                    }
+                    .foregroundColor(DS.HUD.text)
+                    .accessibilityElement(children: .combine)
+                    .accessibilityLabel("stop the guide")
+                } else if isSpeaking {
+                    // The whole strip stops the voice on a click; this says so.
+                    Image(systemName: "stop.circle.fill")
+                        .font(.system(size: 15))
+                        .foregroundColor(DS.HUD.text)
+                        .accessibilityLabel("stop speaking")
+                }
     }
 
     private var isSpeaking: Bool { companionManager.voiceState == .responding }
