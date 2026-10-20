@@ -62,6 +62,15 @@ enum DS {
         static let bodySidePadding: CGFloat = 16
         static let stripWidth: CGFloat = 380
         static let stripHeight: CGFloat = 37
+
+        /// Tiles that sit on the glass band read as glass controls: translucent white, not grey.
+        static let glassTile = Color.white.opacity(0.14)
+        static let glassTileHovered = Color.white.opacity(0.22)
+        /// The navigation capsule under the open panel and its active disc.
+        static let capsule = Color.black.opacity(0.6)
+        static let capsuleActive = Color.white.opacity(0.18)
+        /// The open panel's drop shadow.
+        static let shadow = (opacity: 0.35, radius: CGFloat(14), y: CGFloat(6))
     }
 }
 

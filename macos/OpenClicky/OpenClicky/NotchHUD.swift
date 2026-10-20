@@ -76,6 +76,8 @@ struct NotchGeometry: Equatable {
 
 enum NotchHUDExpansion: Equatable {
     case collapsed
+    /// Hovered: the island grows a little and shows one line, but nothing opens.
+    case peek
     case compact
     case connect
     /// A permission card ("I need accessibility permissions." → Grant): one per missing
@@ -206,7 +208,7 @@ final class NotchHUDModel: ObservableObject {
 
     var width: CGFloat {
         switch expansion {
-        case .collapsed: return collapsedWidth
+        case .collapsed, .peek: return collapsedWidth
         case .compact: return compactWidth
         case .connect: return connectWidth
         case .permission: return permissionWidth
@@ -218,7 +220,7 @@ final class NotchHUDModel: ObservableObject {
 
     var height: CGFloat {
         switch expansion {
-        case .collapsed: return collapsedHeight
+        case .collapsed, .peek: return collapsedHeight
         case .compact: return compactHeight
         case .connect: return connectHeight
         case .permission: return permissionHeight
@@ -1050,6 +1052,8 @@ struct NotchHUDView: View {
             // inflate the SwiftUI fitting size and NSHostingView would then center (and clip) the
             // content inside the smaller window.
             switch expansion {
+            case .peek:
+                EmptyView()
             case .collapsed:
                 if model.placement == .hidden {
                     // Shortcuts only: nothing on screen until something happens.
