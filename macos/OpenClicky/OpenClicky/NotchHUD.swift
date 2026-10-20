@@ -1261,16 +1261,20 @@ struct NotchHUDView: View {
                     .animation(widthAnimation, value: surfaceWidth)
                     .frame(height: surfaceHeight)
                     .animation(heightAnimation, value: surfaceHeight)
-                    .simultaneousGesture(
+                    // One gesture does both the press (mouse-down scales the island) and the
+                    // click (a release that barely moved): a zero-distance drag beside a tap
+                    // gesture claims the mouse-down on macOS and the tap never fires.
+                    .gesture(
                         DragGesture(minimumDistance: 0)
                             .onChanged { _ in model.setPressed(true) }
-                            .onEnded { _ in model.setPressed(false) }
+                            .onEnded { value in
+                                model.setPressed(false)
+                                guard abs(value.translation.width) < 6, abs(value.translation.height) < 6 else { return }
+                                if expansion == .compact && model.guideStep != nil { companionManager.stopGuide(); return }
+                                if expansion == .compact && model.isSpeaking { companionManager.stopSpeaking(); return }
+                                model.islandClicked()
+                            }
                     )
-                    .onTapGesture {
-                        if expansion == .compact && model.guideStep != nil { companionManager.stopGuide(); return }
-                        if expansion == .compact && model.isSpeaking { companionManager.stopSpeaking(); return }
-                        model.islandClicked()
-                    }
             }
 
             // Only the active layer lives in the hierarchy: hidden layers with fixed frames would
