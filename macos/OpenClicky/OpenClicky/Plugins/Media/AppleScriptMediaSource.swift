@@ -29,7 +29,8 @@ struct AppleScriptMediaSource: MediaSourcing {
         MediaPlayer.allCases.filter { !NSRunningApplication.runningApplications(withBundleIdentifier: $0.bundleIdentifier).isEmpty }
     }
 
-    /// The eight fields joined by ASCII 30; "stopped" when nothing is up.
+    /// The eight fields joined by ASCII 30; "stopped" when nothing is up. Every field is bound to
+    /// a variable first: a list of bare object references cannot be coerced to text.
     static func nowPlayingScript(for player: MediaPlayer) -> String {
         switch player {
         case .music:
@@ -42,11 +43,14 @@ struct AppleScriptMediaSource: MediaSourcing {
                     return "stopped"
                 end try
                 set s to (player state as text)
+                set n to (name of t as text)
+                set a to (artist of t as text)
+                set al to (album of t as text)
                 set p to (player position as text)
                 set d to (duration of t as text)
                 set k to (persistent ID of t as text)
                 set AppleScript's text item delimiters to (ASCII character 30)
-                return {s, name of t, artist of t, album of t, p, d, k, ""} as text
+                return {s, n, a, al, p, d, k, ""} as text
             end tell
             """
         case .spotify:
@@ -59,10 +63,15 @@ struct AppleScriptMediaSource: MediaSourcing {
                     return "stopped"
                 end try
                 set s to (player state as text)
+                set n to (name of t as text)
+                set a to (artist of t as text)
+                set al to (album of t as text)
                 set p to (player position as text)
                 set d to (((duration of t) / 1000) as text)
+                set k to (id of t as text)
+                set u to (artwork url of t as text)
                 set AppleScript's text item delimiters to (ASCII character 30)
-                return {s, name of t, artist of t, album of t, p, d, id of t, artwork url of t} as text
+                return {s, n, a, al, p, d, k, u} as text
             end tell
             """
         }
