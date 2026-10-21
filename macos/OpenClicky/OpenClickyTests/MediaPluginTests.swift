@@ -1,0 +1,42 @@
+//
+//  MediaPluginTests.swift
+//  OpenClickyTests
+//
+//  The Now playing plugin: the script reply, the running position, the clock, the store and
+//  which player is asked.
+//
+
+import AppKit
+import Foundation
+import Testing
+@testable import OpenClicky
+
+struct MediaPluginTests {
+    let now = Date(timeIntervalSince1970: 1_000_000)
+    func line(_ fields: [String]) -> String { fields.joined(separator: MediaSnapshot.fieldSeparator) }
+
+    @Test func theScriptsOneLineReplyBecomesASnapshot() throws {
+        let reply = line(["playing", "Blue Hero", "The Band", "Album", "83.5", "245", "ABC123", ""])
+        let snapshot = try #require(MediaSnapshot.parse(reply, player: .music, sampledAt: now))
+        #expect(snapshot.isPlaying && snapshot.title == "Blue Hero" && snapshot.artist == "The Band")
+        #expect(snapshot.position == 83.5 && snapshot.duration == 245 && snapshot.artworkKey == "ABC123" && snapshot.artworkURL == nil)
+        let spotify = try #require(MediaSnapshot.parse(line(["paused", "T", "A", "", "10", "200", "spotify:track:x", "https://i.scdn.co/image/abc"]), player: .spotify, sampledAt: now))
+        #expect(!spotify.isPlaying && spotify.artworkURL == URL(string: "https://i.scdn.co/image/abc"))
+        #expect(MediaSnapshot.parse(line(["stopped", "", "", "", "0", "0", "", ""]), player: .music, sampledAt: now) == nil)
+        #expect(MediaSnapshot.parse("garbage", player: .music, sampledAt: now) == nil)
+    }
+
+    @Test func positionRunsOnWhilePlayingAndFreezesWhenPaused() throws {
+        var snapshot = try #require(MediaSnapshot.parse(line(["playing", "T", "A", "", "100", "120", "k", ""]), player: .music, sampledAt: now))
+        #expect(snapshot.position(at: now.addingTimeInterval(15)) == 115)
+        #expect(snapshot.position(at: now.addingTimeInterval(50)) == 120)   // clamped to the duration
+        snapshot.isPlaying = false
+        #expect(snapshot.position(at: now.addingTimeInterval(15)) == 100)
+    }
+
+    @Test func theClockReadsLikeAPlayer() {
+        #expect(MediaFormatter.clock(5) == "0:05")
+        #expect(MediaFormatter.clock(83.7) == "1:23")
+        #expect(MediaFormatter.clock(3723) == "1:02:03")
+    }
+}
