@@ -146,4 +146,31 @@ struct NotchHUDModelTests {
         #expect(model.selection.available == ["shortcuts", "system"])
         #expect(model.showsCapsule)
     }
+
+    @Test func aDragOverTheIslandUnfoldsItOnlyWhenTheShelfIsOn() async throws {
+        let defaults = UserDefaults(suiteName: "island-model-shelf")!
+        defaults.removePersistentDomain(forName: "island-model-shelf")
+        let registry = IslandComponentSelectorTests().registry + [IslandComponentSelectorTests.Stub(id: "shelf", isOptional: true) { _ in true }]
+        let model = NotchHUDModel(geometry: notchModel().geometry, registry: registry, componentSettings: IslandComponentSettings(defaults: defaults))
+        model.setDragHovering(true)
+        #expect(model.expansion == .collapsed)
+        var settings = IslandComponentSettings(defaults: defaults)
+        settings.enabledIDs = ["shelf"]
+        model.componentSettings = settings
+        model.setDragHovering(true)
+        #expect(model.expansion == .full)
+        #expect(model.selection.active == "shelf")
+        model.setContext(.idle)                       // the manager's context never clears the drag
+        #expect(model.context.isDragHovering)
+        model.setDragHovering(false)
+        try await waitFor(model, .collapsed)
+        #expect(model.expansion == .collapsed)
+        model.setDragOut(true)
+        #expect(model.expansion == .full)
+        model.setDragOut(false)
+        model.holdOpenAfterDrop()
+        #expect(model.expansion == .full)
+        try await waitFor(model, .collapsed)
+        #expect(model.expansion == .collapsed)
+    }
 }

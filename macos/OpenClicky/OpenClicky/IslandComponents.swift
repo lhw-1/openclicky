@@ -25,15 +25,19 @@ struct IslandContext: Equatable {
     var engineCanRun = true
     var placement: HUDPlacement = .notch
     var now = Date()
+    /// A drag from another app is over the island (the model keeps this per display).
+    var isDragHovering = false
 
     static let idle = IslandContext(now: Date(timeIntervalSince1970: 0))
 
     /// How long a landed take keeps its transcript in front.
     static let landedTranscriptWindow: TimeInterval = 8
 
-    /// The component the moment asks for: the transcript while a take is live or just landed,
-    /// the agent while one works or its result card is up, else nothing.
+    /// The component the moment asks for: the shelf while a drag hovers (an explicit act that
+    /// outranks everything), the transcript while a take is live or just landed, the agent while
+    /// one works or its result card is up, else nothing.
     var contextualKey: String? {
+        if isDragHovering { return IslandComponentRegistry.shelfID }
         if isTakeLive { return IslandComponentRegistry.transcriptID }
         if let takeLandedAt, now.timeIntervalSince(takeLandedAt) < Self.landedTranscriptWindow { return IslandComponentRegistry.transcriptID }
         if agentActivityText != nil || isResultCardUp { return IslandComponentRegistry.agentID }
@@ -167,6 +171,7 @@ enum IslandComponentRegistry {
     static let transcriptID = "transcript"
     static let agentID = "agent"
     static let systemID = "system"
+    static let shelfID = "shelf"
 
     /// The built-ins first, then the extras (off until turned on in Settings).
     @MainActor static var all: [any IslandComponent] {

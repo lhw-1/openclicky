@@ -165,4 +165,13 @@ struct IslandComponentSelectorTests {
         settings.enabledIDs = ["system"]
         #expect(settings.resolvedDefaultID(in: registry) == "system")
     }
+
+    @Test func aDragOverTheIslandOutranksEveryOtherMoment() {
+        var context = IslandContext.idle
+        context.isTakeLive = true
+        context.isDragHovering = true
+        #expect(context.contextualKey == "shelf")
+        context.isDragHovering = false
+        #expect(context.contextualKey == "transcript")
+    }
 }

@@ -239,6 +239,9 @@ final class NotchHUDModel: ObservableObject {
     private var componentOverride: String?
 
     func setContext(_ context: IslandContext) {
+        // The drag is this display's own; the manager's context never carries it.
+        var context = context
+        context.isDragHovering = isDragHovering
         guard self.context != context else { return }
         if context.contextualKey != self.context.contextualKey { componentOverride = nil }
         self.context = context
@@ -449,6 +452,48 @@ final class NotchHUDModel: ObservableObject {
         onLayoutChanged?()
     }
 
+    // MARK: Drags
+
+    /// A drag from another app is over this island. Only with the shelf on: without it the
+    /// island does not react to drags at all.
+    private(set) var isDragHovering = false
+    /// A tile is being dragged out of the shelf: the pointer leaves, the island must not close.
+    private(set) var isDraggingOut = false
+    /// A drop just landed: the island stays open a moment so the new tile is seen.
+    private var isHoldingAfterDrop = false
+    private var holdAfterDropTask: Task<Void, Never>?
+
+    func setDragHovering(_ hovering: Bool) {
+        guard !hovering || enabledComponentIDs.contains(IslandComponentRegistry.shelfID) else { return }
+        guard isDragHovering != hovering else { return }
+        isDragHovering = hovering
+        var context = self.context
+        context.isDragHovering = hovering
+        if context.contextualKey != self.context.contextualKey { componentOverride = nil }
+        self.context = context
+        recomputeSelection()
+        reconcile(immediately: true)
+    }
+
+    func setDragOut(_ dragging: Bool) {
+        guard isDraggingOut != dragging else { return }
+        isDraggingOut = dragging
+        reconcile(immediately: true)
+    }
+
+    /// Keeps the island open 1.5 s after a drop, then lets it rest unless the pointer stays.
+    func holdOpenAfterDrop() {
+        holdAfterDropTask?.cancel()
+        isHoldingAfterDrop = true
+        reconcile(immediately: true)
+        holdAfterDropTask = Task { [weak self] in
+            try? await Task.sleep(nanoseconds: 1_500_000_000)
+            guard !Task.isCancelled, let self else { return }
+            self.isHoldingAfterDrop = false
+            self.reconcile()
+        }
+    }
+
     func togglePinned() {
         guard !isSetupInProgress else { return }
         isPinnedOpen.toggle()
@@ -566,6 +611,9 @@ final class NotchHUDModel: ObservableObject {
             // Without permissions there is nothing else worth opening the island for.
             target = .permission
         } else if isPinnedOpen && !isSetupInProgress {
+            target = .full
+        } else if (isDragHovering || isDraggingOut || isHoldingAfterDrop) && !isSetupInProgress {
+            // A drag over the island, a tile on its way out, or a drop that just landed.
             target = .full
         } else if tourCard != nil && !isBusy {
             // Like the connect card: hovering it must not swap it for the panel.
