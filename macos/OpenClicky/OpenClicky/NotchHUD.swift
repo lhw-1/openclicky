@@ -721,6 +721,8 @@ final class NotchHUDManager {
     let agentSessions = AgentSessionWatcher(roots: .standard)
     /// One per app: Claude's plan limits, asked only while a Coding agents row is on screen.
     let claudeUsage = ClaudeUsageStore.live()
+    /// One per app: what Music or Spotify is playing, asked only while the Now playing plugin is on.
+    let media = MediaStore(source: AppleScriptMediaSource())
 
     /// The extras that need a background hand (the agents watcher, the usage store) follow
     /// their switch in Settings.
@@ -730,6 +732,7 @@ final class NotchHUDManager {
         let agentsOn = enabled.contains(IslandPluginRegistry.agentsID)
         agentSessions.setEnabled(agentsOn)
         claudeUsage.setEnabled(agentsOn)
+        media.setEnabled(enabled.contains(IslandPluginRegistry.mediaID))
     }
     #if DEBUG
     /// The UI tour keeps a pinned panel open through clicks elsewhere on the desktop.
@@ -1094,6 +1097,7 @@ final class NotchHUDManager {
     /// that window runs and the slot lets go on time.
     private var latestIslandContext: IslandContext = .idle
     private var islandContextTimer: Timer?
+    private var isMediaPlaying = false
 
     private func observeIslandContext(of companionManager: CompanionManager) {
         let takeController = companionManager.dictationTakeController
@@ -1115,6 +1119,19 @@ final class NotchHUDManager {
                     engineCanRun: engineCanRun, placement: placement, now: now
                 )
                 context.takeLandedAt = IslandContext.landingTime(previous: self.latestIslandContext, next: context, now: now)
+                context.isMediaPlaying = self.isMediaPlaying
+                self.applyIslandContext(context)
+            }
+            .store(in: &busyCancellables)
+        // The playing track is a moment of its own (the Now playing plugin is on and something plays).
+        media.$snapshot
+            .map { $0?.isPlaying ?? false }
+            .removeDuplicates()
+            .sink { [weak self] isPlaying in
+                guard let self, self.isMediaPlaying != isPlaying else { return }
+                self.isMediaPlaying = isPlaying
+                var context = self.latestIslandContext
+                context.isMediaPlaying = isPlaying
                 self.applyIslandContext(context)
             }
             .store(in: &busyCancellables)
@@ -1280,6 +1297,9 @@ extension NotchHUDManager {
     /// Sessions for the Coding agents shot without a terminal open.
     func debugSetAgentSessions(_ sessions: [AgentSession]?) { agentSessions.debugSetSessions(sessions) }
 
+    /// A track for the Now playing shot without a player open.
+    func debugSetMediaSnapshot(_ snapshot: MediaSnapshot?, artwork: NSImage?) { media.debugSetSnapshot(snapshot, artwork: artwork) }
+
     func debugResetPrimaryComponents() {
         guard let model = primaryInstance?.model else { return }
         model.debugEnabledComponentIDs = nil
@@ -1391,7 +1411,7 @@ struct NotchHUDView: View {
             switch expansion {
             case .peek:
                 // One line under the band: what the pointer is doing, and that a click opens the panel.
-                NotchPeekLine(model: model, companionManager: companionManager, agentSessions: companionManager.notchHUDManager.agentSessions)
+                NotchPeekLine(model: model, companionManager: companionManager, agentSessions: companionManager.notchHUDManager.agentSessions, media: companionManager.notchHUDManager.media)
                     .frame(width: model.peekWidth, height: model.peekHeight - model.topBandHeight)
                     .padding(.top, model.topBandHeight)
                     .allowsHitTesting(false)

@@ -89,6 +89,12 @@ final class MediaStore: ObservableObject {
     /// One read; a read that started before a newer one (or before the switch went off) is dropped.
     func refreshNow() async {
         guard isEnabled else { return }
+        #if DEBUG
+        if let debugSnapshot {
+            if snapshot != debugSnapshot { snapshot = debugSnapshot }
+            return
+        }
+        #endif
         generation += 1
         let mine = generation
         let next = await source.readNowPlaying()
@@ -136,9 +142,11 @@ final class MediaStore: ObservableObject {
     }
 
     #if DEBUG
-    /// The UI tour's track, shown in place of the player's.
+    /// The UI tour's track, shown in place of the player's until cleared with nil.
+    private var debugSnapshot: MediaSnapshot?
     func debugSetSnapshot(_ snapshot: MediaSnapshot?, artwork: NSImage?) {
         generation += 1
+        debugSnapshot = snapshot
         self.snapshot = snapshot
         self.artwork = artwork
         artworkKey = snapshot?.artworkKey

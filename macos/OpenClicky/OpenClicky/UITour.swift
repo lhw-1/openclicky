@@ -207,6 +207,18 @@ final class UITour {
             hud.debugShowPrimaryComponent(IslandPluginRegistry.agentsID)
             await shoot("\(prefix)-04e-panel-agents", window: hud.debugPrimaryWindow)
             hud.debugSetAgentSessions(nil)
+            // A track for the Now playing plugin, with a made-up cover.
+            let cover = NSImage(size: NSSize(width: 56, height: 56), flipped: false) { rect in
+                NSColor(calibratedRed: 0.86, green: 0.36, blue: 0.24, alpha: 1).setFill()
+                rect.fill()
+                NSColor(calibratedWhite: 1, alpha: 0.35).setFill()
+                NSBezierPath(ovalIn: rect.insetBy(dx: 14, dy: 14)).fill()
+                return true
+            }
+            hud.debugSetMediaSnapshot(MediaSnapshot(player: .spotify, isPlaying: true, title: "Blue Hero", artist: "The Band", album: "Album", position: 83, duration: 245, artworkKey: "demo", artworkURL: nil, sampledAt: Date()), artwork: cover)
+            hud.debugShowPrimaryComponent(IslandPluginRegistry.mediaID)
+            await shoot("\(prefix)-04f-panel-media", window: hud.debugPrimaryWindow)
+            hud.debugSetMediaSnapshot(nil, artwork: nil)
             hud.debugResetPrimaryComponents()
             hud.debugCloseAll()
 

@@ -27,6 +27,8 @@ struct IslandContext: Equatable {
     var now = Date()
     /// A drag from another app is over the island (the model keeps this per display).
     var isDragHovering = false
+    /// Music or Spotify is playing (the Now playing plugin is on and found a playing track).
+    var isMediaPlaying = false
 
     static let idle = IslandContext(now: Date(timeIntervalSince1970: 0))
 
@@ -35,12 +37,13 @@ struct IslandContext: Equatable {
 
     /// The component the moment asks for: the shelf while a drag hovers (an explicit act that
     /// outranks everything), the transcript while a take is live or just landed, the agent while
-    /// one works or its result card is up, else nothing.
+    /// one works or its result card is up, the track while music plays, else nothing.
     var contextualKey: String? {
         if isDragHovering { return IslandPluginRegistry.shelfID }
         if isTakeLive { return IslandComponentRegistry.transcriptID }
         if let takeLandedAt, now.timeIntervalSince(takeLandedAt) < Self.landedTranscriptWindow { return IslandComponentRegistry.transcriptID }
         if agentActivityText != nil || isResultCardUp { return IslandComponentRegistry.agentID }
+        if isMediaPlaying { return IslandPluginRegistry.mediaID }
         return nil
     }
 }

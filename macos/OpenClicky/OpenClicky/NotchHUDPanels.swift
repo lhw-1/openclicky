@@ -137,15 +137,19 @@ struct NotchPeekLine: View {
     @ObservedObject var model: NotchHUDModel
     @ObservedObject var companionManager: CompanionManager
     @ObservedObject var agentSessions: AgentSessionWatcher
+    @ObservedObject var media: MediaStore
 
-    /// A live coding session, when the user turned that component on, outranks the pointer.
-    static func peekText(status: String, agentLine: String?) -> String {
-        agentLine ?? status
+    /// A live coding session, then the playing track (each when its plugin is on), outrank the
+    /// pointer's status.
+    static func peekText(status: String, agentLine: String?, mediaLine: String? = nil) -> String {
+        agentLine ?? mediaLine ?? status
     }
 
     private var text: String {
-        let agentLine = model.enabledComponentIDs.contains(IslandPluginRegistry.agentsID) ? agentSessions.peekLine : nil
-        return Self.peekText(status: Self.shortStatusText(companionManager: companionManager), agentLine: agentLine)
+        let enabled = model.enabledComponentIDs
+        let agentLine = enabled.contains(IslandPluginRegistry.agentsID) ? agentSessions.peekLine : nil
+        let mediaLine = enabled.contains(IslandPluginRegistry.mediaID) ? media.nowPlayingLine : nil
+        return Self.peekText(status: Self.shortStatusText(companionManager: companionManager), agentLine: agentLine, mediaLine: mediaLine)
     }
 
     /// The status in fewer words, so it fits beside "click to open" on the peek's one line.

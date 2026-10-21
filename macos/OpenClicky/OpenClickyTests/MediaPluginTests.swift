@@ -92,4 +92,10 @@ struct MediaPluginTests {
         #expect(AppleScriptMediaSource.commandScript(.seek(42), for: .music) == "tell application \"Music\" to set player position to 42")
         #expect(AppleScriptMediaSource.commandScript(.next, for: .spotify) == "tell application \"Spotify\" to next track")
     }
+
+    @Test func thePeekLineNamesTheTrackAfterALiveSession() {
+        #expect(NotchPeekLine.peekText(status: "s", agentLine: nil, mediaLine: "♪ T · A") == "♪ T · A")
+        #expect(NotchPeekLine.peekText(status: "s", agentLine: "claude · thinking", mediaLine: "♪ T · A") == "claude · thinking")
+        #expect(NotchPeekLine.peekText(status: "s", agentLine: nil, mediaLine: nil) == "s")
+    }
 }

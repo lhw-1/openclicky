@@ -75,11 +75,11 @@ struct IslandComponentSelectorTests {
     @MainActor
     @Test func theRealRegistryListsTheBuiltInsThenThePlugins() {
         let ids = IslandComponentRegistry.all.map(\.id)
-        #expect(ids == ["shortcuts", "transcript", "agent", "system", "shelf", "agents"])
-        #expect(IslandComponentRegistry.all.map(\.preferredHeight) == [45, 52, 52, 84, 84, 76])
-        #expect(IslandComponentRegistry.all.map(\.isPlugin) == [false, false, false, true, true, true])
-        #expect(IslandPluginRegistry.all.map(\.id) == ["system", "shelf", "agents"])
-        #expect(IslandComponentRegistry.all.map { $0.settingsDetail != nil } == [false, false, false, false, false, true])
+        #expect(ids == ["shortcuts", "transcript", "agent", "system", "shelf", "agents", "media"])
+        #expect(IslandComponentRegistry.all.map(\.preferredHeight) == [45, 52, 52, 84, 84, 76, 84])
+        #expect(IslandComponentRegistry.all.map(\.isPlugin) == [false, false, false, true, true, true, true])
+        #expect(IslandPluginRegistry.all.map(\.id) == ["system", "shelf", "agents", "media"])
+        #expect(IslandComponentRegistry.all.map { $0.settingsDetail != nil } == [false, false, false, false, false, true, true])
     }
 
     @Test func theContextIsBuiltFromWhatTheAppAlreadyPublishes() {
@@ -175,5 +175,13 @@ struct IslandComponentSelectorTests {
         #expect(context.contextualKey == "shelf")
         context.isDragHovering = false
         #expect(context.contextualKey == "transcript")
+    }
+
+    @Test func playingMusicIsTheMomentAfterTheAgent() {
+        var context = IslandContext.idle
+        context.isMediaPlaying = true
+        #expect(context.contextualKey == "media")
+        context.agentActivityText = "working"
+        #expect(context.contextualKey == "agent")
     }
 }
