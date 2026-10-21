@@ -203,6 +203,23 @@ extension ShelfItem {
         }
     }
 
+    /// What a tile drags: the same content, plus a private marker so the island refuses its own
+    /// tiles (dropping one back on the island would re-add and then delete it).
+    var dragPasteboardItem: NSPasteboardItem {
+        let item = NSPasteboardItem()
+        switch kind {
+        case .file(let path), .image(let path):
+            item.setString(URL(fileURLWithPath: path).absoluteString, forType: .fileURL)
+        case .text(let text):
+            item.setString(text, forType: .string)
+        case .link(let url):
+            item.setString(url.absoluteString, forType: .URL)
+            item.setString(url.absoluteString, forType: .string)
+        }
+        item.setData(Data(), forType: ShelfDragPolicy.markerType)
+        return item
+    }
+
     /// A click on a tile: the item replaces what is on the pasteboard.
     func write(to pasteboard: NSPasteboard) {
         pasteboard.clearContents()

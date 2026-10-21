@@ -23,8 +23,13 @@ struct IslandDropDelegate: DropDelegate {
         enabled.contains(IslandComponentRegistry.shelfID)
     }
 
+    /// And never the island's own tiles (any display): they carry a marker type.
+    static func accepts(enabled: Set<String>, pasteboardTypes: [NSPasteboard.PasteboardType]) -> Bool {
+        accepts(enabled: enabled) && !pasteboardTypes.contains(ShelfDragPolicy.markerType)
+    }
+
     func validateDrop(info: DropInfo) -> Bool {
-        Self.accepts(enabled: model.enabledComponentIDs)
+        Self.accepts(enabled: model.enabledComponentIDs, pasteboardTypes: NSPasteboard(name: .drag).types ?? [])
     }
 
     func dropEntered(info: DropInfo) {

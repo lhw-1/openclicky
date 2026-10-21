@@ -385,6 +385,11 @@ final class NotchHUDModel: ObservableObject {
         }
         guard isHovering != hovering else { return }
         isHovering = hovering
+        // A drop's hold lasts while the pointer stays; it ends when the pointer leaves.
+        if !hovering, isHoldingAfterDrop {
+            holdAfterDropTask?.cancel()
+            isHoldingAfterDrop = false
+        }
         reconcile()
     }
 
@@ -467,6 +472,8 @@ final class NotchHUDModel: ObservableObject {
         guard !hovering || enabledComponentIDs.contains(IslandComponentRegistry.shelfID) else { return }
         guard isDragHovering != hovering else { return }
         isDragHovering = hovering
+        // The hover poll lags a drag by a tick; a drag that just left must not read as a hover.
+        if !hovering { isHovering = false }
         var context = self.context
         context.isDragHovering = hovering
         if context.contextualKey != self.context.contextualKey { componentOverride = nil }
@@ -481,14 +488,17 @@ final class NotchHUDModel: ObservableObject {
         reconcile(immediately: true)
     }
 
-    /// Keeps the island open 1.5 s after a drop, then lets it rest unless the pointer stays.
+    /// Keeps the island open 1.5 s after a drop with the shelf in front (so the new tile is
+    /// seen), longer while the pointer stays on it; the hold ends when the pointer leaves.
     func holdOpenAfterDrop() {
         holdAfterDropTask?.cancel()
         isHoldingAfterDrop = true
+        componentOverride = IslandComponentRegistry.shelfID
+        recomputeSelection()
         reconcile(immediately: true)
         holdAfterDropTask = Task { [weak self] in
             try? await Task.sleep(nanoseconds: 1_500_000_000)
-            guard !Task.isCancelled, let self else { return }
+            guard !Task.isCancelled, let self, !self.isHovering else { return }
             self.isHoldingAfterDrop = false
             self.reconcile()
         }
@@ -1199,6 +1209,12 @@ final class NotchHUDManager {
                     guard !model.isInvisible else {
                         model.setHovering(false)
                         continue
+                    }
+                    // A drag that ended without telling the island (a cancelled drag, a torn-down
+                    // destination) must not leave it open: no button down means no drag.
+                    if (model.isDragHovering || model.isDraggingOut) && NSEvent.pressedMouseButtons == 0 {
+                        model.setDragHovering(false)
+                        model.setDragOut(false)
                     }
                     let hoverMargin: CGFloat = (model.expansion == .collapsed || model.expansion == .peek) ? 6 : 14
                     let hoverRect = model.islandFrame.insetBy(dx: -hoverMargin, dy: -hoverMargin)

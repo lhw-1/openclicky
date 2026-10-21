@@ -108,4 +108,19 @@ struct ShelfStoreTests {
         #expect(ShelfDragPolicy.sourceOperationMask(for: .file(path: "/tmp/a")) == [.copy, .move])
         #expect(ShelfDragPolicy.sourceOperationMask(for: .text("a")) == .copy)
     }
+
+    @Test func theIslandRefusesItsOwnTilesAndATileStillReadsAsItsContent() {
+        let item = ShelfItem(id: UUID(), kind: .file(path: "/tmp/a.txt"), title: "a.txt", addedAt: Date(), iconPath: nil)
+        let pasteboard = NSPasteboard(name: NSPasteboard.Name("shelf-tests-\(UUID().uuidString)"))
+        pasteboard.clearContents()
+        pasteboard.writeObjects([item.dragPasteboardItem])
+        #expect(pasteboard.availableType(from: [ShelfDragPolicy.markerType]) == ShelfDragPolicy.markerType)
+        #expect(pasteboard.readObjects(forClasses: [NSURL.self], options: [.urlReadingFileURLsOnly: true]) as? [URL] == [URL(fileURLWithPath: "/tmp/a.txt")])
+        #expect(!IslandDropDelegate.accepts(enabled: ["shelf"], pasteboardTypes: [ShelfDragPolicy.markerType, .fileURL]))
+        #expect(IslandDropDelegate.accepts(enabled: ["shelf"], pasteboardTypes: [.fileURL]))
+        let text = ShelfItem(id: UUID(), kind: .text("hi"), title: "hi", addedAt: Date(), iconPath: nil)
+        pasteboard.clearContents()
+        pasteboard.writeObjects([text.dragPasteboardItem])
+        #expect(pasteboard.string(forType: .string) == "hi")
+    }
 }

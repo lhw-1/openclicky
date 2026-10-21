@@ -173,4 +173,24 @@ struct NotchHUDModelTests {
         try await waitFor(model, .collapsed)
         #expect(model.expansion == .collapsed)
     }
+
+    @Test func aDropKeepsTheShelfInFrontAndTheIslandOpenWhileThePointerStays() async throws {
+        let defaults = UserDefaults(suiteName: "island-model-shelf-hold")!
+        defaults.removePersistentDomain(forName: "island-model-shelf-hold")
+        let registry = IslandComponentSelectorTests().registry + [IslandComponentSelectorTests.Stub(id: "shelf", isOptional: true) { _ in true }]
+        var settings = IslandComponentSettings(defaults: defaults)
+        settings.enabledIDs = ["shelf"]
+        let model = NotchHUDModel(geometry: notchModel().geometry, registry: registry, componentSettings: settings)
+        model.setDragHovering(true)
+        model.setDragHovering(false)
+        model.holdOpenAfterDrop()
+        #expect(model.expansion == .full)
+        #expect(model.selection.active == "shelf")      // the new tile is what the hold shows
+        model.setHovering(true)
+        try await Task.sleep(nanoseconds: 1_700_000_000)
+        #expect(model.expansion == .full)                // the hold outlasts 1.5 s while the pointer stays
+        model.setHovering(false)
+        try await waitFor(model, .collapsed)
+        #expect(model.expansion == .collapsed)
+    }
 }

@@ -25,6 +25,9 @@ struct ShelfIslandComponent: IslandComponent {
 
 /// When a tile dragged out leaves the shelf, and what a drag may do at its destination.
 enum ShelfDragPolicy {
+    /// Rides along with every tile dragged out, so the island knows its own.
+    static let markerType = NSPasteboard.PasteboardType("com.openclicky.shelf-item")
+
     /// The destination took it (a copy or a move): the tile goes. A refused drop keeps it.
     static func removesAfterDrag(operation: NSDragOperation) -> Bool {
         !operation.isEmpty
@@ -218,10 +221,15 @@ final class ShelfTileDragSourceView: NSView, NSDraggingSource {
     var onMissingFile: (() -> Void)?
 
     private var pressLocation: NSPoint?
+    private var pressEvent: NSEvent?
     private var isDragging = false
+
+    /// The island is a non-key panel: the first click must reach the tile, not just wake the panel.
+    override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
 
     override func mouseDown(with event: NSEvent) {
         pressLocation = event.locationInWindow
+        pressEvent = event
         isDragging = false
     }
 
@@ -235,25 +243,35 @@ final class ShelfTileDragSourceView: NSView, NSDraggingSource {
             return
         }
         isDragging = true
-        let draggingItem = NSDraggingItem(pasteboardWriter: item.pasteboardWriter)
-        draggingItem.setDraggingFrame(bounds, contents: snapshot())
+        let draggingItem = NSDraggingItem(pasteboardWriter: item.dragPasteboardItem)
+        // The tile's picture under the pointer: the icon, 40 pt, where the tile draws it.
+        let iconFrame = NSRect(x: (bounds.width - 40) / 2, y: bounds.height - 4 - 40, width: 40, height: 40)
+        draggingItem.setDraggingFrame(iconFrame, contents: Self.dragImage(for: item))
         onDragBegan?()
-        beginDraggingSession(with: [draggingItem], event: event, source: self)
+        beginDraggingSession(with: [draggingItem], event: pressEvent ?? event, source: self)
+    }
+
+    /// The saved icon or image for a file or an image; a symbol for a link or a note.
+    static func dragImage(for item: ShelfItem) -> NSImage? {
+        let image: NSImage?
+        switch item.kind {
+        case .file:
+            image = item.iconPath.flatMap { NSImage(contentsOfFile: $0) } ?? NSImage(systemSymbolName: "doc", accessibilityDescription: nil)
+        case .image(let path):
+            image = NSImage(contentsOfFile: path) ?? NSImage(systemSymbolName: "photo", accessibilityDescription: nil)
+        case .link:
+            image = NSImage(systemSymbolName: "link", accessibilityDescription: nil)
+        case .text:
+            image = NSImage(systemSymbolName: "text.alignleft", accessibilityDescription: nil)
+        }
+        image?.size = NSSize(width: 40, height: 40)
+        return image
     }
 
     override func mouseUp(with event: NSEvent) {
         defer { pressLocation = nil }
         guard pressLocation != nil, !isDragging else { return }
         onClick?()
-    }
-
-    /// The tile as the drag image: the SwiftUI tile underneath this layer.
-    private func snapshot() -> NSImage? {
-        guard let target = superview, let rep = target.bitmapImageRepForCachingDisplay(in: target.bounds) else { return nil }
-        target.cacheDisplay(in: target.bounds, to: rep)
-        let image = NSImage(size: target.bounds.size)
-        image.addRepresentation(rep)
-        return image
     }
 
     func draggingSession(_ session: NSDraggingSession, sourceOperationMaskFor context: NSDraggingContext) -> NSDragOperation {
@@ -264,6 +282,7 @@ final class ShelfTileDragSourceView: NSView, NSDraggingSource {
     func draggingSession(_ session: NSDraggingSession, endedAt screenPoint: NSPoint, operation: NSDragOperation) {
         isDragging = false
         pressLocation = nil
+        pressEvent = nil
         onDragEnded?(operation)
     }
 }
