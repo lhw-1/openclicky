@@ -1132,6 +1132,8 @@ final class NotchHUDManager {
                 self.isMediaPlaying = isPlaying
                 var context = self.latestIslandContext
                 context.isMediaPlaying = isPlaying
+                // Fresh time: a copy with the old `now` would read a long-landed take as just landed.
+                context.now = Date()
                 self.applyIslandContext(context)
             }
             .store(in: &busyCancellables)
@@ -1167,6 +1169,7 @@ final class NotchHUDManager {
                     guard let self else { return }
                     var refreshed = self.latestIslandContext
                     refreshed.now = Date()
+                    self.latestIslandContext = refreshed
                     self.instances.forEach { $0.model.setContext(refreshed) }
                     if refreshed.contextualKey == nil {
                         self.islandContextTimer?.invalidate()

@@ -45,7 +45,7 @@ struct MediaPluginTests {
             var reply: MediaSnapshot?
             var commands: [MediaCommand] = []
             var artworkLoads = 0
-            func readNowPlaying() async -> MediaSnapshot? { reply }
+            func readNowPlaying() async -> MediaReading { reply.map { .track($0) } ?? .nothing }
             func perform(_ command: MediaCommand, on player: MediaPlayer) async { commands.append(command) }
             func loadArtwork(for snapshot: MediaSnapshot) async -> NSImage? { artworkLoads += 1; return NSImage(size: NSSize(width: 1, height: 1)) }
         }
@@ -97,5 +97,50 @@ struct MediaPluginTests {
         #expect(NotchPeekLine.peekText(status: "s", agentLine: nil, mediaLine: "♪ T · A") == "♪ T · A")
         #expect(NotchPeekLine.peekText(status: "s", agentLine: "claude · thinking", mediaLine: "♪ T · A") == "claude · thinking")
         #expect(NotchPeekLine.peekText(status: "s", agentLine: nil, mediaLine: nil) == "s")
+    }
+
+    @MainActor @Test func overlappingRefreshesCoalesceAndKeepTheNewTracksArtwork() async throws {
+        final class SlowSource: MediaSourcing, @unchecked Sendable {
+            var reply: MediaSnapshot?
+            var reads = 0
+            func readNowPlaying() async -> MediaReading {
+                reads += 1
+                try? await Task.sleep(nanoseconds: 40_000_000)
+                return reply.map { .track($0) } ?? .nothing
+            }
+            func perform(_ command: MediaCommand, on player: MediaPlayer) async {}
+            func loadArtwork(for snapshot: MediaSnapshot) async -> NSImage? {
+                try? await Task.sleep(nanoseconds: 40_000_000)
+                return NSImage(size: NSSize(width: 2, height: 2))
+            }
+        }
+        let source = SlowSource()
+        let now = self.now
+        source.reply = try #require(MediaSnapshot.parse(line(["playing", "T", "A", "", "1", "200", "k1", ""]), player: .spotify, sampledAt: now))
+        let store = MediaStore(source: source, now: { now })
+        store.setEnabled(true)                     // its own first read runs in the background
+        try await Task.sleep(nanoseconds: 200_000_000)
+        source.reply = try #require(MediaSnapshot.parse(line(["playing", "T2", "A", "", "1", "200", "k2", ""]), player: .spotify, sampledAt: now))
+        source.reads = 0
+        async let first: Void = store.refreshNow()
+        async let second: Void = store.refreshNow()
+        async let third: Void = store.refreshNow()
+        _ = await (first, second, third)
+        #expect(source.reads == 2)                 // one in flight, one more after it, never three
+        #expect(store.artwork != nil)              // the artwork load was not thrown away
+        store.setEnabled(false)
+    }
+
+    @MainActor @Test func aRefusedPlayerIsNamedSoTheUserCanAllowIt() async {
+        struct Refusing: MediaSourcing {
+            func readNowPlaying() async -> MediaReading { .notAllowed(.spotify) }
+            func perform(_ command: MediaCommand, on player: MediaPlayer) async {}
+            func loadArtwork(for snapshot: MediaSnapshot) async -> NSImage? { nil }
+        }
+        let store = MediaStore(source: Refusing(), now: { self.now })
+        store.setEnabled(true)
+        await store.refreshNow()
+        #expect(store.snapshot == nil && store.refusedPlayer == .spotify)
+        #expect(MediaIslandView.hint(refused: .spotify) == "allow openclicky to control spotify in system settings → privacy & security → automation")
     }
 }

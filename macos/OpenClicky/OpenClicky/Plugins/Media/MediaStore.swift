@@ -19,9 +19,17 @@ enum MediaCommand: Equatable, Sendable {
     case seek(TimeInterval)
 }
 
+/// What a read found: a track, nothing (no player, nothing up), or a player that macOS will not
+/// let OpenClicky talk to.
+enum MediaReading: Equatable, Sendable {
+    case nothing
+    case track(MediaSnapshot)
+    case notAllowed(MediaPlayer)
+}
+
 /// Where the track comes from: the players' scripting interfaces, or a test double.
 protocol MediaSourcing: Sendable {
-    func readNowPlaying() async -> MediaSnapshot?
+    func readNowPlaying() async -> MediaReading
     func perform(_ command: MediaCommand, on player: MediaPlayer) async
     func loadArtwork(for snapshot: MediaSnapshot) async -> NSImage?
 }
@@ -33,6 +41,8 @@ final class MediaStore: ObservableObject {
 
     @Published private(set) var snapshot: MediaSnapshot?
     @Published private(set) var artwork: NSImage?
+    /// A player the user has not allowed OpenClicky to control (the empty state says how).
+    @Published private(set) var refusedPlayer: MediaPlayer?
 
     private let source: any MediaSourcing
     private let now: () -> Date
@@ -41,6 +51,9 @@ final class MediaStore: ObservableObject {
     private var timer: Timer?
     private var generation = 0
     private var artworkKey: String?
+    /// One read at a time: a tick that lands mid-read asks for one more after it, never a pile.
+    private var isRefreshing = false
+    private var refreshAgain = false
 
     init(source: any MediaSourcing, now: @escaping () -> Date = Date.init) {
         self.source = source
@@ -69,6 +82,7 @@ final class MediaStore: ObservableObject {
             snapshot = nil
             artwork = nil
             artworkKey = nil
+            refusedPlayer = nil
         }
         rebuildTimer()
     }
@@ -86,7 +100,8 @@ final class MediaStore: ObservableObject {
         if watchers == 0 { rebuildTimer() }
     }
 
-    /// One read; a read that started before a newer one (or before the switch went off) is dropped.
+    /// One read, serialised: a call that lands mid-read returns at once and the running read goes
+    /// round once more. A read that outlives the switch going off is dropped.
     func refreshNow() async {
         guard isEnabled else { return }
         #if DEBUG
@@ -95,22 +110,48 @@ final class MediaStore: ObservableObject {
             return
         }
         #endif
-        generation += 1
+        if isRefreshing {
+            refreshAgain = true
+            return
+        }
+        isRefreshing = true
+        defer { isRefreshing = false }
+        repeat {
+            refreshAgain = false
+            await readOnce()
+        } while refreshAgain && isEnabled
+    }
+
+    private func readOnce() async {
         let mine = generation
-        let next = await source.readNowPlaying()
+        let reading = await source.readNowPlaying()
         guard mine == generation, isEnabled else { return }
+        let next: MediaSnapshot?
+        switch reading {
+        case .track(let snapshot):
+            next = snapshot
+            if refusedPlayer != nil { refusedPlayer = nil }
+        case .nothing:
+            next = nil
+            if refusedPlayer != nil { refusedPlayer = nil }
+        case .notAllowed(let player):
+            next = nil
+            if refusedPlayer != player { refusedPlayer = player }
+        }
         if next != snapshot { snapshot = next }
         guard let next else {
             artwork = nil
             artworkKey = nil
             return
         }
-        if next.artworkKey != artworkKey {
-            artworkKey = next.artworkKey
-            let image = await source.loadArtwork(for: next)
-            guard mine == generation, artworkKey == next.artworkKey else { return }
-            artwork = image
-        }
+        guard next.artworkKey != artworkKey else { return }
+        // A new track: the old cover goes at once, the new one lands when it arrives, and a load
+        // that outlives another track change is dropped (that track's own load follows).
+        artworkKey = next.artworkKey
+        artwork = nil
+        let image = await source.loadArtwork(for: next)
+        guard mine == generation, isEnabled, artworkKey == next.artworkKey else { return }
+        artwork = image
     }
 
     func playPause() async { await perform(.playPause) }

@@ -26,6 +26,11 @@ struct MediaIslandComponent: IslandComponent {
 struct MediaIslandView: View {
     @ObservedObject var media: MediaStore
 
+    /// The empty state's second line when macOS refused the player.
+    static func hint(refused player: MediaPlayer) -> String {
+        "allow openclicky to control \(player.displayName) in system settings → privacy & security → automation"
+    }
+
     var body: some View {
         Group {
             if let snapshot = media.snapshot {
@@ -35,9 +40,10 @@ struct MediaIslandView: View {
                     Text("nothing playing")
                         .font(.system(size: 13))
                         .foregroundColor(DS.HUD.text)
-                    Text("play something in music or spotify")
+                    Text(media.refusedPlayer.map(Self.hint(refused:)) ?? "play something in music or spotify")
                         .font(.system(size: 11))
                         .foregroundColor(DS.HUD.text3)
+                        .lineLimit(2)
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
             }

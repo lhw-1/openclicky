@@ -89,22 +89,32 @@ struct AppleScriptMediaSource: MediaSourcing {
 
     // MARK: MediaSourcing
 
-    func readNowPlaying() async -> MediaSnapshot? {
+    /// Apple's "not authorized to send Apple events" error: the user said no (or has not been asked).
+    static let notPermittedError = -1743
+
+    func readNowPlaying() async -> MediaReading {
         let running = Self.runningPlayers()
-        guard !running.isEmpty else { return nil }
+        guard !running.isEmpty else { return .nothing }
         var snapshots: [MediaPlayer: MediaSnapshot] = [:]
+        var refused: MediaPlayer?
         for player in running {
-            if let reply = await Self.run(Self.nowPlayingScript(for: player), player: player)?.stringValue,
-               let snapshot = MediaSnapshot.parse(reply, player: player, sampledAt: Date()) {
+            let result = await Self.run(Self.nowPlayingScript(for: player), player: player)
+            if result.errorNumber == Self.notPermittedError { refused = refused ?? player }
+            if let reply = result.descriptor?.stringValue, let snapshot = MediaSnapshot.parse(reply, player: player, sampledAt: Date()) {
                 snapshots[player] = snapshot
             }
         }
         let playing = Set(snapshots.filter { $0.value.isPlaying }.map(\.key))
-        guard let picked = Self.pick(running: running.filter { snapshots[$0] != nil }, playing: playing) else { return nil }
-        return snapshots[picked]
+        if let picked = Self.pick(running: running.filter { snapshots[$0] != nil }, playing: playing), let snapshot = snapshots[picked] {
+            return .track(snapshot)
+        }
+        if let refused { return .notAllowed(refused) }
+        return .nothing
     }
 
+    /// Only while the player still runs: a `tell` to a player that just quit would relaunch it.
     func perform(_ command: MediaCommand, on player: MediaPlayer) async {
+        guard Self.runningPlayers().contains(player) else { return }
         _ = await Self.run(Self.commandScript(command, for: player), player: player)
     }
 
@@ -112,8 +122,9 @@ struct AppleScriptMediaSource: MediaSourcing {
     func loadArtwork(for snapshot: MediaSnapshot) async -> NSImage? {
         switch snapshot.player {
         case .music:
+            guard Self.runningPlayers().contains(.music) else { return nil }
             let script = "tell application \"Music\" to return raw data of artwork 1 of current track"
-            guard let data = await Self.run(script, player: .music)?.data else { return nil }
+            guard let data = await Self.run(script, player: .music).descriptor?.data else { return nil }
             return NSImage(data: data)
         case .spotify:
             guard let url = snapshot.artworkURL, let (data, _) = try? await URLSession.shared.data(from: url) else { return nil }
@@ -121,17 +132,29 @@ struct AppleScriptMediaSource: MediaSourcing {
         }
     }
 
-    /// Runs a script on the utility queue; a failure is logged once per player and yields nil.
-    private static func run(_ source: String, player: MediaPlayer) async -> NSAppleEventDescriptor? {
+    struct ScriptResult {
+        let descriptor: NSAppleEventDescriptor?
+        let errorNumber: Int?
+    }
+
+    /// Every script waits at most three seconds for the player.
+    static func withTimeout(_ source: String) -> String {
+        "with timeout of 3 seconds\n\(source)\nend timeout"
+    }
+
+    /// Runs a script on the utility queue (one at a time; `loggedFailures` is only touched here);
+    /// a failure is logged once per player and yields no descriptor.
+    private static func run(_ source: String, player: MediaPlayer) async -> ScriptResult {
         await withCheckedContinuation { continuation in
             queue.async {
                 var errorInfo: NSDictionary?
-                let result = NSAppleScript(source: source)?.executeAndReturnError(&errorInfo)
+                let result = NSAppleScript(source: withTimeout(source))?.executeAndReturnError(&errorInfo)
+                let errorNumber = (errorInfo?[NSAppleScript.errorNumber] as? NSNumber)?.intValue
                 if result == nil, !loggedFailures.contains(player) {
                     loggedFailures.insert(player)
-                    AppLog.append("now playing: \(player.displayName) script failed \(errorInfo?[NSAppleScript.errorMessage] ?? "unknown")")
+                    AppLog.append("now playing: \(player.displayName) script failed (\(errorNumber ?? 0)) \(errorInfo?[NSAppleScript.errorMessage] ?? "unknown")")
                 }
-                continuation.resume(returning: result)
+                continuation.resume(returning: ScriptResult(descriptor: result, errorNumber: errorNumber))
             }
         }
     }
