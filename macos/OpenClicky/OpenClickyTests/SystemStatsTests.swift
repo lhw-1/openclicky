@@ -62,4 +62,17 @@ struct SystemStatsTests {
         #expect(snapshot.memoryTotal > 0 && snapshot.memoryUsed <= snapshot.memoryTotal)
         #expect(snapshot.diskTotal > 0 && snapshot.diskFree <= snapshot.diskTotal)
     }
+
+    @Test func tilesFollowTheSnapshotAndSkipTheBatteryWhenThereIsNone() {
+        let snapshot = SystemStatsSnapshot(cpu: 0.9, memoryUsed: 7_516_192_768, memoryTotal: 17_179_869_184, diskFree: 225_485_783_040, diskTotal: 1_000_000_000_000, battery: nil)
+        let tiles = SystemIslandView.tiles(for: snapshot)
+        #expect(tiles.map(\.caption) == ["cpu", "memory", "disk"])
+        #expect(tiles[0].isWarning && !tiles[1].isWarning)
+        #expect(tiles[1].long == "7 / 16 GB")
+        #expect(tiles[2].fraction == 1 - 225_485_783_040.0 / 1_000_000_000_000.0)
+        var withBattery = snapshot
+        withBattery.battery = .init(level: 0.17, isCharging: false, isPluggedIn: false)
+        let four = SystemIslandView.tiles(for: withBattery)
+        #expect(four.count == 4 && four[3].isWarning && four[3].short == "17%")
+    }
 }

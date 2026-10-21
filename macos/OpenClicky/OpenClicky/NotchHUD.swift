@@ -223,8 +223,14 @@ final class NotchHUDModel: ObservableObject {
     var componentSettings: IslandComponentSettings {
         didSet { recomputeSelection() }
     }
-    /// The built-ins and the extras the user turned on: the only ids the selector may use.
-    var enabledComponentIDs: Set<String> { IslandComponentSettings.enabledIDs(in: registry, settings: componentSettings) }
+    /// The built-ins and the extras the user turned on: the only ids the selector may use. The
+    /// UI tour swaps in its own set so a shot can show an extra without touching Settings.
+    var enabledComponentIDs: Set<String> {
+        debugEnabledComponentIDs ?? IslandComponentSettings.enabledIDs(in: registry, settings: componentSettings)
+    }
+    var debugEnabledComponentIDs: Set<String>? {
+        didSet { recomputeSelection() }
+    }
     /// What the island knows about the moment; set by the HUD manager.
     @Published private(set) var context: IslandContext = .idle
     /// The active component and the ones the capsule can flip to.
@@ -654,6 +660,8 @@ final class NotchHUDManager {
     #if DEBUG
     /// The UI tour keeps a pinned panel open through clicks elsewhere on the desktop.
     var debugKeepsPanelsOpen = false
+    /// One per app, sampling only while a System tile row is on screen.
+    let systemStats = SystemStatsStore(sampler: MachSystemStatsSampler())
     #endif
     private weak var companionManager: CompanionManager?
     private var isShown = false
@@ -1180,6 +1188,21 @@ extension NotchHUDManager {
 
     /// A moment for the slot (a live take, a working agent) without the real thing happening.
     func debugSetPrimaryContext(_ context: IslandContext) { primaryInstance?.model.setContext(context) }
+
+    /// An extra in the slot without touching Settings: every component counts as on, and this
+    /// one is picked. `debugResetPrimaryComponents` puts the user's switches back.
+    func debugShowPrimaryComponent(_ id: String) {
+        guard let model = primaryInstance?.model else { return }
+        model.debugEnabledComponentIDs = Set(model.registry.map(\.id))
+        model.selectComponent(id)
+    }
+
+    func debugResetPrimaryComponents() {
+        guard let model = primaryInstance?.model else { return }
+        model.debugEnabledComponentIDs = nil
+        model.selectComponent(IslandComponentRegistry.shortcutsID)
+        model.setContext(.idle)
+    }
 }
 #endif
 

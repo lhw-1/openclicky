@@ -161,9 +161,11 @@ enum IslandComponentRegistry {
     static let shortcutsID = "shortcuts"
     static let transcriptID = "transcript"
     static let agentID = "agent"
+    static let systemID = "system"
 
+    /// The built-ins first, then the extras (off until turned on in Settings).
     @MainActor static var all: [any IslandComponent] {
-        [ShortcutsIslandComponent(), TranscriptIslandComponent(), AgentIslandComponent()]
+        [ShortcutsIslandComponent(), TranscriptIslandComponent(), AgentIslandComponent(), SystemIslandComponent()]
     }
 }
 

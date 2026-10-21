@@ -191,6 +191,10 @@ final class UITour {
             hud.debugSetPrimaryContext(agentContext)
             await shoot("\(prefix)-04b-panel-agent", window: hud.debugPrimaryWindow)
             hud.debugSetPrimaryContext(.idle)
+            // An extra the user can turn on: the System rings.
+            hud.debugShowPrimaryComponent(IslandComponentRegistry.systemID)
+            await shoot("\(prefix)-04c-panel-system", window: hud.debugPrimaryWindow)
+            hud.debugResetPrimaryComponents()
             hud.debugCloseAll()
 
             companionManager.debugSetVoiceState(.listening)
