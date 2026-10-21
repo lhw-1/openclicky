@@ -136,4 +136,29 @@ struct AgentSessionsTests {
         #expect(NotchPeekLine.peekText(status: "pointer follows you", agentLine: "claude · thinking") == "claude · thinking")
         #expect(NotchPeekLine.peekText(status: "pointer follows you", agentLine: nil) == "pointer follows you")
     }
+
+    @MainActor @Test func aSessionGoneQuietLeavesTheLiveSetAndSubagentLogsAreNotSessions() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("agents-tests-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let folder = root.appendingPathComponent("claude/projects/-Users-me-app", isDirectory: true)
+        let subagents = folder.appendingPathComponent("abc/subagents", isDirectory: true)
+        try FileManager.default.createDirectory(at: subagents, withIntermediateDirectories: true)
+        final class Clock { var now = Date() }
+        let clock = Clock()
+        let live = folder.appendingPathComponent("abc.jsonl")
+        try assistant([["type": "tool_use", "name": "Bash", "input": ["command": "npm test"]]], stopReason: "tool_use").write(to: live, atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes([.modificationDate: clock.now], ofItemAtPath: live.path)
+        let subagent = subagents.appendingPathComponent("agent-x.jsonl")
+        try assistant([["type": "thinking", "thinking": "x"]], stopReason: nil).write(to: subagent, atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes([.modificationDate: clock.now], ofItemAtPath: subagent.path)
+        let watcher = AgentSessionWatcher(roots: AgentLogRoots(claudeProjects: root.appendingPathComponent("claude/projects"), codexSessions: root.appendingPathComponent("codex/sessions")), now: { clock.now })
+        watcher.refreshNow()
+        #expect(watcher.sessions.count == 1)
+        #expect(watcher.liveIDs.map { URL(fileURLWithPath: $0).lastPathComponent } == ["abc.jsonl"])   // the temp folder resolves to /private/var
+        clock.now = clock.now.addingTimeInterval(121)
+        watcher.refreshNow()
+        #expect(watcher.sessions.count == 1)       // still listed as recent
+        #expect(watcher.liveIDs.isEmpty)           // but published as no longer live
+        #expect(watcher.peekLine == nil)
+    }
 }

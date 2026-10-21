@@ -53,7 +53,7 @@ enum ClaudeCredentialResult {
     case refused
 }
 
-protocol ClaudeCredentialReading {
+protocol ClaudeCredentialReading: Sendable {
     func readAccessToken() -> ClaudeCredentialResult
 }
 
@@ -177,9 +177,13 @@ final class ClaudeUsageStore: ObservableObject {
             state = .keychainRefused
             return
         }
-        if token == nil || ClaudeUsagePolicy.shouldReadKeychain(lastRead: keychainReadAt, now: now()) {
+        // The Keychain at most every 30 min (macOS may ask each time), and never on the main
+        // thread: the prompt is modal to the call and would freeze the island while it is up.
+        if ClaudeUsagePolicy.shouldReadKeychain(lastRead: keychainReadAt, now: now()) {
             keychainReadAt = now()
-            switch credentials.readAccessToken() {
+            let credentials = self.credentials
+            let result = await Task.detached(priority: .userInitiated) { credentials.readAccessToken() }.value
+            switch result {
             case .token(let value):
                 token = value
             case .missing:

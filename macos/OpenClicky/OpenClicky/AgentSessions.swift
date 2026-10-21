@@ -240,6 +240,9 @@ final class AgentSessionWatcher: ObservableObject {
 
     /// Live first, then newest.
     @Published private(set) var sessions: [AgentSession] = []
+    /// Which of them are live right now: published on its own, so a session that simply stops
+    /// writing (its records never change) still re-draws as "done" when its two minutes are up.
+    @Published private(set) var liveIDs: Set<String> = []
 
     private let roots: AgentLogRoots
     private let now: () -> Date
@@ -252,11 +255,11 @@ final class AgentSessionWatcher: ObservableObject {
         self.now = now
     }
 
-    var liveCount: Int { sessions.filter { $0.isLive(now: now()) }.count }
+    var liveCount: Int { liveIDs.count }
 
     /// "claude · editing Foo.swift" for the newest live session, for the island's peek line.
     var peekLine: String? {
-        guard let live = sessions.first(where: { $0.isLive(now: now()) }) else { return nil }
+        guard let live = sessions.first(where: { liveIDs.contains($0.id) }) else { return nil }
         return "\(live.agent.displayName) · \(live.activity.line)"
     }
 
@@ -271,6 +274,7 @@ final class AgentSessionWatcher: ObservableObject {
             refreshNow()
         } else {
             sessions = []
+            liveIDs = []
         }
         rebuildTimer()
     }
@@ -289,29 +293,36 @@ final class AgentSessionWatcher: ObservableObject {
         if watchers == 0 { rebuildTimer() }
     }
 
-    /// One pass over both trees.
+    /// One pass over both trees. The walks are bounded to where the logs live: Claude's
+    /// `projects/<folder>/<id>.jsonl` (a session's subagent transcripts sit a level deeper and are
+    /// not sessions of their own), Codex's `sessions/<year>/<month>/<day>/rollout-*.jsonl` with
+    /// only the recent days opened.
     func refreshNow() {
         #if DEBUG
-        if let debugSessions { sessions = debugSessions; return }
+        if let debugSessions { publish(debugSessions); return }
         #endif
         let now = now()
         let cutoff = now.addingTimeInterval(-AgentSession.recentWindow)
         var found: [AgentSession] = []
-        for file in recentFiles(under: roots.claudeProjects, suffix: ".jsonl", newerThan: cutoff) {
-            let parse = AgentSessionParser.parseClaudeTail(tail(of: file.url))
-            found.append(AgentSession(id: file.url.path, agent: .claudeCode, project: project(from: parse.cwd, fallback: file.url.deletingLastPathComponent().lastPathComponent), title: parse.title, activity: parse.activity, lastEventAt: file.modifiedAt))
+        for folder in subdirectories(of: roots.claudeProjects) {
+            for file in recentFiles(in: folder, newerThan: cutoff) where file.url.pathExtension == "jsonl" {
+                let parse = AgentSessionParser.parseClaudeTail(tail(of: file.url))
+                found.append(AgentSession(id: file.url.path, agent: .claudeCode, project: project(from: parse.cwd, fallback: "claude"), title: parse.title, activity: parse.activity, lastEventAt: file.modifiedAt))
+            }
         }
-        for file in recentFiles(under: roots.codexSessions, suffix: ".jsonl", newerThan: cutoff) where file.url.lastPathComponent.hasPrefix("rollout-") {
-            let parse = AgentSessionParser.parseCodexTail(tail(of: file.url))
-            if AgentSessionParser.isOwnScratchRollout(cwd: parse.cwd) { continue }
-            found.append(AgentSession(id: file.url.path, agent: .codex, project: project(from: parse.cwd, fallback: "codex"), title: parse.title, activity: parse.activity, lastEventAt: file.modifiedAt))
+        for day in recentCodexDayFolders(under: roots.codexSessions, newerThan: cutoff) {
+            for file in recentFiles(in: day, newerThan: cutoff) where file.url.lastPathComponent.hasPrefix("rollout-") && file.url.pathExtension == "jsonl" {
+                let parse = AgentSessionParser.parseCodexTail(tail(of: file.url))
+                if AgentSessionParser.isOwnScratchRollout(cwd: parse.cwd) { continue }
+                found.append(AgentSession(id: file.url.path, agent: .codex, project: project(from: parse.cwd, fallback: "codex"), title: parse.title, activity: parse.activity, lastEventAt: file.modifiedAt))
+            }
         }
         found.sort { a, b in
             let aLive = a.isLive(now: now), bLive = b.isLive(now: now)
             if aLive != bLive { return aLive }
             return a.lastEventAt > b.lastEventAt
         }
-        if found != sessions { sessions = found }
+        publish(found)
     }
 
     #if DEBUG
@@ -319,9 +330,16 @@ final class AgentSessionWatcher: ObservableObject {
     private var debugSessions: [AgentSession]?
     func debugSetSessions(_ sessions: [AgentSession]?) {
         debugSessions = sessions
-        if let sessions { self.sessions = sessions } else { refreshNow() }
+        if let sessions { publish(sessions) } else { refreshNow() }
     }
     #endif
+
+    private func publish(_ found: [AgentSession]) {
+        let now = now()
+        let live = Set(found.filter { $0.isLive(now: now) }.map(\.id))
+        if found != sessions { sessions = found }
+        if live != liveIDs { liveIDs = live }
+    }
 
     // MARK: Pieces
 
@@ -342,16 +360,32 @@ final class AgentSessionWatcher: ObservableObject {
         let modifiedAt: Date
     }
 
-    private func recentFiles(under root: URL, suffix: String, newerThan cutoff: Date) -> [RecentFile] {
-        guard let enumerator = FileManager.default.enumerator(at: root, includingPropertiesForKeys: [.contentModificationDateKey, .isRegularFileKey], options: [.skipsHiddenFiles, .skipsPackageDescendants]) else { return [] }
-        var files: [RecentFile] = []
-        for case let url as URL in enumerator {
-            guard url.lastPathComponent.hasSuffix(suffix),
-                  let values = try? url.resourceValues(forKeys: [.contentModificationDateKey, .isRegularFileKey]),
-                  values.isRegularFile == true, let modifiedAt = values.contentModificationDate, modifiedAt > cutoff else { continue }
-            files.append(RecentFile(url: url, modifiedAt: modifiedAt))
+    private func entries(of directory: URL) -> [URL] {
+        (try? FileManager.default.contentsOfDirectory(at: directory, includingPropertiesForKeys: [.contentModificationDateKey, .isRegularFileKey, .isDirectoryKey], options: [.skipsHiddenFiles])) ?? []
+    }
+
+    private func subdirectories(of directory: URL) -> [URL] {
+        entries(of: directory).filter { (try? $0.resourceValues(forKeys: [.isDirectoryKey]))?.isDirectory == true }
+    }
+
+    /// The regular files right inside `directory` written after `cutoff`.
+    private func recentFiles(in directory: URL, newerThan cutoff: Date) -> [RecentFile] {
+        entries(of: directory).compactMap { url in
+            guard let values = try? url.resourceValues(forKeys: [.contentModificationDateKey, .isRegularFileKey]),
+                  values.isRegularFile == true, let modifiedAt = values.contentModificationDate, modifiedAt > cutoff else { return nil }
+            return RecentFile(url: url, modifiedAt: modifiedAt)
         }
-        return files
+    }
+
+    /// `sessions/<year>/<month>/<day>` folders for the days the recent window touches (today and,
+    /// just after midnight, yesterday); older days are never opened.
+    private func recentCodexDayFolders(under root: URL, newerThan cutoff: Date) -> [URL] {
+        let calendar = Calendar.current
+        let wanted = Set([cutoff, now()].map { date -> String in
+            let parts = calendar.dateComponents([.year, .month, .day], from: date)
+            return String(format: "%04d/%02d/%02d", parts.year ?? 0, parts.month ?? 0, parts.day ?? 0)
+        })
+        return wanted.sorted().map { root.appendingPathComponent($0, isDirectory: true) }
     }
 
     /// The last 64 KB of the log, from the first whole line.

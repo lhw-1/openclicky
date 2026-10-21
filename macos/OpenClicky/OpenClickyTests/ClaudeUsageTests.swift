@@ -33,7 +33,7 @@ struct ClaudeUsageTests {
     }
 
     @MainActor @Test func theStoreTellsSignInFromARefusedKeychainFromStaleFigures() async {
-        final class Reader: ClaudeCredentialReading {
+        final class Reader: ClaudeCredentialReading, @unchecked Sendable {
             var result: ClaudeCredentialResult = .missing
             var reads = 0
             func readAccessToken() -> ClaudeCredentialResult { reads += 1; return result }
@@ -46,6 +46,10 @@ struct ClaudeUsageTests {
         store.setEnabled(true)
         await store.refreshNow()
         #expect(store.state == .signInNeeded)
+        await store.refreshNow()
+        #expect(reader.reads == 1)             // no token is no reason to ask the Keychain again within 30 min
+        store.setEnabled(false)
+        store.setEnabled(true)
         reader.result = .refused
         await store.refreshNow()
         #expect(store.state == .keychainRefused)
