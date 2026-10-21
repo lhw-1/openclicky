@@ -209,3 +209,153 @@ enum AgentSessionParser {
         return String(line.prefix(limit))
     }
 }
+
+// MARK: - The watcher
+
+/// Where the two agents keep their session logs.
+struct AgentLogRoots {
+    var claudeProjects: URL
+    var codexSessions: URL
+
+    /// `$CLAUDE_CONFIG_DIR` (default `~/.claude`) and `~/.codex`.
+    static var standard: AgentLogRoots {
+        let home = FileManager.default.homeDirectoryForCurrentUser
+        let claudeConfig = ProcessInfo.processInfo.environment["CLAUDE_CONFIG_DIR"].map { URL(fileURLWithPath: $0, isDirectory: true) }
+            ?? home.appendingPathComponent(".claude", isDirectory: true)
+        return AgentLogRoots(
+            claudeProjects: claudeConfig.appendingPathComponent("projects", isDirectory: true),
+            codexSessions: home.appendingPathComponent(".codex/sessions", isDirectory: true)
+        )
+    }
+}
+
+/// One per app. Lists the logs written in the last ten minutes, reads the tail of each, and
+/// polls: every 3 s while a Coding agents row is on screen, every 20 s while the component is
+/// merely on (so the peek line can name a live session), never otherwise.
+@MainActor
+final class AgentSessionWatcher: ObservableObject {
+    static let tailBytes = 65_536
+    static let watchedInterval: TimeInterval = 3
+    static let backgroundInterval: TimeInterval = 20
+
+    /// Live first, then newest.
+    @Published private(set) var sessions: [AgentSession] = []
+
+    private let roots: AgentLogRoots
+    private let now: () -> Date
+    private var isEnabled = false
+    private var watchers = 0
+    private var timer: Timer?
+
+    init(roots: AgentLogRoots, now: @escaping () -> Date = Date.init) {
+        self.roots = roots
+        self.now = now
+    }
+
+    var liveCount: Int { sessions.filter { $0.isLive(now: now()) }.count }
+
+    /// "claude · editing Foo.swift" for the newest live session, for the island's peek line.
+    var peekLine: String? {
+        guard let live = sessions.first(where: { $0.isLive(now: now()) }) else { return nil }
+        return "\(live.agent.displayName) · \(live.activity.line)"
+    }
+
+    var isPolling: Bool { timer != nil }
+    var pollInterval: TimeInterval { watchers > 0 ? Self.watchedInterval : Self.backgroundInterval }
+
+    /// The component's switch: on starts the slow poll, off stops everything and forgets.
+    func setEnabled(_ enabled: Bool) {
+        guard isEnabled != enabled else { return }
+        isEnabled = enabled
+        if enabled {
+            refreshNow()
+        } else {
+            sessions = []
+        }
+        rebuildTimer()
+    }
+
+    /// A row appeared: poll fast while any is on screen.
+    func beginWatching() {
+        watchers += 1
+        if watchers == 1 {
+            if isEnabled { refreshNow() }
+            rebuildTimer()
+        }
+    }
+
+    func endWatching() {
+        watchers = max(0, watchers - 1)
+        if watchers == 0 { rebuildTimer() }
+    }
+
+    /// One pass over both trees.
+    func refreshNow() {
+        let now = now()
+        let cutoff = now.addingTimeInterval(-AgentSession.recentWindow)
+        var found: [AgentSession] = []
+        for file in recentFiles(under: roots.claudeProjects, suffix: ".jsonl", newerThan: cutoff) {
+            let parse = AgentSessionParser.parseClaudeTail(tail(of: file.url))
+            found.append(AgentSession(id: file.url.path, agent: .claudeCode, project: project(from: parse.cwd, fallback: file.url.deletingLastPathComponent().lastPathComponent), title: parse.title, activity: parse.activity, lastEventAt: file.modifiedAt))
+        }
+        for file in recentFiles(under: roots.codexSessions, suffix: ".jsonl", newerThan: cutoff) where file.url.lastPathComponent.hasPrefix("rollout-") {
+            let parse = AgentSessionParser.parseCodexTail(tail(of: file.url))
+            if AgentSessionParser.isOwnScratchRollout(cwd: parse.cwd) { continue }
+            found.append(AgentSession(id: file.url.path, agent: .codex, project: project(from: parse.cwd, fallback: "codex"), title: parse.title, activity: parse.activity, lastEventAt: file.modifiedAt))
+        }
+        found.sort { a, b in
+            let aLive = a.isLive(now: now), bLive = b.isLive(now: now)
+            if aLive != bLive { return aLive }
+            return a.lastEventAt > b.lastEventAt
+        }
+        if found != sessions { sessions = found }
+    }
+
+    // MARK: Pieces
+
+    private func rebuildTimer() {
+        timer?.invalidate()
+        timer = nil
+        guard isEnabled else { return }
+        let timer = Timer(timeInterval: pollInterval, repeats: true) { [weak self] _ in
+            Task { @MainActor in self?.refreshNow() }
+        }
+        timer.tolerance = 0.5
+        RunLoop.main.add(timer, forMode: .common)
+        self.timer = timer
+    }
+
+    private struct RecentFile {
+        let url: URL
+        let modifiedAt: Date
+    }
+
+    private func recentFiles(under root: URL, suffix: String, newerThan cutoff: Date) -> [RecentFile] {
+        guard let enumerator = FileManager.default.enumerator(at: root, includingPropertiesForKeys: [.contentModificationDateKey, .isRegularFileKey], options: [.skipsHiddenFiles, .skipsPackageDescendants]) else { return [] }
+        var files: [RecentFile] = []
+        for case let url as URL in enumerator {
+            guard url.lastPathComponent.hasSuffix(suffix),
+                  let values = try? url.resourceValues(forKeys: [.contentModificationDateKey, .isRegularFileKey]),
+                  values.isRegularFile == true, let modifiedAt = values.contentModificationDate, modifiedAt > cutoff else { continue }
+            files.append(RecentFile(url: url, modifiedAt: modifiedAt))
+        }
+        return files
+    }
+
+    /// The last 64 KB of the log, from the first whole line.
+    private func tail(of url: URL) -> String {
+        guard let handle = try? FileHandle(forReadingFrom: url) else { return "" }
+        defer { try? handle.close() }
+        let size = (try? handle.seekToEnd()) ?? 0
+        let start = size > UInt64(Self.tailBytes) ? size - UInt64(Self.tailBytes) : 0
+        try? handle.seek(toOffset: start)
+        guard let data = try? handle.readToEnd(), var text = String(data: data, encoding: .utf8) ?? String(data: data, encoding: .isoLatin1) else { return "" }
+        if start > 0, let newline = text.firstIndex(where: \.isNewline) { text = String(text[text.index(after: newline)...]) }
+        return text
+    }
+
+    private func project(from cwd: String?, fallback: String) -> String {
+        guard let cwd, !cwd.isEmpty else { return fallback }
+        return URL(fileURLWithPath: cwd).lastPathComponent
+    }
+}

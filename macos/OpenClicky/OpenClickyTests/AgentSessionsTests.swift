@@ -82,4 +82,42 @@ struct AgentSessionsTests {
         #expect(!AgentSession(id: "b", agent: .claudeCode, project: "app", title: nil, activity: .thinking, lastEventAt: now.addingTimeInterval(-121)).isLive(now: now))
         #expect(!AgentSession(id: "c", agent: .codex, project: "app", title: nil, activity: .idle, lastEventAt: now).isLive(now: now))
     }
+
+    @MainActor @Test func theWatcherListsRecentLogsLiveFirstAndSkipsItsOwnScratchRuns() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("agents-tests-\(UUID().uuidString)", isDirectory: true)
+        let claude = root.appendingPathComponent("claude/projects/-Users-me-app", isDirectory: true)
+        let codex = root.appendingPathComponent("codex/sessions/2026/10/21", isDirectory: true)
+        try FileManager.default.createDirectory(at: claude, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: codex, withIntermediateDirectories: true)
+        let now = Date()
+        let done = claude.appendingPathComponent("done.jsonl")
+        try assistant([["type": "text", "text": "done"]], stopReason: "end_turn").write(to: done, atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes([.modificationDate: now.addingTimeInterval(-30)], ofItemAtPath: done.path)
+        let stale = claude.appendingPathComponent("stale.jsonl")
+        try assistant([["type": "thinking", "thinking": "x"]], stopReason: nil).write(to: stale, atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes([.modificationDate: now.addingTimeInterval(-900)], ofItemAtPath: stale.path)
+        let scratch = FileManager.default.temporaryDirectory.appendingPathComponent("openclicky-plan-answers/x").path
+        try claudeLine(["type": "session_meta", "payload": ["cwd": scratch]]).write(to: codex.appendingPathComponent("rollout-own.jsonl"), atomically: true, encoding: .utf8)
+        let site = codex.appendingPathComponent("rollout-site.jsonl")
+        try claudeLine(["type": "session_meta", "payload": ["cwd": "/Users/me/site"]]).write(to: site, atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes([.modificationDate: now.addingTimeInterval(-10)], ofItemAtPath: site.path)
+        let live = claude.appendingPathComponent("live.jsonl")
+        try assistant([["type": "tool_use", "name": "Read", "input": ["file_path": "/Users/me/app/README.md"]]], stopReason: "tool_use").write(to: live, atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes([.modificationDate: now], ofItemAtPath: live.path)
+        let watcher = AgentSessionWatcher(roots: AgentLogRoots(claudeProjects: root.appendingPathComponent("claude/projects"), codexSessions: root.appendingPathComponent("codex/sessions")), now: { now })
+        watcher.refreshNow()
+        #expect(watcher.sessions.map(\.project) == ["app", "site", "app"])
+        #expect(watcher.sessions[0].activity.line == "reading README.md")
+        #expect(watcher.liveCount == 2)          // the Codex one is waiting on its prompt
+        #expect(watcher.peekLine == "claude · reading README.md")
+        #expect(!watcher.isPolling)
+        watcher.setEnabled(true)
+        #expect(watcher.isPolling && watcher.pollInterval == 20)
+        watcher.beginWatching()
+        #expect(watcher.pollInterval == 3)
+        watcher.endWatching()
+        #expect(watcher.pollInterval == 20)
+        watcher.setEnabled(false)
+        #expect(!watcher.isPolling)
+    }
 }
