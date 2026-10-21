@@ -175,7 +175,7 @@ enum IslandComponentRegistry {
 
     /// The built-ins first, then the extras (off until turned on in Settings).
     @MainActor static var all: [any IslandComponent] {
-        [ShortcutsIslandComponent(), TranscriptIslandComponent(), AgentIslandComponent(), SystemIslandComponent()]
+        [ShortcutsIslandComponent(), TranscriptIslandComponent(), AgentIslandComponent(), SystemIslandComponent(), ShelfIslandComponent()]
     }
 }
 

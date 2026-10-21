@@ -73,11 +73,11 @@ struct IslandComponentSelectorTests {
     }
 
     @MainActor
-    @Test func theRealRegistryHasTheSystemComponentAsAnOptionalFourth() {
+    @Test func theRealRegistryListsTheBuiltInsThenTheExtras() {
         let ids = IslandComponentRegistry.all.map(\.id)
-        #expect(ids == ["shortcuts", "transcript", "agent", "system"])
-        #expect(IslandComponentRegistry.all.map(\.preferredHeight) == [45, 52, 52, 70])
-        #expect(IslandComponentRegistry.all.map(\.isOptional) == [false, false, false, true])
+        #expect(ids == ["shortcuts", "transcript", "agent", "system", "shelf"])
+        #expect(IslandComponentRegistry.all.map(\.preferredHeight) == [45, 52, 52, 70, 84])
+        #expect(IslandComponentRegistry.all.map(\.isOptional) == [false, false, false, true, true])
     }
 
     @Test func theContextIsBuiltFromWhatTheAppAlreadyPublishes() {

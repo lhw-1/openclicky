@@ -194,6 +194,11 @@ final class UITour {
             // An extra the user can turn on: the System rings.
             hud.debugShowPrimaryComponent(IslandComponentRegistry.systemID)
             await shoot("\(prefix)-04c-panel-system", window: hud.debugPrimaryWindow)
+            // The shelf with two things dropped on it (the tour runs under a throwaway home).
+            hud.shelf.add([.text("remember the milk"), .link(URL(string: "https://example.com")!)])
+            hud.debugShowPrimaryComponent(IslandComponentRegistry.shelfID)
+            await shoot("\(prefix)-04d-panel-shelf", window: hud.debugPrimaryWindow)
+            hud.shelf.removeAll()
             hud.debugResetPrimaryComponents()
             hud.debugCloseAll()
 

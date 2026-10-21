@@ -159,7 +159,7 @@ While a drag hovers, the shelf view shows a dashed outline tile at the leading e
 
 ### The shelf view
 
-A horizontally scrolling row of tiles, each 56 × 70: a 40 pt icon (the Finder icon via
+A horizontally scrolling row of tiles, each 76 × 70: a 40 pt icon (the Finder icon via
 `NSWorkspace.shared.icon(forFile:)`, the image itself, `link` for a link, `text.alignleft` for
 text; a file's icon from its saved `-icon.png`) over an 11 pt title in text2, one line,
 middle-truncated. Hovering shows a 16 pt "×" in the

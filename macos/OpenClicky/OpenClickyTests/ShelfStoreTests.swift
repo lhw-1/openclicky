@@ -100,4 +100,12 @@ struct ShelfStoreTests {
         #expect(!IslandDropDelegate.accepts(enabled: ["shortcuts", "system"]))
         #expect(IslandDropDelegate.accepts(enabled: ["shortcuts", "shelf"]))
     }
+
+    @Test func aTileLeavesTheShelfOnlyWhenTheDropLanded() {
+        #expect(ShelfDragPolicy.removesAfterDrag(operation: .copy))
+        #expect(ShelfDragPolicy.removesAfterDrag(operation: .move))
+        #expect(!ShelfDragPolicy.removesAfterDrag(operation: []))
+        #expect(ShelfDragPolicy.sourceOperationMask(for: .file(path: "/tmp/a")) == [.copy, .move])
+        #expect(ShelfDragPolicy.sourceOperationMask(for: .text("a")) == .copy)
+    }
 }
