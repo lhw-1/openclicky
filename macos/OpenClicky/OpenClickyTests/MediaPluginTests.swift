@@ -119,7 +119,10 @@ struct MediaPluginTests {
         source.reply = try #require(MediaSnapshot.parse(line(["playing", "T", "A", "", "1", "200", "k1", ""]), player: .spotify, sampledAt: now))
         let store = MediaStore(source: source, now: { now })
         store.setEnabled(true)                     // its own first read runs in the background
-        try await Task.sleep(nanoseconds: 200_000_000)
+        for _ in 0..<100 where store.artwork == nil {   // wait for that read (and its artwork) to finish
+            try await Task.sleep(nanoseconds: 20_000_000)
+        }
+        #expect(store.artwork != nil)
         source.reply = try #require(MediaSnapshot.parse(line(["playing", "T2", "A", "", "1", "200", "k2", ""]), player: .spotify, sampledAt: now))
         source.reads = 0
         async let first: Void = store.refreshNow()
