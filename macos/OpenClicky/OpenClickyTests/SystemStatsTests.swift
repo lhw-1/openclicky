@@ -28,4 +28,24 @@ struct SystemStatsTests {
         #expect(SystemStatsTone.isWarning(batteryLevel: 0.2))
         #expect(!SystemStatsTone.isWarning(batteryLevel: 0.21))
     }
+
+    @MainActor @Test func theStoreSamplesWhileAnyViewWatchesAndStopsWithTheLast() {
+        struct Counting: SystemStatsSampling {
+            var count = 0
+            mutating func sample() -> SystemStatsSnapshot {
+                count += 1
+                return SystemStatsSnapshot(cpu: Double(count) / 10, memoryUsed: 1, memoryTotal: 2, diskFree: 3, diskTotal: 4, battery: nil)
+            }
+        }
+        let store = SystemStatsStore(sampler: Counting(), interval: 60)
+        #expect(!store.isSampling)
+        store.beginWatching()
+        store.beginWatching()
+        #expect(store.isSampling)
+        #expect(store.snapshot.cpu == 0.1)   // sampled at once, exactly once
+        store.endWatching()
+        #expect(store.isSampling)
+        store.endWatching()
+        #expect(!store.isSampling)
+    }
 }

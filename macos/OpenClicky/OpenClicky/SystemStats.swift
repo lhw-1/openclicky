@@ -7,6 +7,7 @@
 //  The live sampler is in `SystemStatsSampler.swift`.
 //
 
+import Combine
 import Foundation
 
 /// One reading of the Mac. Bytes are bytes; fractions run 0…1.
@@ -61,4 +62,49 @@ enum SystemStatsFormatter {
 enum SystemStatsTone {
     static func isWarning(fraction: Double) -> Bool { fraction > 0.85 }
     static func isWarning(batteryLevel: Double) -> Bool { batteryLevel <= 0.2 }
+}
+
+/// One per app: samples every `interval` seconds while at least one tile row watches, and not
+/// at all otherwise, so a closed island costs nothing.
+@MainActor
+final class SystemStatsStore: ObservableObject {
+    @Published private(set) var snapshot: SystemStatsSnapshot = .empty
+
+    private var sampler: any SystemStatsSampling
+    private let interval: TimeInterval
+    private var watchers = 0
+    private var timer: Timer?
+
+    init(sampler: any SystemStatsSampling, interval: TimeInterval = 2) {
+        self.sampler = sampler
+        self.interval = interval
+    }
+
+    var isSampling: Bool { timer != nil }
+
+    /// A tile row appeared: the first one samples now and starts the clock.
+    func beginWatching() {
+        watchers += 1
+        guard timer == nil else { return }
+        sampleNow()
+        let timer = Timer(timeInterval: interval, repeats: true) { [weak self] _ in
+            Task { @MainActor in self?.sampleNow() }
+        }
+        timer.tolerance = 0.5
+        RunLoop.main.add(timer, forMode: .common)
+        self.timer = timer
+    }
+
+    /// A tile row went away: the last one stops the clock.
+    func endWatching() {
+        watchers = max(0, watchers - 1)
+        guard watchers == 0 else { return }
+        timer?.invalidate()
+        timer = nil
+    }
+
+    private func sampleNow() {
+        let next = sampler.sample()
+        if next != snapshot { snapshot = next }
+    }
 }
