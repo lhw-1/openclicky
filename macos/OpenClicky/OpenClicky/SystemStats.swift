@@ -1,0 +1,64 @@
+//
+//  SystemStats.swift
+//  OpenClicky
+//
+//  The System component's figures: one snapshot of CPU, memory, disk and battery, how each reads
+//  on a tile, when a ring warns, and a store that samples only while a tile row is on screen.
+//  The live sampler is in `SystemStatsSampler.swift`.
+//
+
+import Foundation
+
+/// One reading of the Mac. Bytes are bytes; fractions run 0…1.
+struct SystemStatsSnapshot: Equatable {
+    struct Battery: Equatable {
+        var level: Double
+        var isCharging: Bool
+        var isPluggedIn: Bool
+    }
+
+    var cpu: Double
+    var memoryUsed: Int64
+    var memoryTotal: Int64
+    var diskFree: Int64
+    var diskTotal: Int64
+    /// Nil on a Mac without an internal battery.
+    var battery: Battery?
+
+    static let empty = SystemStatsSnapshot(cpu: 0, memoryUsed: 0, memoryTotal: 0, diskFree: 0, diskTotal: 0, battery: nil)
+}
+
+/// Where a snapshot comes from; the live one asks Mach and IOKit, tests hand back fixed values.
+protocol SystemStatsSampling {
+    mutating func sample() -> SystemStatsSnapshot
+}
+
+/// How the figures read on a tile: short inside the ring, long in the caption on hover.
+enum SystemStatsFormatter {
+    static func percent(_ fraction: Double) -> String {
+        "\(Int((min(max(fraction, 0), 1) * 100).rounded()))%"
+    }
+
+    /// Whole gigabytes (1 GB = 2^30 bytes), rounded.
+    static func gigabytes(_ bytes: Int64) -> String {
+        "\(Int((Double(bytes) / 1_073_741_824).rounded())) GB"
+    }
+
+    static func memory(used: Int64, total: Int64) -> String {
+        "\(Int((Double(used) / 1_073_741_824).rounded())) / \(gigabytes(total))"
+    }
+
+    static func disk(free: Int64) -> String {
+        "\(gigabytes(free)) free"
+    }
+
+    static func battery(level: Double, isCharging: Bool) -> String {
+        isCharging ? "\(percent(level)) ⚡" : percent(level)
+    }
+}
+
+/// When a ring turns amber: a load above 85 %, a battery at or under 20 %.
+enum SystemStatsTone {
+    static func isWarning(fraction: Double) -> Bool { fraction > 0.85 }
+    static func isWarning(batteryLevel: Double) -> Bool { batteryLevel <= 0.2 }
+}
