@@ -31,8 +31,10 @@ rows that already exist.
    dropping adds the items; a tile dragged out goes wherever it is dropped and leaves the shelf; a
    click on a tile copies it. The shelf survives a relaunch.
 4. **Coding agents** follows the sessions' own on-disk logs, no network and no telemetry for the
-   session part, and reads Claude's plan limits with the sign-in Claude Code already has. While a
-   session is live the component is the moment's component and the peek line names it.
+   session part, and reads Claude's plan limits with the sign-in Claude Code already has. It is
+   never the moment's component (a developer's sessions are live most of the day and must not take
+   the island from the chosen default); it is available whenever it is enabled, and while a session
+   is live the peek line names it.
 5. **Nothing moves for a user who leaves the toggles off.** The existing three components, the
    selector and the Settings rows behave exactly as before.
 
@@ -49,8 +51,10 @@ rows that already exist.
 
 ## Constraints
 
-- Deployment target macOS 14.2; Swift Testing; no new dependencies; no new permissions beyond
-  the one-time Keychain prompt described under Coding agents.
+- Deployment target macOS 14.2; Swift Testing; no new dependencies; no new permission grants
+  beyond two prompts the user's own act brings on: the one-time Keychain prompt under Coding agents,
+  and macOS's Desktop / Documents / Downloads folder prompt the first time a file from one of them
+  is dropped on the shelf (the shelf reads the file only at drop and at drag-out, never at launch).
 - Copy is lower-case, short, in OpenClicky's voice ("drop to keep", "copied", "nothing running").
   Symbols are SF Symbols; no third-party marks or logos are drawn.
 - The island's files, specs and commit messages describe these as OpenClicky's own features.
@@ -70,6 +74,11 @@ optional one whose id is in `enabledIDs`.
 `IslandComponentSelector.select(registry:order:defaultID:override:context:enabled:)` takes the
 enabled set and drops disabled components before anything else, so `available`, the default and
 the contextual pick all ignore them. A stored default that is disabled falls back to `shortcuts`.
+
+`IslandContext.contextualKey`'s chain becomes: `shelf` while a drag hovers the island (a drag is
+an explicit act and outranks everything), then the take, the landed take, the agent, nil. The
+shelf key is only answered when the shelf is enabled (`isDragHovering` is never set otherwise).
+Coding agents never enter the chain.
 
 Settings → General, between "Default component" and "Component order": row `general.islandComponents`,
 title "Island components", detail "The extras the island can show. Each one is off until you turn
@@ -125,7 +134,10 @@ newest first, at most 40 (the oldest fall off). `add(_ items:)`, `remove(id:)`, 
 Persists to `~/Library/Application Support/OpenClicky/Shelf/index.json`; images dropped as data
 are written to `Shelf/<uuid>.png` and referenced by path; files are referenced by their own path
 (never copied or moved: dragging out moves or copies as Finder decides, the shelf only hands the
-URL over). On load, a file item whose path no longer exists is dropped.
+URL over). At drop time the file's Finder icon is rendered once to `Shelf/<uuid>-icon.png` (64 pt)
+so the tile never touches the file again until it is dragged out; nothing is stat-ed at launch (a
+launch-time check of a Desktop file would raise macOS's folder prompt). A drag-out of a file that
+no longer exists removes the tile instead of starting a session.
 
 `ShelfDropReader.items(from pasteboard: NSPasteboard) -> [ShelfItem]`: file URLs first
 (`NSPasteboard.ReadingOptions` for `.fileURL`), else a web URL (`.URL`) as a link, else an image
@@ -149,7 +161,8 @@ While a drag hovers, the shelf view shows a dashed outline tile at the leading e
 
 A horizontally scrolling row of tiles, each 56 × 70: a 40 pt icon (the Finder icon via
 `NSWorkspace.shared.icon(forFile:)`, the image itself, `link` for a link, `text.alignleft` for
-text) over an 11 pt title in text2, one line, middle-truncated. Hovering shows a 16 pt "×" in the
+text; a file's icon from its saved `-icon.png`) over an 11 pt title in text2, one line,
+middle-truncated. Hovering shows a 16 pt "×" in the
 tile's top-trailing corner that removes it. Empty shelf: "drop files, text or links on the island
 to keep them handy" centred in text3.
 
@@ -166,8 +179,8 @@ The capsule's tray icon shows nothing extra; the count is visible in the row.
 
 ## 4. Coding agents
 
-Component id `agents`, title "Coding agents", symbol `terminal`, height 76, available when
-enabled; the moment's component while any session is live (`IslandContext.liveAgentSessions > 0`).
+Component id `agents`, title "Coding agents", symbol `terminal`, height 76, available whenever it
+is enabled (an empty state when nothing runs); never the moment's component.
 
 ### Sessions
 
@@ -181,13 +194,22 @@ enabled; the moment's component while any session is live (`IslandContext.liveAg
 `.writing(String)` (the assistant's latest text line, 60 characters), `.waiting` (the last record
 is a user prompt or tool result, so the model is working on it), `.idle`.
 
-A session is **live** when its log file was modified within the last 120 s and its last record is
-not the task-complete marker; it is otherwise shown as recent for 10 min, then dropped.
+A session is **live** when its log file was modified within the last 120 s and its activity is
+not `.idle`; it is otherwise shown as recent for 10 min, then dropped. Idle for Claude Code: the
+last `assistant` record's `message.stop_reason` is `end_turn` (the answer is finished) and no
+`user` record follows it; a `user` record after it means `.waiting`. Idle for Codex: the last
+record is `event_msg/task_complete`.
+
+OpenClicky's own plan answers are not sessions: Codex rollouts whose `cwd` is under the
+`openclicky-plan-answers` folder of the temporary directory (`PlanCLIs.makeScratchWorkingDirectory`)
+are skipped (its Claude answers keep no log).
 
 `AgentSessionParser`: pure, per agent. `parseClaudeTail(_ text: String) -> (activity, title?, cwd?)`
 reads the last 64 KB of a `~/.claude/projects/*/*.jsonl` (or `$CLAUDE_CONFIG_DIR`), line by line,
-and takes the activity from the last `assistant` record's last content block (`tool_use` → tool,
-`thinking` → thinking, `text` → writing), or `.waiting` if the last record is a `user` record;
+and takes the activity from the last `assistant` record: `.idle` when its `stop_reason` is
+`end_turn`, else its last content block (`tool_use` → tool, `thinking` → thinking, `text` →
+writing); `.waiting` if a `user` record comes after it. Records of other types (`attachment`,
+`api-request`, `last-prompt`, …) are ignored;
 `cwd` from any record, title from the last `ai-title`. `parseCodexTail` reads
 `~/.codex/sessions/**/rollout-*.jsonl`: `session_meta.cwd`, the last `response_item` of type
 `function_call` (`name`, `arguments` JSON's `command`/`path`) or `message` with role `assistant`
@@ -208,8 +230,13 @@ is on screen and every 20 s otherwise once the component is enabled, listing the
 `Authorization: Bearer <token>` and `anthropic-beta: oauth-2025-04-20`. The reply's `five_hour`
 and `seven_day` objects each give `utilization` (0…100) and `resets_at` (ISO 8601); `UsageWindow`
 (`fraction: Double`, `resetsAt: Date?`) × 2 in `ClaudeUsage`. Fetched when the component appears
-and every 5 min while it stays, never otherwise. A missing Keychain item → "sign in to claude to
-see limits" under the rings; a network failure keeps the last figures and dims them. macOS asks
+and every 5 min while it stays, never otherwise. The Keychain is read at most once per 30 min
+(each read may prompt when the user chose "Allow" rather than "Always Allow"). States under the
+rings: no item or a 401 (the token expired; Claude Code refreshes it when it next runs) → "sign in
+to claude to see limits"; the Keychain read refused (`errSecAuthFailed`,
+`errSecInteractionNotAllowed`, `errSecUserCanceled`) → "allow keychain access to see limits" and
+no further reads until the toggle is turned off and on or the app relaunches; a network failure
+keeps the last figures and dims them. macOS asks
 once whether OpenClicky may read that Keychain item; the Settings detail for the toggle says so:
 "Follows Claude Code and Codex sessions on this Mac from their own logs. macOS asks once to let
 OpenClicky read Claude Code's sign-in for the plan limits."
@@ -228,8 +255,8 @@ Right: two 28 pt rings, "5 h" and "7 d", the fraction inside; amber above 80 %, 
 when the usage client has figures or an error line to show.
 
 The peek line, when the agents component is enabled and a session is live, shows
-"claude · editing Foo.swift" (agent · activity) in place of the pointer status. The compact busy
-strip is untouched.
+"claude · editing Foo.swift" (the newest live session: agent · activity) in place of the pointer
+status; the user opted in. The compact busy strip is untouched.
 
 ## What's left to the builder
 
