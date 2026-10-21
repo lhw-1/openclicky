@@ -150,6 +150,11 @@ struct IslandComponentSettings {
         return !component.isOptional || enabledIDs.contains(id)
     }
 
+    /// The stored default when it is on; the shortcuts when it has been switched off since.
+    func resolvedDefaultID(in registry: [any IslandComponent]) -> String {
+        isEnabled(defaultID, in: registry) ? defaultID : IslandComponentRegistry.shortcutsID
+    }
+
     /// The ids the selector may use, from the registry and the user's switches.
     static func enabledIDs(in registry: [any IslandComponent], settings: IslandComponentSettings) -> Set<String> {
         Set(registry.map(\.id).filter { settings.isEnabled($0, in: registry) })

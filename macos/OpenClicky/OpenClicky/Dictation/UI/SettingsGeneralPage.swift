@@ -253,9 +253,10 @@ private struct IslandGlassLevelRow: View {
 
 /// The component the open island shows when nothing else is going on.
 private struct IslandDefaultComponentRow: View {
-    @State private var defaultID = IslandComponentSettings(defaults: .standard).defaultID
+    @State private var defaultID = IslandComponentSettings(defaults: .standard).resolvedDefaultID(in: IslandComponentRegistry.all)
+    @State private var choices = IslandDefaultComponentRow.choices()
 
-    /// The built-ins and the extras that are on; a default that is now off reads as the shortcuts.
+    /// The built-ins and the extras that are on.
     @MainActor private static func choices() -> [any IslandComponent] {
         let settings = IslandComponentSettings(defaults: .standard)
         return IslandComponentRegistry.all.filter { settings.isEnabled($0.id, in: IslandComponentRegistry.all) }
@@ -268,11 +269,18 @@ private struct IslandDefaultComponentRow: View {
                 var settings = IslandComponentSettings(defaults: .standard)
                 settings.defaultID = newValue
             })) {
-                ForEach(Self.choices(), id: \.id) { component in Text(component.title).tag(component.id) }
+                ForEach(choices, id: \.id) { component in Text(component.title).tag(component.id) }
             }
             .labelsHidden()
             .fixedSize()
             .pointerCursor()
+        }
+        // A switch flipped in the row below changes what can be the default: follow it.
+        .onReceive(NotificationCenter.default.publisher(for: UserDefaults.didChangeNotification).receive(on: DispatchQueue.main)) { _ in
+            let resolved = IslandComponentSettings(defaults: .standard).resolvedDefaultID(in: IslandComponentRegistry.all)
+            if resolved != defaultID { defaultID = resolved }
+            let next = Self.choices()
+            if next.map(\.id) != choices.map(\.id) { choices = next }
         }
     }
 }
@@ -316,6 +324,8 @@ private struct IslandComponentOrderRow: View {
         return stored + known.filter { !stored.contains($0) }
     }
 
+    @State private var enabledIDs = IslandComponentSettings(defaults: .standard).enabledIDs
+
     var body: some View {
         SettingsRow(title: "Component order", detail: "The order of the island's capsule when there is more than one to flip to.") {
             VStack(alignment: .trailing, spacing: 4) {
@@ -323,7 +333,7 @@ private struct IslandComponentOrderRow: View {
                     HStack(spacing: 6) {
                         Text(IslandComponentRegistry.all.first { $0.id == id }?.title ?? id)
                             .font(SettingsLook.caption)
-                            .opacity(IslandComponentSettings(defaults: .standard).isEnabled(id, in: IslandComponentRegistry.all) ? 1 : 0.5)
+                            .opacity(IslandComponentRegistry.all.first { $0.id == id }?.isOptional == true && !enabledIDs.contains(id) ? 0.5 : 1)
                         Button(action: { move(index, by: -1) }) { Image(systemName: "chevron.up") }
                             .disabled(index == 0)
                         Button(action: { move(index, by: 1) }) { Image(systemName: "chevron.down") }
@@ -333,6 +343,10 @@ private struct IslandComponentOrderRow: View {
                     .controlSize(.small)
                 }
             }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: UserDefaults.didChangeNotification).receive(on: DispatchQueue.main)) { _ in
+            let next = IslandComponentSettings(defaults: .standard).enabledIDs
+            if next != enabledIDs { enabledIDs = next }
         }
     }
 

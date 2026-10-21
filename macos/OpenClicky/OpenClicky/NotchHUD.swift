@@ -657,11 +657,11 @@ final class NotchHUDManager {
     }
 
     private var instances: [Instance] = []
+    /// One per app, sampling only while a System tile row is on screen.
+    let systemStats = SystemStatsStore(sampler: MachSystemStatsSampler())
     #if DEBUG
     /// The UI tour keeps a pinned panel open through clicks elsewhere on the desktop.
     var debugKeepsPanelsOpen = false
-    /// One per app, sampling only while a System tile row is on screen.
-    let systemStats = SystemStatsStore(sampler: MachSystemStatsSampler())
     #endif
     private weak var companionManager: CompanionManager?
     private var isShown = false

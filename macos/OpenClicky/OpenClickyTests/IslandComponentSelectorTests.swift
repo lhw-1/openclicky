@@ -154,4 +154,15 @@ struct IslandComponentSelectorTests {
         #expect(settings.isEnabled("system", in: registry))
         #expect(IslandComponentSettings.enabledIDs(in: registry, settings: settings) == ["shortcuts", "system"])
     }
+
+    @Test func aStoredDefaultThatIsSwitchedOffReadsAsTheShortcutsInSettings() {
+        let defaults = UserDefaults(suiteName: "island-settings-default-fallback")!
+        defaults.removePersistentDomain(forName: "island-settings-default-fallback")
+        var settings = IslandComponentSettings(defaults: defaults)
+        let registry: [any IslandComponent] = [Stub(id: "shortcuts") { _ in true }, Stub(id: "system", isOptional: true) { _ in true }]
+        settings.defaultID = "system"
+        #expect(settings.resolvedDefaultID(in: registry) == "shortcuts")
+        settings.enabledIDs = ["system"]
+        #expect(settings.resolvedDefaultID(in: registry) == "system")
+    }
 }
