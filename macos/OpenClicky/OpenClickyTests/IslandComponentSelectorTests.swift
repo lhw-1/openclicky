@@ -126,4 +126,31 @@ struct IslandComponentSelectorTests {
         #expect(again.defaultID == "agent")
         #expect(again.order == ["agent", "shortcuts"])
     }
+
+    @Test func aDisabledComponentIsNeverAvailableAndADisabledDefaultFallsBackToShortcuts() {
+        let system = Stub(id: "system") { _ in true }
+        let registry: [any IslandComponent] = [shortcuts, transcript, agent, system]
+        let off = IslandComponentSelector.select(registry: registry, order: [], defaultID: "system", override: "system", context: .idle, enabled: ["shortcuts", "transcript", "agent"])
+        #expect(off == IslandComponentSelection(active: "shortcuts", available: ["shortcuts"]))
+        let on = IslandComponentSelector.select(registry: registry, order: [], defaultID: "system", override: nil, context: .idle, enabled: ["shortcuts", "transcript", "agent", "system"])
+        #expect(on == IslandComponentSelection(active: "system", available: ["shortcuts", "system"]))
+    }
+
+    @Test func optionalComponentsAreOffUntilTurnedOn() {
+        let defaults = UserDefaults(suiteName: "island-switchboard-tests")!
+        defaults.removePersistentDomain(forName: "island-switchboard-tests")
+        var settings = IslandComponentSettings(defaults: defaults)
+        struct Optional: IslandComponent {
+            let id = "system"; let title = "System"; let symbolName = "gauge"; let preferredHeight: CGFloat = 70; let isOptional = true
+            func isAvailable(in context: IslandContext) -> Bool { true }
+            @MainActor func makeView(companionManager: CompanionManager, model: NotchHUDModel) -> AnyView { AnyView(EmptyView()) }
+        }
+        let registry: [any IslandComponent] = [Stub(id: "shortcuts") { _ in true }, Optional()]
+        #expect(settings.enabledIDs == [])
+        #expect(settings.isEnabled("shortcuts", in: registry))
+        #expect(!settings.isEnabled("system", in: registry))
+        settings.enabledIDs = ["system"]
+        #expect(settings.isEnabled("system", in: registry))
+        #expect(IslandComponentSettings.enabledIDs(in: registry, settings: settings) == ["shortcuts", "system"])
+    }
 }

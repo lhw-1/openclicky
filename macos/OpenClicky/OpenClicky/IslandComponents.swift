@@ -77,8 +77,14 @@ protocol IslandComponent {
     var symbolName: String { get }
     /// The slot's height for this component in the notch placement.
     var preferredHeight: CGFloat { get }
+    /// An extra the user turns on in Settings; off, it is never available. Built-ins are not.
+    var isOptional: Bool { get }
     func isAvailable(in context: IslandContext) -> Bool
     @MainActor func makeView(companionManager: CompanionManager, model: NotchHUDModel) -> AnyView
+}
+
+extension IslandComponent {
+    var isOptional: Bool { false }
 }
 
 /// The selector's answer: the active component and every one the capsule may flip to.
@@ -88,24 +94,33 @@ struct IslandComponentSelection: Equatable {
 }
 
 enum IslandComponentSelector {
-    /// The override wins while it is available; else the moment's component; else the user's
-    /// default; else the first available in the user's order. `available` is the registry filtered
-    /// by availability, in the user's order (unknown ids ignored, missing ids appended in
-    /// registration order).
+    /// Every component enabled: for callers and tests that have no switchboard.
     static func select(registry: [any IslandComponent], order: [String], defaultID: String, override: String?, context: IslandContext) -> IslandComponentSelection {
+        select(registry: registry, order: order, defaultID: defaultID, override: override, context: context, enabled: Set(registry.map(\.id)))
+    }
+
+    /// Disabled components are dropped first: never available, never the default, never pulled
+    /// in by the moment. Then the override wins while it is available; else the moment's
+    /// component; else the user's default (the shortcuts when the stored one is disabled); else
+    /// the first available in the user's order. `available` is the registry filtered by
+    /// availability, in the user's order (unknown ids ignored, missing ids appended in
+    /// registration order).
+    static func select(registry: [any IslandComponent], order: [String], defaultID: String, override: String?, context: IslandContext, enabled: Set<String>) -> IslandComponentSelection {
         precondition(!registry.isEmpty, "the island needs at least one component")
-        let availableIDs = registry.filter { $0.isAvailable(in: context) }.map(\.id)
+        let availableIDs = registry.filter { enabled.contains($0.id) && $0.isAvailable(in: context) }.map(\.id)
         let ordered = order.filter { availableIDs.contains($0) } + availableIDs.filter { !order.contains($0) }
-        let candidates = [override, context.contextualKey, defaultID].compactMap { $0 }
+        let fallbackDefault = enabled.contains(defaultID) ? defaultID : IslandComponentRegistry.shortcutsID
+        let candidates = [override, context.contextualKey, fallbackDefault].compactMap { $0 }
         let active = candidates.first { ordered.contains($0) } ?? ordered.first ?? registry[0].id
         return IslandComponentSelection(active: active, available: ordered)
     }
 }
 
-/// The user's default component and order, in UserDefaults.
+/// The user's default component, order and switched-on extras, in UserDefaults.
 struct IslandComponentSettings {
     static let defaultKey = "openclicky.island.defaultComponent"
     static let orderKey = "openclicky.island.componentOrder"
+    static let enabledKey = "openclicky.island.enabledComponents"
 
     private let defaults: UserDefaults
 
@@ -121,6 +136,23 @@ struct IslandComponentSettings {
     var order: [String] {
         get { defaults.stringArray(forKey: Self.orderKey) ?? [] }
         set { defaults.set(newValue, forKey: Self.orderKey) }
+    }
+
+    /// The optional components the user turned on; unset means none.
+    var enabledIDs: [String] {
+        get { defaults.stringArray(forKey: Self.enabledKey) ?? [] }
+        set { defaults.set(newValue, forKey: Self.enabledKey) }
+    }
+
+    /// A built-in is always on; an extra only when the user turned it on. Unknown ids are off.
+    func isEnabled(_ id: String, in registry: [any IslandComponent]) -> Bool {
+        guard let component = registry.first(where: { $0.id == id }) else { return false }
+        return !component.isOptional || enabledIDs.contains(id)
+    }
+
+    /// The ids the selector may use, from the registry and the user's switches.
+    static func enabledIDs(in registry: [any IslandComponent], settings: IslandComponentSettings) -> Set<String> {
+        Set(registry.map(\.id).filter { settings.isEnabled($0, in: registry) })
     }
 }
 
