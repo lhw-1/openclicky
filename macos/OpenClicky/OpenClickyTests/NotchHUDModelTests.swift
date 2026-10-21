@@ -6,6 +6,7 @@
 //
 
 import CoreGraphics
+import Foundation
 import Testing
 @testable import OpenClicky
 
@@ -131,5 +132,18 @@ struct NotchHUDModelTests {
         #expect(model.isPressed)
         model.setPressed(false)
         #expect(!model.isPressed)
+    }
+
+    @Test func anOptionalComponentJoinsTheSlotOnlyWhenTurnedOn() {
+        let defaults = UserDefaults(suiteName: "island-model-switchboard")!
+        defaults.removePersistentDomain(forName: "island-model-switchboard")
+        let registry = IslandComponentSelectorTests().registry + [IslandComponentSelectorTests.Stub(id: "system", isOptional: true) { _ in true }]
+        let model = NotchHUDModel(geometry: notchModel().geometry, registry: registry, componentSettings: IslandComponentSettings(defaults: defaults))
+        #expect(model.selection.available == ["shortcuts"])
+        var settings = IslandComponentSettings(defaults: defaults)
+        settings.enabledIDs = ["system"]
+        model.componentSettings = settings
+        #expect(model.selection.available == ["shortcuts", "system"])
+        #expect(model.showsCapsule)
     }
 }

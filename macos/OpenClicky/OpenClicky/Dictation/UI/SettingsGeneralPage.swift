@@ -42,6 +42,11 @@ extension SettingsCatalog {
                 keywords: ["island", "component", "panel", "shortcuts", "transcript", "agent", "default", "slot"],
                 view: AnyView(IslandDefaultComponentRow())),
             SettingsItem(
+                id: "general.islandComponents", page: .general, section: "",
+                title: "Island components", detail: "The extras the island can show. Each one is off until you turn it on.",
+                keywords: ["island", "component", "extra", "extras", "system", "stats", "cpu", "memory", "battery", "shelf", "agents", "toggle", "switch"],
+                view: AnyView(IslandComponentsRow())),
+            SettingsItem(
                 id: "general.islandOrder", page: .general, section: "",
                 title: "Component order", detail: "The order of the island's capsule when there is more than one to flip to.",
                 keywords: ["island", "component", "order", "capsule", "arrange", "reorder"],
@@ -250,6 +255,12 @@ private struct IslandGlassLevelRow: View {
 private struct IslandDefaultComponentRow: View {
     @State private var defaultID = IslandComponentSettings(defaults: .standard).defaultID
 
+    /// The built-ins and the extras that are on; a default that is now off reads as the shortcuts.
+    @MainActor private static func choices() -> [any IslandComponent] {
+        let settings = IslandComponentSettings(defaults: .standard)
+        return IslandComponentRegistry.all.filter { settings.isEnabled($0.id, in: IslandComponentRegistry.all) }
+    }
+
     var body: some View {
         SettingsRow(title: "Default component", detail: "What the open island shows when nothing else is going on.") {
             Picker("", selection: Binding(get: { defaultID }, set: { newValue in
@@ -257,7 +268,7 @@ private struct IslandDefaultComponentRow: View {
                 var settings = IslandComponentSettings(defaults: .standard)
                 settings.defaultID = newValue
             })) {
-                ForEach(IslandComponentRegistry.all, id: \.id) { component in Text(component.title).tag(component.id) }
+                ForEach(Self.choices(), id: \.id) { component in Text(component.title).tag(component.id) }
             }
             .labelsHidden()
             .fixedSize()
@@ -267,6 +278,34 @@ private struct IslandDefaultComponentRow: View {
 }
 
 /// The capsule's order: one row per component with up and down arrows.
+/// One switch per extra the island can show; the built-ins are always on and not listed.
+private struct IslandComponentsRow: View {
+    @State private var enabledIDs = IslandComponentSettings(defaults: .standard).enabledIDs
+
+    var body: some View {
+        SettingsRow(title: "Island components", detail: "The extras the island can show. Each one is off until you turn it on.") {
+            VStack(alignment: .trailing, spacing: 6) {
+                ForEach(IslandComponentRegistry.all.filter(\.isOptional), id: \.id) { component in
+                    HStack(spacing: 8) {
+                        Text(component.title)
+                            .font(SettingsLook.caption)
+                        SettingsSwitch(isOn: Binding(
+                            get: { enabledIDs.contains(component.id) },
+                            set: { isOn in
+                                enabledIDs.removeAll { $0 == component.id }
+                                if isOn { enabledIDs.append(component.id) }
+                                var settings = IslandComponentSettings(defaults: .standard)
+                                settings.enabledIDs = enabledIDs
+                            }
+                        ))
+                        .accessibilityLabel(component.title)
+                    }
+                }
+            }
+        }
+    }
+}
+
 private struct IslandComponentOrderRow: View {
     @State private var order: [String] = IslandComponentOrderRow.resolvedOrder()
 
@@ -284,6 +323,7 @@ private struct IslandComponentOrderRow: View {
                     HStack(spacing: 6) {
                         Text(IslandComponentRegistry.all.first { $0.id == id }?.title ?? id)
                             .font(SettingsLook.caption)
+                            .opacity(IslandComponentSettings(defaults: .standard).isEnabled(id, in: IslandComponentRegistry.all) ? 1 : 0.5)
                         Button(action: { move(index, by: -1) }) { Image(systemName: "chevron.up") }
                             .disabled(index == 0)
                         Button(action: { move(index, by: 1) }) { Image(systemName: "chevron.down") }

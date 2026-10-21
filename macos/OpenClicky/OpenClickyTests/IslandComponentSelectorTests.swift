@@ -16,6 +16,7 @@ struct IslandComponentSelectorTests {
         var title: String { id }
         var symbolName: String { "circle" }
         var preferredHeight: CGFloat { 45 }
+        var isOptional = false
         let available: (IslandContext) -> Bool
         func isAvailable(in context: IslandContext) -> Bool { available(context) }
         @MainActor func makeView(companionManager: CompanionManager, model: NotchHUDModel) -> AnyView { AnyView(EmptyView()) }

@@ -223,6 +223,8 @@ final class NotchHUDModel: ObservableObject {
     var componentSettings: IslandComponentSettings {
         didSet { recomputeSelection() }
     }
+    /// The built-ins and the extras the user turned on: the only ids the selector may use.
+    var enabledComponentIDs: Set<String> { IslandComponentSettings.enabledIDs(in: registry, settings: componentSettings) }
     /// What the island knows about the moment; set by the HUD manager.
     @Published private(set) var context: IslandContext = .idle
     /// The active component and the ones the capsule can flip to.
@@ -249,7 +251,7 @@ final class NotchHUDModel: ObservableObject {
     }
 
     private func recomputeSelection() {
-        let selection = IslandComponentSelector.select(registry: registry, order: componentSettings.order, defaultID: componentSettings.defaultID, override: componentOverride, context: context)
+        let selection = IslandComponentSelector.select(registry: registry, order: componentSettings.order, defaultID: componentSettings.defaultID, override: componentOverride, context: context, enabled: enabledComponentIDs)
         guard selection != self.selection else { return }
         let heightBefore = fullHeight
         self.selection = selection
@@ -364,7 +366,7 @@ final class NotchHUDModel: ObservableObject {
         let registry = registry ?? IslandComponentRegistry.all
         self.registry = registry
         self.componentSettings = componentSettings
-        self.selection = IslandComponentSelector.select(registry: registry, order: componentSettings.order, defaultID: componentSettings.defaultID, override: nil, context: .idle)
+        self.selection = IslandComponentSelector.select(registry: registry, order: componentSettings.order, defaultID: componentSettings.defaultID, override: nil, context: .idle, enabled: IslandComponentSettings.enabledIDs(in: registry, settings: componentSettings))
     }
 
     func setHovering(_ hovering: Bool) {
