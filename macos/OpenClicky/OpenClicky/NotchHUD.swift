@@ -709,6 +709,20 @@ final class NotchHUDManager {
     let systemStats = SystemStatsStore(sampler: MachSystemStatsSampler())
     /// One per app: what was dropped on the island, kept across launches.
     let shelf = ShelfStore(directory: ShelfStore.defaultDirectory, iconRenderer: ShelfStore.finderIcon)
+    /// One per app: the coding agents' session logs, polled only while the component is on.
+    let agentSessions = AgentSessionWatcher(roots: .standard)
+    /// One per app: Claude's plan limits, asked only while a Coding agents row is on screen.
+    let claudeUsage = ClaudeUsageStore.live()
+
+    /// The extras that need a background hand (the agents watcher, the usage store) follow
+    /// their switch in Settings.
+    private func syncOptionalComponents() {
+        let enabled = instances.first?.model.enabledComponentIDs
+            ?? IslandComponentSettings.enabledIDs(in: IslandComponentRegistry.all, settings: IslandComponentSettings(defaults: .standard))
+        let agentsOn = enabled.contains(IslandComponentRegistry.agentsID)
+        agentSessions.setEnabled(agentsOn)
+        claudeUsage.setEnabled(agentsOn)
+    }
     #if DEBUG
     /// The UI tour keeps a pinned panel open through clicks elsewhere on the desktop.
     var debugKeepsPanelsOpen = false
@@ -1064,6 +1078,7 @@ final class NotchHUDManager {
             }
             .store(in: &busyCancellables)
         observeIslandContext(of: companionManager)
+        syncOptionalComponents()
     }
 
     /// The moment the island's slot follows, from what the app already publishes. A landed take
@@ -1110,6 +1125,7 @@ final class NotchHUDManager {
                     if instance.model.glassLevel != glassLevel { instance.model.glassLevel = glassLevel }
                     instance.model.refreshComponentSettings()
                 }
+                self.syncOptionalComponents()
             }
             .store(in: &busyCancellables)
     }
@@ -1247,6 +1263,9 @@ extension NotchHUDManager {
         model.selectComponent(id)
     }
 
+    /// Sessions for the Coding agents shot without a terminal open.
+    func debugSetAgentSessions(_ sessions: [AgentSession]?) { agentSessions.debugSetSessions(sessions) }
+
     func debugResetPrimaryComponents() {
         guard let model = primaryInstance?.model else { return }
         model.debugEnabledComponentIDs = nil
@@ -1358,7 +1377,7 @@ struct NotchHUDView: View {
             switch expansion {
             case .peek:
                 // One line under the band: what the pointer is doing, and that a click opens the panel.
-                NotchPeekLine(model: model, companionManager: companionManager)
+                NotchPeekLine(model: model, companionManager: companionManager, agentSessions: companionManager.notchHUDManager.agentSessions)
                     .frame(width: model.peekWidth, height: model.peekHeight - model.topBandHeight)
                     .padding(.top, model.topBandHeight)
                     .allowsHitTesting(false)

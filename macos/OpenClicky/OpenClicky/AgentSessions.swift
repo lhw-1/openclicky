@@ -291,6 +291,9 @@ final class AgentSessionWatcher: ObservableObject {
 
     /// One pass over both trees.
     func refreshNow() {
+        #if DEBUG
+        if let debugSessions { sessions = debugSessions; return }
+        #endif
         let now = now()
         let cutoff = now.addingTimeInterval(-AgentSession.recentWindow)
         var found: [AgentSession] = []
@@ -310,6 +313,15 @@ final class AgentSessionWatcher: ObservableObject {
         }
         if found != sessions { sessions = found }
     }
+
+    #if DEBUG
+    /// The UI tour's sessions: shown in place of the logs until cleared with nil.
+    private var debugSessions: [AgentSession]?
+    func debugSetSessions(_ sessions: [AgentSession]?) {
+        debugSessions = sessions
+        if let sessions { self.sessions = sessions } else { refreshNow() }
+    }
+    #endif
 
     // MARK: Pieces
 

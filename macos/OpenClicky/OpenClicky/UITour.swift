@@ -199,6 +199,14 @@ final class UITour {
             hud.debugShowPrimaryComponent(IslandComponentRegistry.shelfID)
             await shoot("\(prefix)-04d-panel-shelf", window: hud.debugPrimaryWindow)
             hud.shelf.removeAll()
+            // Two coding sessions, one live, for the Coding agents component.
+            hud.debugSetAgentSessions([
+                AgentSession(id: "demo-claude", agent: .claudeCode, project: "openclicky", title: nil, activity: .tool(name: "Edit", detail: "Hero.swift"), lastEventAt: Date()),
+                AgentSession(id: "demo-codex", agent: .codex, project: "site", title: nil, activity: .idle, lastEventAt: Date().addingTimeInterval(-180)),
+            ])
+            hud.debugShowPrimaryComponent(IslandComponentRegistry.agentsID)
+            await shoot("\(prefix)-04e-panel-agents", window: hud.debugPrimaryWindow)
+            hud.debugSetAgentSessions(nil)
             hud.debugResetPrimaryComponents()
             hud.debugCloseAll()
 

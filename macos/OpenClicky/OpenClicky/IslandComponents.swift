@@ -83,12 +83,15 @@ protocol IslandComponent {
     var preferredHeight: CGFloat { get }
     /// An extra the user turns on in Settings; off, it is never available. Built-ins are not.
     var isOptional: Bool { get }
+    /// A line under the extra's switch in Settings (what it reads, what macOS may ask).
+    var settingsDetail: String? { get }
     func isAvailable(in context: IslandContext) -> Bool
     @MainActor func makeView(companionManager: CompanionManager, model: NotchHUDModel) -> AnyView
 }
 
 extension IslandComponent {
     var isOptional: Bool { false }
+    var settingsDetail: String? { nil }
 }
 
 /// The selector's answer: the active component and every one the capsule may flip to.
@@ -172,10 +175,11 @@ enum IslandComponentRegistry {
     static let agentID = "agent"
     static let systemID = "system"
     static let shelfID = "shelf"
+    static let agentsID = "agents"
 
     /// The built-ins first, then the extras (off until turned on in Settings).
     @MainActor static var all: [any IslandComponent] {
-        [ShortcutsIslandComponent(), TranscriptIslandComponent(), AgentIslandComponent(), SystemIslandComponent(), ShelfIslandComponent()]
+        [ShortcutsIslandComponent(), TranscriptIslandComponent(), AgentIslandComponent(), SystemIslandComponent(), ShelfIslandComponent(), AgentsIslandComponent()]
     }
 }
 

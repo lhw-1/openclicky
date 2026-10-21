@@ -120,4 +120,20 @@ struct AgentSessionsTests {
         watcher.setEnabled(false)
         #expect(!watcher.isPolling)
     }
+
+    @Test func rowsShowThreeSessionsAndCountTheRest() {
+        let now = Date()
+        let sessions = (0..<5).map { AgentSession(id: "\($0)", agent: $0 % 2 == 0 ? .claudeCode : .codex, project: "p\($0)", title: nil, activity: $0 < 2 ? .thinking : .idle, lastEventAt: now.addingTimeInterval(Double(-60 * $0))) }
+        let rows = AgentsIslandView.rows(for: sessions, now: now)
+        #expect(rows.count == 3)
+        #expect(rows[0].agent == "claude" && rows[0].isLive && rows[0].line == "thinking")
+        #expect(rows[2].line == "done 2 min ago")
+        #expect(AgentsIslandView.overflowText(count: 5) == "+2 more")
+        #expect(AgentsIslandView.overflowText(count: 3) == nil)
+    }
+
+    @Test func thePeekLineNamesALiveSessionWhenGivenOne() {
+        #expect(NotchPeekLine.peekText(status: "pointer follows you", agentLine: "claude · thinking") == "claude · thinking")
+        #expect(NotchPeekLine.peekText(status: "pointer follows you", agentLine: nil) == "pointer follows you")
+    }
 }

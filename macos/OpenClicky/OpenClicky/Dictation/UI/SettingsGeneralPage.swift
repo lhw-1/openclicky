@@ -294,9 +294,18 @@ private struct IslandComponentsRow: View {
         SettingsRow(title: "Island components", detail: "The extras the island can show. Each one is off until you turn it on.") {
             VStack(alignment: .trailing, spacing: 6) {
                 ForEach(IslandComponentRegistry.all.filter(\.isOptional), id: \.id) { component in
-                    HStack(spacing: 8) {
-                        Text(component.title)
-                            .font(SettingsLook.caption)
+                    HStack(alignment: .top, spacing: 8) {
+                        VStack(alignment: .trailing, spacing: 2) {
+                            Text(component.title)
+                                .font(SettingsLook.caption)
+                            if let detail = component.settingsDetail {
+                                Text(detail)
+                                    .font(.system(size: 10))
+                                    .foregroundColor(.secondary)
+                                    .multilineTextAlignment(.trailing)
+                                    .frame(maxWidth: 260, alignment: .trailing)
+                            }
+                        }
                         SettingsSwitch(isOn: Binding(
                             get: { enabledIDs.contains(component.id) },
                             set: { isOn in

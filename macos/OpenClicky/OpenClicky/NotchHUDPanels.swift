@@ -132,6 +132,17 @@ struct NotchPointerStatus: View {
 struct NotchPeekLine: View {
     @ObservedObject var model: NotchHUDModel
     @ObservedObject var companionManager: CompanionManager
+    @ObservedObject var agentSessions: AgentSessionWatcher
+
+    /// A live coding session, when the user turned that component on, outranks the pointer.
+    static func peekText(status: String, agentLine: String?) -> String {
+        agentLine ?? status
+    }
+
+    private var text: String {
+        let agentLine = model.enabledComponentIDs.contains(IslandComponentRegistry.agentsID) ? agentSessions.peekLine : nil
+        return Self.peekText(status: Self.shortStatusText(companionManager: companionManager), agentLine: agentLine)
+    }
 
     /// The status in fewer words, so it fits beside "click to open" on the peek's one line.
     static func shortStatusText(companionManager: CompanionManager) -> String {
@@ -147,7 +158,7 @@ struct NotchPeekLine: View {
     var body: some View {
         HStack(spacing: 6) {
             NotchPointerMark(isDimmed: companionManager.isCursorDocked)
-            Text(Self.shortStatusText(companionManager: companionManager))
+            Text(text)
                 .foregroundColor(DS.HUD.text2)
             Text("· click to open")
                 .foregroundColor(DS.HUD.text3)
