@@ -39,4 +39,42 @@ struct MediaPluginTests {
         #expect(MediaFormatter.clock(83.7) == "1:23")
         #expect(MediaFormatter.clock(3723) == "1:02:03")
     }
+
+    @MainActor @Test func theStoreFollowsTheSourceFetchesArtworkOncePerTrackAndForwardsCommands() async throws {
+        final class Source: MediaSourcing, @unchecked Sendable {
+            var reply: MediaSnapshot?
+            var commands: [MediaCommand] = []
+            var artworkLoads = 0
+            func readNowPlaying() async -> MediaSnapshot? { reply }
+            func perform(_ command: MediaCommand, on player: MediaPlayer) async { commands.append(command) }
+            func loadArtwork(for snapshot: MediaSnapshot) async -> NSImage? { artworkLoads += 1; return NSImage(size: NSSize(width: 1, height: 1)) }
+        }
+        let source = Source()
+        let now = self.now
+        let store = MediaStore(source: source, now: { now })
+        store.setEnabled(true)
+        #expect(store.isPolling && store.pollInterval == 5)
+        store.beginWatching()
+        #expect(store.pollInterval == 2)
+        await store.refreshNow()
+        #expect(store.snapshot == nil && store.artwork == nil && store.nowPlayingLine == nil)
+        source.reply = try #require(MediaSnapshot.parse(line(["playing", "Blue Hero", "The Band", "", "1", "200", "k1", ""]), player: .spotify, sampledAt: now))
+        await store.refreshNow()
+        await store.refreshNow()
+        #expect(store.isPlaying && store.nowPlayingLine == "♪ Blue Hero · The Band" && store.artwork != nil && source.artworkLoads == 1)
+        source.reply?.isPlaying = false
+        await store.refreshNow()
+        #expect(!store.isPlaying && store.nowPlayingLine == nil && source.artworkLoads == 1)
+        await store.playPause()
+        await store.seek(to: 0.5)
+        await store.next()
+        #expect(source.commands == [.playPause, .seek(100), .next])
+        source.reply = nil
+        await store.refreshNow()
+        #expect(store.snapshot == nil && store.artwork == nil)
+        store.endWatching()
+        #expect(store.pollInterval == 5)
+        store.setEnabled(false)
+        #expect(!store.isPolling && store.snapshot == nil)
+    }
 }
