@@ -62,4 +62,37 @@ struct ShelfStoreTests {
         try Data("not json".utf8).write(to: directory.appendingPathComponent("index.json"))
         #expect(ShelfStore(directory: directory).items.isEmpty)
     }
+
+    @Test func filesComeFirstThenALinkThenAnImageThenText() {
+        let pasteboard = NSPasteboard(name: NSPasteboard.Name("shelf-tests-\(UUID().uuidString)"))
+        pasteboard.clearContents()
+        pasteboard.writeObjects([URL(fileURLWithPath: "/tmp/a.txt") as NSURL, URL(fileURLWithPath: "/tmp/b.txt") as NSURL])
+        #expect(ShelfDropReader.drops(from: pasteboard) == [.file(URL(fileURLWithPath: "/tmp/a.txt")), .file(URL(fileURLWithPath: "/tmp/b.txt"))])
+        pasteboard.clearContents()
+        pasteboard.setString("https://example.com/page", forType: .string)
+        #expect(ShelfDropReader.drops(from: pasteboard) == [.link(URL(string: "https://example.com/page")!)])
+        pasteboard.clearContents()
+        pasteboard.setString("just words", forType: .string)
+        #expect(ShelfDropReader.drops(from: pasteboard) == [.text("just words")])
+        pasteboard.clearContents()
+        let image = NSImage(size: NSSize(width: 2, height: 2))
+        image.lockFocus()
+        NSColor.red.setFill()
+        NSRect(x: 0, y: 0, width: 2, height: 2).fill()
+        image.unlockFocus()
+        pasteboard.writeObjects([image])
+        let drops = ShelfDropReader.drops(from: pasteboard)
+        #expect(drops.count == 1)
+        if case .image(let data) = drops.first { #expect(!data.isEmpty) } else { Issue.record("not an image") }
+        pasteboard.clearContents()
+        #expect(ShelfDropReader.drops(from: pasteboard).isEmpty)
+    }
+
+    @Test func anItemWritesItselfBackToAPasteboard() {
+        let pasteboard = NSPasteboard(name: NSPasteboard.Name("shelf-tests-\(UUID().uuidString)"))
+        ShelfItem(id: UUID(), kind: .text("hi"), title: "hi", addedAt: Date(), iconPath: nil).write(to: pasteboard)
+        #expect(pasteboard.string(forType: .string) == "hi")
+        ShelfItem(id: UUID(), kind: .file(path: "/tmp/a.txt"), title: "a.txt", addedAt: Date(), iconPath: nil).write(to: pasteboard)
+        #expect(pasteboard.readObjects(forClasses: [NSURL.self], options: [.urlReadingFileURLsOnly: true]) as? [URL] == [URL(fileURLWithPath: "/tmp/a.txt")])
+    }
 }

@@ -157,3 +157,55 @@ final class ShelfStore: ObservableObject {
         try? data.write(to: indexURL, options: .atomic)
     }
 }
+
+// MARK: - The pasteboard
+
+/// Reads the drag pasteboard: files first, else a web link, else an image, else text.
+enum ShelfDropReader {
+    static let acceptedTypes: [NSPasteboard.PasteboardType] = [.fileURL, .URL, .string, .tiff, .png]
+
+    static func drops(from pasteboard: NSPasteboard) -> [ShelfDrop] {
+        if let files = pasteboard.readObjects(forClasses: [NSURL.self], options: [.urlReadingFileURLsOnly: true]) as? [URL], !files.isEmpty {
+            return files.map { .file($0) }
+        }
+        if let urls = pasteboard.readObjects(forClasses: [NSURL.self], options: [:]) as? [URL], let link = urls.first(where: { !$0.isFileURL && $0.host != nil }) {
+            return [.link(link)]
+        }
+        if let string = pasteboard.string(forType: .string)?.trimmingCharacters(in: .whitespacesAndNewlines), !string.isEmpty {
+            if let link = webLink(in: string) { return [.link(link)] }
+            return [.text(string)]
+        }
+        if let image = NSImage(pasteboard: pasteboard), let data = pngData(of: image) {
+            return [.image(data)]
+        }
+        return []
+    }
+
+    /// A string that is one http(s) URL with a host; anything else is a note.
+    private static func webLink(in string: String) -> URL? {
+        guard !string.contains(where: \.isWhitespace), let url = URL(string: string), let scheme = url.scheme?.lowercased(), scheme == "http" || scheme == "https", url.host != nil else { return nil }
+        return url
+    }
+
+    private static func pngData(of image: NSImage) -> Data? {
+        guard let tiff = image.tiffRepresentation, let bitmap = NSBitmapImageRep(data: tiff) else { return nil }
+        return bitmap.representation(using: .png, properties: [:])
+    }
+}
+
+extension ShelfItem {
+    /// What a tile hands over: the file's URL, the note, the link, or the saved image's file URL.
+    var pasteboardWriter: NSPasteboardWriting {
+        switch kind {
+        case .file(let path), .image(let path): return URL(fileURLWithPath: path) as NSURL
+        case .text(let text): return text as NSString
+        case .link(let url): return url as NSURL
+        }
+    }
+
+    /// A click on a tile: the item replaces what is on the pasteboard.
+    func write(to pasteboard: NSPasteboard) {
+        pasteboard.clearContents()
+        pasteboard.writeObjects([pasteboardWriter])
+    }
+}
