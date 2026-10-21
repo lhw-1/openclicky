@@ -707,6 +707,8 @@ final class NotchHUDManager {
     private var instances: [Instance] = []
     /// One per app, sampling only while a System tile row is on screen.
     let systemStats = SystemStatsStore(sampler: MachSystemStatsSampler())
+    /// One per app: what was dropped on the island, kept across launches.
+    let shelf = ShelfStore(directory: ShelfStore.defaultDirectory, iconRenderer: ShelfStore.finderIcon)
     #if DEBUG
     /// The UI tour keeps a pinned panel open through clicks elsewhere on the desktop.
     var debugKeepsPanelsOpen = false
@@ -1452,6 +1454,8 @@ struct NotchHUDView: View {
         .animation(model.isSettlingGracefully ? .spring(response: 1.3, dampingFraction: 0.92) : (model.reduceMotion ? IslandMotion.fade : .spring(response: 0.42, dampingFraction: 0.84)), value: expansion)
         .animation(.easeInOut(duration: 0.25), value: companionManager.isCursorDocked)
         .animation(.easeInOut(duration: 0.2), value: companionManager.voiceState)
+        // The whole island (the notch, the peek, the open panel) takes drops for the shelf.
+        .onDrop(of: IslandDropDelegate.acceptedTypes, delegate: IslandDropDelegate(model: model, shelf: companionManager.notchHUDManager.shelf))
     }
 }
 

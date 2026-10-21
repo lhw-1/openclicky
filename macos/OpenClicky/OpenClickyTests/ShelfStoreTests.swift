@@ -95,4 +95,9 @@ struct ShelfStoreTests {
         ShelfItem(id: UUID(), kind: .file(path: "/tmp/a.txt"), title: "a.txt", addedAt: Date(), iconPath: nil).write(to: pasteboard)
         #expect(pasteboard.readObjects(forClasses: [NSURL.self], options: [.urlReadingFileURLsOnly: true]) as? [URL] == [URL(fileURLWithPath: "/tmp/a.txt")])
     }
+
+    @Test func theIslandTakesDropsOnlyWhenTheShelfIsOn() {
+        #expect(!IslandDropDelegate.accepts(enabled: ["shortcuts", "system"]))
+        #expect(IslandDropDelegate.accepts(enabled: ["shortcuts", "shelf"]))
+    }
 }
