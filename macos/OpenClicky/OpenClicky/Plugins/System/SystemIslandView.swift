@@ -15,6 +15,7 @@ struct SystemIslandComponent: IslandComponent {
     let symbolName = "gauge.with.dots.needle.33percent"
     let preferredHeight: CGFloat = 84
     let isPlugin = true
+    let settingsDetail: String? = "CPU, memory, disk and battery at a glance, sampled only while the island shows them."
     func isAvailable(in context: IslandContext) -> Bool { true }
     @MainActor func makeView(companionManager: CompanionManager, model: NotchHUDModel) -> AnyView {
         AnyView(SystemIslandView(store: companionManager.notchHUDManager.systemStats))

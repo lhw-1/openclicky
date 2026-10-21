@@ -102,6 +102,7 @@ struct SettingsCatalog {
         case .clicky: return clickyItems()
         case .voice: return voiceItems()
         case .orb: return orbItems()
+        case .plugins: return pluginsItems()
         case .keyboard: return keyboardItems()
         case .keys: return keysItems()
         case .account: return accountItems()

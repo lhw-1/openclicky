@@ -17,6 +17,7 @@ struct ShelfIslandComponent: IslandComponent {
     let symbolName = "tray"
     let preferredHeight: CGFloat = 84
     let isPlugin = true
+    let settingsDetail: String? = "Drop files, text or links on the island to keep them handy. Drag a tile out, or click it to copy."
     func isAvailable(in context: IslandContext) -> Bool { true }
     @MainActor func makeView(companionManager: CompanionManager, model: NotchHUDModel) -> AnyView {
         AnyView(ShelfIslandView(shelf: companionManager.notchHUDManager.shelf, model: model))
