@@ -140,7 +140,7 @@ struct NotchPeekLine: View {
     }
 
     private var text: String {
-        let agentLine = model.enabledComponentIDs.contains(IslandComponentRegistry.agentsID) ? agentSessions.peekLine : nil
+        let agentLine = model.enabledComponentIDs.contains(IslandPluginRegistry.agentsID) ? agentSessions.peekLine : nil
         return Self.peekText(status: Self.shortStatusText(companionManager: companionManager), agentLine: agentLine)
     }
 

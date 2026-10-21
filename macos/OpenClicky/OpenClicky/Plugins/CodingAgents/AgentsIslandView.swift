@@ -8,13 +8,13 @@
 
 import SwiftUI
 
-/// An extra the user turns on in Settings: the coding agents running on this Mac.
+/// A plugin: the coding agents running on this Mac.
 struct AgentsIslandComponent: IslandComponent {
-    let id = IslandComponentRegistry.agentsID
+    let id = IslandPluginRegistry.agentsID
     let title = "Coding agents"
     let symbolName = "terminal"
     let preferredHeight: CGFloat = 76
-    let isOptional = true
+    let isPlugin = true
     let settingsDetail: String? = "Follows Claude Code and Codex sessions on this Mac from their own logs. macOS asks once to let OpenClicky read Claude Code's sign-in for the plan limits."
     func isAvailable(in context: IslandContext) -> Bool { true }
     @MainActor func makeView(companionManager: CompanionManager, model: NotchHUDModel) -> AnyView {

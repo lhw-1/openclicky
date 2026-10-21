@@ -10,13 +10,13 @@
 import AppKit
 import SwiftUI
 
-/// An extra the user turns on in Settings: drop things on the island, reach for them later.
+/// A plugin: drop things on the island, reach for them later.
 struct ShelfIslandComponent: IslandComponent {
-    let id = IslandComponentRegistry.shelfID
+    let id = IslandPluginRegistry.shelfID
     let title = "Shelf"
     let symbolName = "tray"
     let preferredHeight: CGFloat = 84
-    let isOptional = true
+    let isPlugin = true
     func isAvailable(in context: IslandContext) -> Bool { true }
     @MainActor func makeView(companionManager: CompanionManager, model: NotchHUDModel) -> AnyView {
         AnyView(ShelfIslandView(shelf: companionManager.notchHUDManager.shelf, model: model))

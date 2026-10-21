@@ -192,11 +192,11 @@ final class UITour {
             await shoot("\(prefix)-04b-panel-agent", window: hud.debugPrimaryWindow)
             hud.debugSetPrimaryContext(.idle)
             // An extra the user can turn on: the System rings.
-            hud.debugShowPrimaryComponent(IslandComponentRegistry.systemID)
+            hud.debugShowPrimaryComponent(IslandPluginRegistry.systemID)
             await shoot("\(prefix)-04c-panel-system", window: hud.debugPrimaryWindow)
             // The shelf with two things dropped on it (the tour runs under a throwaway home).
             hud.shelf.add([.text("remember the milk"), .link(URL(string: "https://example.com")!)])
-            hud.debugShowPrimaryComponent(IslandComponentRegistry.shelfID)
+            hud.debugShowPrimaryComponent(IslandPluginRegistry.shelfID)
             await shoot("\(prefix)-04d-panel-shelf", window: hud.debugPrimaryWindow)
             hud.shelf.removeAll()
             // Two coding sessions, one live, for the Coding agents component.
@@ -204,7 +204,7 @@ final class UITour {
                 AgentSession(id: "demo-claude", agent: .claudeCode, project: "openclicky", title: nil, activity: .tool(name: "Edit", detail: "Hero.swift"), lastEventAt: Date()),
                 AgentSession(id: "demo-codex", agent: .codex, project: "site", title: nil, activity: .idle, lastEventAt: Date().addingTimeInterval(-180)),
             ])
-            hud.debugShowPrimaryComponent(IslandComponentRegistry.agentsID)
+            hud.debugShowPrimaryComponent(IslandPluginRegistry.agentsID)
             await shoot("\(prefix)-04e-panel-agents", window: hud.debugPrimaryWindow)
             hud.debugSetAgentSessions(nil)
             hud.debugResetPrimaryComponents()

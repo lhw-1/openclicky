@@ -8,13 +8,13 @@
 
 import SwiftUI
 
-/// An extra the user turns on in Settings: a glance at the Mac.
+/// A plugin: a glance at the Mac.
 struct SystemIslandComponent: IslandComponent {
-    let id = IslandComponentRegistry.systemID
+    let id = IslandPluginRegistry.systemID
     let title = "System"
     let symbolName = "gauge.with.dots.needle.33percent"
-    let preferredHeight: CGFloat = 70
-    let isOptional = true
+    let preferredHeight: CGFloat = 84
+    let isPlugin = true
     func isAvailable(in context: IslandContext) -> Bool { true }
     @MainActor func makeView(companionManager: CompanionManager, model: NotchHUDModel) -> AnyView {
         AnyView(SystemIslandView(store: companionManager.notchHUDManager.systemStats))
@@ -34,14 +34,13 @@ struct SystemTile: Equatable, Identifiable {
 
 struct SystemIslandView: View {
     @ObservedObject var store: SystemStatsStore
-    @State private var hoveredID: String?
 
     /// CPU, memory and disk always; the battery when the Mac has one.
     static func tiles(for snapshot: SystemStatsSnapshot) -> [SystemTile] {
         let memoryFraction = snapshot.memoryTotal > 0 ? Double(snapshot.memoryUsed) / Double(snapshot.memoryTotal) : 0
         let diskFraction = snapshot.diskTotal > 0 ? 1 - Double(snapshot.diskFree) / Double(snapshot.diskTotal) : 0
         var tiles = [
-            SystemTile(id: "cpu", caption: "cpu", fraction: snapshot.cpu, short: SystemStatsFormatter.percent(snapshot.cpu), long: SystemStatsFormatter.percent(snapshot.cpu), isWarning: SystemStatsTone.isWarning(fraction: snapshot.cpu)),
+            SystemTile(id: "cpu", caption: "cpu", fraction: snapshot.cpu, short: SystemStatsFormatter.percent(snapshot.cpu), long: "\(SystemStatsFormatter.percent(snapshot.cpu)) busy", isWarning: SystemStatsTone.isWarning(fraction: snapshot.cpu)),
             SystemTile(id: "memory", caption: "memory", fraction: memoryFraction, short: SystemStatsFormatter.percent(memoryFraction), long: SystemStatsFormatter.memory(used: snapshot.memoryUsed, total: snapshot.memoryTotal), isWarning: SystemStatsTone.isWarning(fraction: memoryFraction)),
             SystemTile(id: "disk", caption: "disk", fraction: diskFraction, short: SystemStatsFormatter.percent(diskFraction), long: SystemStatsFormatter.disk(free: snapshot.diskFree), isWarning: SystemStatsTone.isWarning(fraction: diskFraction)),
         ]
@@ -54,10 +53,7 @@ struct SystemIslandView: View {
     var body: some View {
         HStack(spacing: 12) {
             ForEach(Self.tiles(for: store.snapshot)) { tile in
-                SystemTileView(tile: tile, isHovered: hoveredID == tile.id)
-                    .onHover { hovering in
-                        if hovering { hoveredID = tile.id } else if hoveredID == tile.id { hoveredID = nil }
-                    }
+                SystemTileView(tile: tile)
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -66,27 +62,30 @@ struct SystemIslandView: View {
     }
 }
 
-/// One tile: the ring with its figure inside and the caption (the long figure while hovered).
+/// One tile: the ring with its figure inside, the name, and the long figure under it.
 private struct SystemTileView: View {
     let tile: SystemTile
-    let isHovered: Bool
 
     private var ringColor: Color { tile.isWarning ? DS.Colors.warning : DS.HUD.text }
     private var fill: CGFloat { CGFloat(min(max(tile.fraction, 0), 1)) }
 
     var body: some View {
-        VStack(spacing: 5) {
+        // The name and the figure sit on the glass band, so both read in white.
+        VStack(spacing: 4) {
             ring
                 .frame(width: 28, height: 28)
-            Text(isHovered ? tile.long : tile.caption)
+            Text(tile.caption)
+                .font(.system(size: 10, weight: .semibold))
+                .foregroundColor(DS.HUD.text)
+                .lineLimit(1)
+            Text(tile.long)
                 .font(.system(size: 10))
-                .foregroundColor(DS.HUD.text3)
+                .foregroundColor(Color.white.opacity(0.8))
                 .lineLimit(1)
                 .minimumScaleFactor(0.8)
         }
-        .frame(width: 56)
+        .frame(width: 72)
         .contentShape(Rectangle())
-        .help(tile.long)
         .accessibilityElement(children: .ignore)
         .accessibilityLabel("\(tile.caption) \(tile.long)")
     }

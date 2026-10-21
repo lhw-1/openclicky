@@ -16,7 +16,7 @@ struct IslandComponentSelectorTests {
         var title: String { id }
         var symbolName: String { "circle" }
         var preferredHeight: CGFloat { 45 }
-        var isOptional = false
+        var isPlugin = false
         let available: (IslandContext) -> Bool
         func isAvailable(in context: IslandContext) -> Bool { available(context) }
         @MainActor func makeView(companionManager: CompanionManager, model: NotchHUDModel) -> AnyView { AnyView(EmptyView()) }
@@ -73,11 +73,12 @@ struct IslandComponentSelectorTests {
     }
 
     @MainActor
-    @Test func theRealRegistryListsTheBuiltInsThenTheExtras() {
+    @Test func theRealRegistryListsTheBuiltInsThenThePlugins() {
         let ids = IslandComponentRegistry.all.map(\.id)
         #expect(ids == ["shortcuts", "transcript", "agent", "system", "shelf", "agents"])
-        #expect(IslandComponentRegistry.all.map(\.preferredHeight) == [45, 52, 52, 70, 84, 76])
-        #expect(IslandComponentRegistry.all.map(\.isOptional) == [false, false, false, true, true, true])
+        #expect(IslandComponentRegistry.all.map(\.preferredHeight) == [45, 52, 52, 84, 84, 76])
+        #expect(IslandComponentRegistry.all.map(\.isPlugin) == [false, false, false, true, true, true])
+        #expect(IslandPluginRegistry.all.map(\.id) == ["system", "shelf", "agents"])
         #expect(IslandComponentRegistry.all.map { $0.settingsDetail != nil } == [false, false, false, false, false, true])
     }
 
@@ -138,20 +139,20 @@ struct IslandComponentSelectorTests {
         #expect(on == IslandComponentSelection(active: "system", available: ["shortcuts", "system"]))
     }
 
-    @Test func optionalComponentsAreOffUntilTurnedOn() {
+    @Test func pluginsAreOffUntilTurnedOn() {
         let defaults = UserDefaults(suiteName: "island-switchboard-tests")!
         defaults.removePersistentDomain(forName: "island-switchboard-tests")
         var settings = IslandComponentSettings(defaults: defaults)
         struct Optional: IslandComponent {
-            let id = "system"; let title = "System"; let symbolName = "gauge"; let preferredHeight: CGFloat = 70; let isOptional = true
+            let id = "system"; let title = "System"; let symbolName = "gauge"; let preferredHeight: CGFloat = 70; let isPlugin = true
             func isAvailable(in context: IslandContext) -> Bool { true }
             @MainActor func makeView(companionManager: CompanionManager, model: NotchHUDModel) -> AnyView { AnyView(EmptyView()) }
         }
         let registry: [any IslandComponent] = [Stub(id: "shortcuts") { _ in true }, Optional()]
-        #expect(settings.enabledIDs == [])
+        #expect(settings.enabledPlugins == [])
         #expect(settings.isEnabled("shortcuts", in: registry))
         #expect(!settings.isEnabled("system", in: registry))
-        settings.enabledIDs = ["system"]
+        settings.enabledPlugins = ["system"]
         #expect(settings.isEnabled("system", in: registry))
         #expect(IslandComponentSettings.enabledIDs(in: registry, settings: settings) == ["shortcuts", "system"])
     }
@@ -160,10 +161,10 @@ struct IslandComponentSelectorTests {
         let defaults = UserDefaults(suiteName: "island-settings-default-fallback")!
         defaults.removePersistentDomain(forName: "island-settings-default-fallback")
         var settings = IslandComponentSettings(defaults: defaults)
-        let registry: [any IslandComponent] = [Stub(id: "shortcuts") { _ in true }, Stub(id: "system", isOptional: true) { _ in true }]
+        let registry: [any IslandComponent] = [Stub(id: "shortcuts") { _ in true }, Stub(id: "system", isPlugin: true) { _ in true }]
         settings.defaultID = "system"
         #expect(settings.resolvedDefaultID(in: registry) == "shortcuts")
-        settings.enabledIDs = ["system"]
+        settings.enabledPlugins = ["system"]
         #expect(settings.resolvedDefaultID(in: registry) == "system")
     }
 

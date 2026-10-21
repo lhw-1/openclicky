@@ -20,7 +20,7 @@ struct IslandDropDelegate: DropDelegate {
 
     /// Drops land only when the shelf is one of the components the user turned on.
     static func accepts(enabled: Set<String>) -> Bool {
-        enabled.contains(IslandComponentRegistry.shelfID)
+        enabled.contains(IslandPluginRegistry.shelfID)
     }
 
     /// And never the island's own tiles (any display): they carry a marker type.

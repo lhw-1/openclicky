@@ -42,10 +42,10 @@ extension SettingsCatalog {
                 keywords: ["island", "component", "panel", "shortcuts", "transcript", "agent", "default", "slot"],
                 view: AnyView(IslandDefaultComponentRow())),
             SettingsItem(
-                id: "general.islandComponents", page: .general, section: "",
-                title: "Island components", detail: "The extras the island can show. Each one is off until you turn it on.",
-                keywords: ["island", "component", "extra", "extras", "system", "stats", "cpu", "memory", "battery", "shelf", "agents", "toggle", "switch"],
-                view: AnyView(IslandComponentsRow())),
+                id: "general.islandPlugins", page: .general, section: "",
+                title: "Plugins", detail: "Optional extras for the island, built for the Mac. Each one is off until you turn it on.",
+                keywords: ["plugin", "plugins", "island", "extra", "extras", "system", "stats", "cpu", "memory", "battery", "shelf", "agents", "claude", "codex", "toggle", "switch"],
+                view: AnyView(IslandPluginsRow())),
             SettingsItem(
                 id: "general.islandOrder", page: .general, section: "",
                 title: "Component order", detail: "The order of the island's capsule when there is more than one to flip to.",
@@ -286,14 +286,14 @@ private struct IslandDefaultComponentRow: View {
 }
 
 /// The capsule's order: one row per component with up and down arrows.
-/// One switch per extra the island can show; the built-ins are always on and not listed.
-private struct IslandComponentsRow: View {
-    @State private var enabledIDs = IslandComponentSettings(defaults: .standard).enabledIDs
+/// One switch per plugin; the built-ins are always on and not listed.
+private struct IslandPluginsRow: View {
+    @State private var enabledPlugins = IslandComponentSettings(defaults: .standard).enabledPlugins
 
     var body: some View {
-        SettingsRow(title: "Island components", detail: "The extras the island can show. Each one is off until you turn it on.") {
+        SettingsRow(title: "Plugins", detail: "Optional extras for the island, built for the Mac. Each one is off until you turn it on.") {
             VStack(alignment: .trailing, spacing: 6) {
-                ForEach(IslandComponentRegistry.all.filter(\.isOptional), id: \.id) { component in
+                ForEach(IslandPluginRegistry.all, id: \.id) { component in
                     HStack(alignment: .top, spacing: 8) {
                         VStack(alignment: .trailing, spacing: 2) {
                             Text(component.title)
@@ -307,12 +307,12 @@ private struct IslandComponentsRow: View {
                             }
                         }
                         SettingsSwitch(isOn: Binding(
-                            get: { enabledIDs.contains(component.id) },
+                            get: { enabledPlugins.contains(component.id) },
                             set: { isOn in
-                                enabledIDs.removeAll { $0 == component.id }
-                                if isOn { enabledIDs.append(component.id) }
+                                enabledPlugins.removeAll { $0 == component.id }
+                                if isOn { enabledPlugins.append(component.id) }
                                 var settings = IslandComponentSettings(defaults: .standard)
-                                settings.enabledIDs = enabledIDs
+                                settings.enabledPlugins = enabledPlugins
                             }
                         ))
                         .accessibilityLabel(component.title)
@@ -333,7 +333,7 @@ private struct IslandComponentOrderRow: View {
         return stored + known.filter { !stored.contains($0) }
     }
 
-    @State private var enabledIDs = IslandComponentSettings(defaults: .standard).enabledIDs
+    @State private var enabledPlugins = IslandComponentSettings(defaults: .standard).enabledPlugins
 
     var body: some View {
         SettingsRow(title: "Component order", detail: "The order of the island's capsule when there is more than one to flip to.") {
@@ -342,7 +342,7 @@ private struct IslandComponentOrderRow: View {
                     HStack(spacing: 6) {
                         Text(IslandComponentRegistry.all.first { $0.id == id }?.title ?? id)
                             .font(SettingsLook.caption)
-                            .opacity(IslandComponentRegistry.all.first { $0.id == id }?.isOptional == true && !enabledIDs.contains(id) ? 0.5 : 1)
+                            .opacity(IslandComponentRegistry.all.first { $0.id == id }?.isPlugin == true && !enabledPlugins.contains(id) ? 0.5 : 1)
                         Button(action: { move(index, by: -1) }) { Image(systemName: "chevron.up") }
                             .disabled(index == 0)
                         Button(action: { move(index, by: 1) }) { Image(systemName: "chevron.down") }
@@ -354,8 +354,8 @@ private struct IslandComponentOrderRow: View {
             }
         }
         .onReceive(NotificationCenter.default.publisher(for: UserDefaults.didChangeNotification).receive(on: DispatchQueue.main)) { _ in
-            let next = IslandComponentSettings(defaults: .standard).enabledIDs
-            if next != enabledIDs { enabledIDs = next }
+            let next = IslandComponentSettings(defaults: .standard).enabledPlugins
+            if next != enabledPlugins { enabledPlugins = next }
         }
     }
 

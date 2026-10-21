@@ -469,7 +469,7 @@ final class NotchHUDModel: ObservableObject {
     private var holdAfterDropTask: Task<Void, Never>?
 
     func setDragHovering(_ hovering: Bool) {
-        guard !hovering || enabledComponentIDs.contains(IslandComponentRegistry.shelfID) else { return }
+        guard !hovering || enabledComponentIDs.contains(IslandPluginRegistry.shelfID) else { return }
         guard isDragHovering != hovering else { return }
         isDragHovering = hovering
         // The hover poll lags a drag by a tick; a drag that just left must not read as a hover.
@@ -493,7 +493,7 @@ final class NotchHUDModel: ObservableObject {
     func holdOpenAfterDrop() {
         holdAfterDropTask?.cancel()
         isHoldingAfterDrop = true
-        componentOverride = IslandComponentRegistry.shelfID
+        componentOverride = IslandPluginRegistry.shelfID
         recomputeSelection()
         reconcile(immediately: true)
         holdAfterDropTask = Task { [weak self] in
@@ -729,7 +729,7 @@ final class NotchHUDManager {
     private func syncOptionalComponents() {
         let enabled = instances.first?.model.enabledComponentIDs
             ?? IslandComponentSettings.enabledIDs(in: IslandComponentRegistry.all, settings: IslandComponentSettings(defaults: .standard))
-        let agentsOn = enabled.contains(IslandComponentRegistry.agentsID)
+        let agentsOn = enabled.contains(IslandPluginRegistry.agentsID)
         agentSessions.setEnabled(agentsOn)
         claudeUsage.setEnabled(agentsOn)
     }

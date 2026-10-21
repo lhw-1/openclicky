@@ -37,7 +37,7 @@ struct IslandContext: Equatable {
     /// outranks everything), the transcript while a take is live or just landed, the agent while
     /// one works or its result card is up, else nothing.
     var contextualKey: String? {
-        if isDragHovering { return IslandComponentRegistry.shelfID }
+        if isDragHovering { return IslandPluginRegistry.shelfID }
         if isTakeLive { return IslandComponentRegistry.transcriptID }
         if let takeLandedAt, now.timeIntervalSince(takeLandedAt) < Self.landedTranscriptWindow { return IslandComponentRegistry.transcriptID }
         if agentActivityText != nil || isResultCardUp { return IslandComponentRegistry.agentID }
@@ -81,16 +81,17 @@ protocol IslandComponent {
     var symbolName: String { get }
     /// The slot's height for this component in the notch placement.
     var preferredHeight: CGFloat { get }
-    /// An extra the user turns on in Settings; off, it is never available. Built-ins are not.
-    var isOptional: Bool { get }
-    /// A line under the extra's switch in Settings (what it reads, what macOS may ask).
+    /// A plugin: an optional extra, built for the Mac, that the user turns on in Settings; off,
+    /// it is never available. The built-ins are not plugins. Plugins live under `Plugins/`.
+    var isPlugin: Bool { get }
+    /// A line under the plugin's switch in Settings (what it reads, what macOS may ask).
     var settingsDetail: String? { get }
     func isAvailable(in context: IslandContext) -> Bool
     @MainActor func makeView(companionManager: CompanionManager, model: NotchHUDModel) -> AnyView
 }
 
 extension IslandComponent {
-    var isOptional: Bool { false }
+    var isPlugin: Bool { false }
     var settingsDetail: String? { nil }
 }
 
@@ -123,11 +124,11 @@ enum IslandComponentSelector {
     }
 }
 
-/// The user's default component, order and switched-on extras, in UserDefaults.
+/// The user's default component, order and switched-on plugins, in UserDefaults.
 struct IslandComponentSettings {
     static let defaultKey = "openclicky.island.defaultComponent"
     static let orderKey = "openclicky.island.componentOrder"
-    static let enabledKey = "openclicky.island.enabledComponents"
+    static let pluginsKey = "openclicky.island.plugins"
 
     private let defaults: UserDefaults
 
@@ -145,16 +146,16 @@ struct IslandComponentSettings {
         set { defaults.set(newValue, forKey: Self.orderKey) }
     }
 
-    /// The optional components the user turned on; unset means none.
-    var enabledIDs: [String] {
-        get { defaults.stringArray(forKey: Self.enabledKey) ?? [] }
-        set { defaults.set(newValue, forKey: Self.enabledKey) }
+    /// The plugins the user turned on; unset means none.
+    var enabledPlugins: [String] {
+        get { defaults.stringArray(forKey: Self.pluginsKey) ?? [] }
+        set { defaults.set(newValue, forKey: Self.pluginsKey) }
     }
 
-    /// A built-in is always on; an extra only when the user turned it on. Unknown ids are off.
+    /// A built-in is always on; a plugin only when the user turned it on. Unknown ids are off.
     func isEnabled(_ id: String, in registry: [any IslandComponent]) -> Bool {
         guard let component = registry.first(where: { $0.id == id }) else { return false }
-        return !component.isOptional || enabledIDs.contains(id)
+        return !component.isPlugin || enabledPlugins.contains(id)
     }
 
     /// The stored default when it is on; the shortcuts when it has been switched off since.
@@ -168,19 +169,18 @@ struct IslandComponentSettings {
     }
 }
 
-/// The built-in components, in registration order.
+/// The built-in components, in registration order, then the plugins (`IslandPluginRegistry`).
 enum IslandComponentRegistry {
     static let shortcutsID = "shortcuts"
     static let transcriptID = "transcript"
     static let agentID = "agent"
-    static let systemID = "system"
-    static let shelfID = "shelf"
-    static let agentsID = "agents"
 
-    /// The built-ins first, then the extras (off until turned on in Settings).
-    @MainActor static var all: [any IslandComponent] {
-        [ShortcutsIslandComponent(), TranscriptIslandComponent(), AgentIslandComponent(), SystemIslandComponent(), ShelfIslandComponent(), AgentsIslandComponent()]
+    @MainActor static var builtIns: [any IslandComponent] {
+        [ShortcutsIslandComponent(), TranscriptIslandComponent(), AgentIslandComponent()]
     }
+
+    /// The built-ins first, then the plugins (off until turned on in Settings).
+    @MainActor static var all: [any IslandComponent] { builtIns + IslandPluginRegistry.all }
 }
 
 /// Today's body row: dock or release the pointer, (i), and the shortcuts (or the engine warning).

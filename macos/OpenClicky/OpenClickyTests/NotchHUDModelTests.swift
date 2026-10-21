@@ -134,14 +134,14 @@ struct NotchHUDModelTests {
         #expect(!model.isPressed)
     }
 
-    @Test func anOptionalComponentJoinsTheSlotOnlyWhenTurnedOn() {
+    @Test func aPluginJoinsTheSlotOnlyWhenTurnedOn() {
         let defaults = UserDefaults(suiteName: "island-model-switchboard")!
         defaults.removePersistentDomain(forName: "island-model-switchboard")
-        let registry = IslandComponentSelectorTests().registry + [IslandComponentSelectorTests.Stub(id: "system", isOptional: true) { _ in true }]
+        let registry = IslandComponentSelectorTests().registry + [IslandComponentSelectorTests.Stub(id: "system", isPlugin: true) { _ in true }]
         let model = NotchHUDModel(geometry: notchModel().geometry, registry: registry, componentSettings: IslandComponentSettings(defaults: defaults))
         #expect(model.selection.available == ["shortcuts"])
         var settings = IslandComponentSettings(defaults: defaults)
-        settings.enabledIDs = ["system"]
+        settings.enabledPlugins = ["system"]
         model.componentSettings = settings
         #expect(model.selection.available == ["shortcuts", "system"])
         #expect(model.showsCapsule)
@@ -150,12 +150,12 @@ struct NotchHUDModelTests {
     @Test func aDragOverTheIslandUnfoldsItOnlyWhenTheShelfIsOn() async throws {
         let defaults = UserDefaults(suiteName: "island-model-shelf")!
         defaults.removePersistentDomain(forName: "island-model-shelf")
-        let registry = IslandComponentSelectorTests().registry + [IslandComponentSelectorTests.Stub(id: "shelf", isOptional: true) { _ in true }]
+        let registry = IslandComponentSelectorTests().registry + [IslandComponentSelectorTests.Stub(id: "shelf", isPlugin: true) { _ in true }]
         let model = NotchHUDModel(geometry: notchModel().geometry, registry: registry, componentSettings: IslandComponentSettings(defaults: defaults))
         model.setDragHovering(true)
         #expect(model.expansion == .collapsed)
         var settings = IslandComponentSettings(defaults: defaults)
-        settings.enabledIDs = ["shelf"]
+        settings.enabledPlugins = ["shelf"]
         model.componentSettings = settings
         model.setDragHovering(true)
         #expect(model.expansion == .full)
@@ -177,9 +177,9 @@ struct NotchHUDModelTests {
     @Test func aDropKeepsTheShelfInFrontAndTheIslandOpenWhileThePointerStays() async throws {
         let defaults = UserDefaults(suiteName: "island-model-shelf-hold")!
         defaults.removePersistentDomain(forName: "island-model-shelf-hold")
-        let registry = IslandComponentSelectorTests().registry + [IslandComponentSelectorTests.Stub(id: "shelf", isOptional: true) { _ in true }]
+        let registry = IslandComponentSelectorTests().registry + [IslandComponentSelectorTests.Stub(id: "shelf", isPlugin: true) { _ in true }]
         var settings = IslandComponentSettings(defaults: defaults)
-        settings.enabledIDs = ["shelf"]
+        settings.enabledPlugins = ["shelf"]
         let model = NotchHUDModel(geometry: notchModel().geometry, registry: registry, componentSettings: settings)
         model.setDragHovering(true)
         model.setDragHovering(false)
