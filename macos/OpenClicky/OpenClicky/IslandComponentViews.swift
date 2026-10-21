@@ -227,10 +227,12 @@ struct IslandIndeterminateBar: View {
 
 // MARK: - Capsule
 
-/// The row under the open panel: one round button per component the slot can show right now,
-/// the active one on a lighter disc. A click shows that component until the moment changes.
+/// One round button per component the slot can show right now, the active one on a lighter
+/// disc. A click shows that component until the moment changes. Lives in the band's left side
+/// (`inBand`), on the band's control grey; the free-standing form is the darker capsule.
 struct IslandNavigationCapsule: View {
     @ObservedObject var model: NotchHUDModel
+    var inBand = false
 
     private var components: [any IslandComponent] {
         model.selection.available.compactMap { id in model.registry.first { $0.id == id } }
@@ -244,7 +246,7 @@ struct IslandNavigationCapsule: View {
                     Image(systemName: component.symbolName)
                         .font(.system(size: 11, weight: .semibold))
                         .foregroundColor(isActive ? DS.HUD.text : DS.HUD.text2)
-                        .frame(width: 24, height: 24)
+                        .frame(width: inBand ? 20 : 24, height: inBand ? 20 : 24)
                         .background(Circle().fill(isActive ? DS.HUD.capsuleActive : Color.clear))
                 }
                 .buttonStyle(.plain)
@@ -254,8 +256,8 @@ struct IslandNavigationCapsule: View {
                 .accessibilityAddTraits(isActive ? .isSelected : [])
             }
         }
-        .padding(.horizontal, 4)
-        .frame(height: 28)
-        .background(Capsule().fill(DS.HUD.capsule))
+        .padding(.horizontal, inBand ? 3 : 4)
+        .frame(height: inBand ? DS.HUD.pillHeight : 28)
+        .background(Capsule().fill(inBand ? DS.HUD.bandControl : DS.HUD.capsule))
     }
 }

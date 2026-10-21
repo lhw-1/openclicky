@@ -99,7 +99,7 @@ struct NotchHUDModelTests {
         model.setContext(context)
         #expect(model.selection.active == "transcript")
         #expect(model.showsCapsule)
-        #expect(model.fullHeight == model.bandRowHeight + 45 + 36)
+        #expect(model.fullHeight == model.bandRowHeight + 45)   // the capsule lives in the band, not in a row of its own
         model.selectComponent("shortcuts")
         context.liveTranscript = "hello there"
         model.setContext(context)

@@ -267,10 +267,8 @@ final class NotchHUDModel: ObservableObject {
         if expansion == .full && fullHeight != heightBefore { onLayoutChanged?() }
     }
 
-    /// The capsule only earns its row when there is something to flip to.
+    /// The capsule shows in the band only when there is something to flip to.
     var showsCapsule: Bool { selection.available.count > 1 }
-    /// The capsule (28 pt) and the gap above it.
-    let capsuleRowHeight: CGFloat = 36
 
     /// The active component's height: 45 pt for the shortcuts row under a notch, 92 in a side
     /// drawer (the dock button stacks over the shortcut grid), else what the component asks for.
@@ -283,7 +281,7 @@ final class NotchHUDModel: ObservableObject {
     /// The band, then the slot (88 pt under a notch with the shortcuts, Claude Design's "max 88pt"),
     /// then the capsule's row when it shows.
     var fullHeight: CGFloat {
-        bandRowHeight + slotHeight + (showsCapsule ? capsuleRowHeight : 0)
+        bandRowHeight + slotHeight
     }
 
     var width: CGFloat {
@@ -1318,7 +1316,7 @@ struct NotchHUDView: View {
     private var surfaceHeight: CGFloat {
         switch expansion {
         case .collapsed: return notchHeight
-        case .full: return model.height - (model.showsCapsule ? model.capsuleRowHeight : 0)
+        case .full: return model.height
         default: return model.height
         }
     }

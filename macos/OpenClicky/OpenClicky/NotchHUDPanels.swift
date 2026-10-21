@@ -39,11 +39,6 @@ struct NotchFullPanelView: View {
                 .frame(height: model.slotHeight, alignment: .top)
                 .id(model.selection.active)
                 .transition(.opacity)
-            if model.showsCapsule {
-                IslandNavigationCapsule(model: model)
-                    .frame(maxWidth: .infinity)
-                    .frame(height: model.capsuleRowHeight, alignment: .bottom)
-            }
         }
         .animation(.easeInOut(duration: 0.18), value: model.selection)
     }
@@ -64,8 +59,17 @@ struct NotchBandRow: View {
 
     var body: some View {
         HStack(spacing: 8) {
-            NotchPointerStatus(model: model, companionManager: companionManager)
-                .frame(maxWidth: sideWidth, alignment: .leading)
+            // The pointer's mark (its state on hover) and, when there is more than one component
+            // to show, the capsule that flips them: no standing line of text, no row of its own.
+            HStack(spacing: 10) {
+                NotchPointerMark(isDimmed: companionManager.isCursorDocked)
+                    .help(NotchPointerStatus.statusText(model: model, companionManager: companionManager))
+                    .accessibilityLabel(NotchPointerStatus.statusText(model: model, companionManager: companionManager))
+                if model.showsCapsule {
+                    IslandNavigationCapsule(model: model, inBand: true)
+                }
+            }
+            .frame(maxWidth: sideWidth, alignment: .leading)
             Spacer(minLength: 8)
             HStack(spacing: 6) {
                 VoiceDestinationPill(companionManager: companionManager, settings: companionManager.dictationSettings)
