@@ -48,4 +48,18 @@ struct SystemStatsTests {
         store.endWatching()
         #expect(!store.isSampling)
     }
+
+    @Test func cpuFractionComesFromTickDeltasAndTheFirstSampleIsZero() {
+        #expect(MachSystemStatsSampler.cpuFraction(previous: nil, current: [10, 10, 80, 0]) == 0)
+        #expect(MachSystemStatsSampler.cpuFraction(previous: [10, 10, 80, 0], current: [30, 20, 150, 0]) == 0.3)
+        #expect(MachSystemStatsSampler.cpuFraction(previous: [10, 10, 80, 0], current: [10, 10, 80, 0]) == 0)
+    }
+
+    @Test func theLiveSamplerReportsSaneFigures() {
+        var sampler = MachSystemStatsSampler()
+        let snapshot = sampler.sample()
+        #expect((0...1).contains(snapshot.cpu))
+        #expect(snapshot.memoryTotal > 0 && snapshot.memoryUsed <= snapshot.memoryTotal)
+        #expect(snapshot.diskTotal > 0 && snapshot.diskFree <= snapshot.diskTotal)
+    }
 }
