@@ -4,21 +4,23 @@
 <dict>
 	<key>LSUIElement</key>
 	<true/>
-	<key>SUFeedURL</key>
-	<string>https://github.com/prasanthsasikumar/openclicky/releases/latest/download/appcast.xml</string>
-	<key>SUPublicEDKey</key>
-	<string>Dgr1iPs5GdoIt9pHsGJ3Kl/89sd8FPW/LalSsQTmKec=</string>
-	<key>SUEnableAutomaticChecks</key>
-	<true/>
-	<key>SUScheduledCheckInterval</key>
-	<integer>86400</integer>
-	<key>VoiceTranscriptionProvider</key>
-	<string>assemblyai</string>
+	<key>NSAppleEventsUsageDescription</key>
+	<string>OpenClicky shows what Music or Spotify is playing on the island and lets you pause or skip.</string>
 	<key>NSMicrophoneUsageDescription</key>
 	<string>OpenClicky uses your microphone so you can talk to it</string>
 	<key>NSScreenCaptureUsageDescription</key>
 	<string>OpenClicky needs screen recording access to see your screen and help you.</string>
 	<key>NSSpeechRecognitionUsageDescription</key>
 	<string>OpenClicky uses speech recognition to transcribe your voice when you talk to it</string>
+	<key>SUEnableAutomaticChecks</key>
+	<true/>
+	<key>SUFeedURL</key>
+	<string>https://github.com/prasanthsasikumar/openclicky/releases/latest/download/appcast.xml</string>
+	<key>SUPublicEDKey</key>
+	<string>Dgr1iPs5GdoIt9pHsGJ3Kl/89sd8FPW/LalSsQTmKec=</string>
+	<key>SUScheduledCheckInterval</key>
+	<integer>86400</integer>
+	<key>VoiceTranscriptionProvider</key>
+	<string>assemblyai</string>
 </dict>
 </plist>

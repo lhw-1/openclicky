@@ -77,4 +77,19 @@ struct MediaPluginTests {
         store.setEnabled(false)
         #expect(!store.isPolling && store.snapshot == nil)
     }
+
+    @Test func thePlayingPlayerWinsAndSpotifyBreaksATie() {
+        #expect(AppleScriptMediaSource.pick(running: [.music, .spotify], playing: [.music]) == .music)
+        #expect(AppleScriptMediaSource.pick(running: [.music, .spotify], playing: [.music, .spotify]) == .spotify)
+        #expect(AppleScriptMediaSource.pick(running: [.music], playing: []) == .music)
+        #expect(AppleScriptMediaSource.pick(running: [], playing: []) == nil)
+    }
+
+    @Test func theScriptsAskEachPlayerInItsOwnWords() {
+        #expect(AppleScriptMediaSource.nowPlayingScript(for: .spotify).contains("tell application \"Spotify\""))
+        #expect(AppleScriptMediaSource.nowPlayingScript(for: .spotify).contains("/ 1000"))       // milliseconds → seconds
+        #expect(AppleScriptMediaSource.nowPlayingScript(for: .music).contains("persistent ID"))
+        #expect(AppleScriptMediaSource.commandScript(.seek(42), for: .music) == "tell application \"Music\" to set player position to 42")
+        #expect(AppleScriptMediaSource.commandScript(.next, for: .spotify) == "tell application \"Spotify\" to next track")
+    }
 }
