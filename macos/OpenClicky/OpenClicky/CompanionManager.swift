@@ -567,6 +567,8 @@ final class CompanionManager: ObservableObject {
         detectedElementBubbleText = (trimmedLabel?.isEmpty == false) ? trimmedLabel : nil
         detectedElementDisplayFrame = capture.displayFrame
         detectedElementScreenLocation = location
+        // A guide checks the click that finishes this step against it.
+        guidedStepPointedLocation = location
         detectedElementPointToken &+= 1
         ClickyAnalytics.trackElementPointed(elementLabel: trimmedLabel)
         let formatted = { (value: CGFloat) in String(format: "%.0f", value) }
@@ -1624,7 +1626,7 @@ final class CompanionManager: ObservableObject {
     - element is on screen 2 (not where cursor is): "[POINT:400,300:terminal:screen2] that's over on your other monitor, see the terminal window?"
 
     guided steps:
-    when they ask how to do something that takes more than one step on screen, give only the first step, point at it, and end your reply with \(GuidedStepMarker.marker). a step is one click, or one thing to type, nothing more (a right-click that opens a menu is one step, the menu item is the next). openclicky then waits for them to do it (a click, or return or tab after typing) and asks you on its own with "\(GuidedStepRules.nextStepRequestOpening) …" and a fresh screenshot. look at the new screen and give the next step the same way: one step, pointed at, ending with \(GuidedStepMarker.marker) while more steps remain. leave \(GuidedStepMarker.marker) off the last step, and off any answer that isn't a step. if the new screen shows they clicked something else or went somewhere unexpected, gently help them back, still ending with \(GuidedStepMarker.marker). if the screen hasn't changed the way that step should change it, it didn't work yet: point at the same thing again and say to try once more. if you can't tell whether the step worked, say what they should see and what to do then, and end with \(GuidedStepMarker.marker) so you keep waiting with them. never end a step with a question. if a permission, password or security prompt is on screen and it isn't what they asked about, it is not a step: never point at it or tell them which button to pick. reply as usual, the tag first pointing at the first step of their task, then a few words that the prompt is theirs to decide, then the step, ending with \(GuidedStepMarker.marker). for a step that is typing, say what to type and to press tab or click the next thing when they're done.
+    when they ask how to do something that takes more than one step on screen, give only the first step, point at it, and end your reply with \(GuidedStepMarker.marker). a step is one click, or one thing to type, nothing more (a right-click that opens a menu is one step, the menu item is the next). openclicky then waits for them to do it (a click, or return or tab after typing) and asks you on its own with "\(GuidedStepRules.nextStepRequestOpening) …" and a fresh screenshot. look at the new screen and give the next step the same way: one step, pointed at, ending with \(GuidedStepMarker.marker) while more steps remain. leave \(GuidedStepMarker.marker) off the last step, and off any answer that isn't a step. if the new screen shows they clicked something else or went somewhere unexpected, gently help them back, still ending with \(GuidedStepMarker.marker). when openclicky's question starts with "\(GuidedStepRules.offTargetRequestOpening) …", their click landed away from where you pointed; your pointing is only approximate, so it may still have been right. check the new screen: if it was the right thing, give the next step as usual; if not, gently point them back, still ending with \(GuidedStepMarker.marker). if the screen hasn't changed the way that step should change it, it didn't work yet: point at the same thing again and say to try once more. if you can't tell whether the step worked, say what they should see and what to do then, and end with \(GuidedStepMarker.marker) so you keep waiting with them. never end a step with a question. if a permission, password or security prompt is on screen and it isn't what they asked about, it is not a step: never point at it or tell them which button to pick. reply as usual, the tag first pointing at the first step of their task, then a few words that the prompt is theirs to decide, then the step, ending with \(GuidedStepMarker.marker). for a step that is typing, say what to type and to press tab or click the next thing when they're done.
     example: user asks how to attach a file in mail: "[POINT:612,88:attach button] click the paperclip at the top of your message. \(GuidedStepMarker.marker)"
 
     keep your first sentence short: it is spoken while the rest of your answer is still being written.
@@ -1645,6 +1647,7 @@ final class CompanionManager: ObservableObject {
             guideStepUnderWay = nil
             guidedStepGoal = transcript
         }
+        guidedStepPointedLocation = nil
 
         isAskInFlight = true
         // A guide's own "what's next?" never pauses: the person already let the task go ahead, and
@@ -1920,6 +1923,9 @@ final class CompanionManager: ObservableObject {
     private var guidedStepWatcher: GuidedStepWatcher?
     /// What the person asked that started the guide, repeated in every "what's next?".
     private var guidedStepGoal = ""
+    /// Where the pointer last pointed for the answer under way (AppKit global screen coordinates),
+    /// so the click that finishes a step can be checked against it. Cleared with each new request.
+    private var guidedStepPointedLocation: CGPoint?
     /// The step of the guide under way (1, 2, …) from the first step until the guide ends; nil when
     /// there is no guide. The island turns into the guide's stop strip and the pointer carries
     /// "esc to stop" while it is set.
@@ -1936,12 +1942,17 @@ final class CompanionManager: ObservableObject {
         stopWatchingForGuidedStep()
         AppLog.append("guide: step \(guidedStepsGivenSoFar) given, waiting for a click or return")
         let watcher = GuidedStepWatcher(
-            onStepDone: { [weak self] in
+            onStepDone: { [weak self] clickLocation in
                 guard let self else { return }
-                AppLog.append("guide: step \(self.guidedStepsGivenSoFar) done, asking for the next")
+                let clickCheck = GuidedStepClickCheck.verdict(pointedAt: self.guidedStepPointedLocation, clickedAt: clickLocation)
+                AppLog.append("guide: step \(self.guidedStepsGivenSoFar) done (\(clickCheck)), asking for the next")
                 self.guidedStepWatcher = nil
+                if case .offTarget = clickCheck {
+                    self.showAskCaption(GuidedStepClickCheck.offTargetCaption, holdSeconds: 4)
+                }
                 self.sendTranscriptToClaudeWithScreenshot(
-                    transcript: GuidedStepRules.nextStepRequest(forGoal: self.guidedStepGoal), isGuidedStepContinuation: true)
+                    transcript: GuidedStepRules.nextStepRequest(forGoal: self.guidedStepGoal, clickCheck: clickCheck),
+                    isGuidedStepContinuation: true)
             },
             onEnded: { [weak self] reason in
                 guard let self else { return }

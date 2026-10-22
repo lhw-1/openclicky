@@ -3,7 +3,8 @@
 //  OpenClickyTests
 //
 //  Step by step guidance: the [NEXT] marker is found and never spoken, and a click, Return or Tab
-//  (not typing alone, not esc) is what moves a guide on.
+//  (not typing alone, not esc) is what moves a guide on. A click far from where the pointer pointed
+//  is flagged to the model as off target; Return and Tab have no position and count as unknown.
 //
 
 import AppKit
@@ -68,5 +69,42 @@ struct GuidedStepsTests {
         #expect(request.hasPrefix(GuidedStepRules.nextStepRequestOpening))
         #expect(request.contains("how do i attach a file"))
         #expect(!request.contains("—"))
+    }
+
+    @Test func aClickNearThePointedSpotIsOnTarget() {
+        let pointed = CGPoint(x: 400, y: 300)
+        #expect(GuidedStepClickCheck.verdict(pointedAt: pointed, clickedAt: CGPoint(x: 400, y: 300)) == .onTarget)
+        // Pointing is known to be up to about 100 points off: that is still on target.
+        #expect(GuidedStepClickCheck.verdict(pointedAt: pointed, clickedAt: CGPoint(x: 480, y: 360)) == .onTarget)
+        #expect(GuidedStepClickCheck.verdict(pointedAt: pointed, clickedAt: CGPoint(x: 520, y: 300)) == .onTarget)
+    }
+
+    @Test func aClickFarFromThePointedSpotIsOffTargetByAboutHowFar() {
+        let pointed = CGPoint(x: 400, y: 300)
+        #expect(GuidedStepClickCheck.verdict(pointedAt: pointed, clickedAt: CGPoint(x: 521, y: 300)) == .offTarget(pointsAway: 120))
+        #expect(GuidedStepClickCheck.verdict(pointedAt: pointed, clickedAt: CGPoint(x: 400, y: 0)) == .offTarget(pointsAway: 300))
+        #expect(GuidedStepClickCheck.verdict(pointedAt: pointed, clickedAt: CGPoint(x: 550, y: 500)) == .offTarget(pointsAway: 250))
+    }
+
+    @Test func noClickOrNothingPointedAtIsUnknown() {
+        #expect(GuidedStepClickCheck.verdict(pointedAt: CGPoint(x: 1, y: 1), clickedAt: nil) == .unknown)
+        #expect(GuidedStepClickCheck.verdict(pointedAt: nil, clickedAt: CGPoint(x: 1, y: 1)) == .unknown)
+    }
+
+    @Test func anOffTargetClickAsksTheModelToCheckAndStillRepeatsTheGoal() {
+        let request = GuidedStepRules.nextStepRequest(forGoal: "turn on dark mode", clickCheck: .offTarget(pointsAway: 180))
+        #expect(request.hasPrefix(GuidedStepRules.offTargetRequestOpening))
+        #expect(request.contains("about 180 points away from where you pointed"))
+        #expect(request.contains("gently point me back"))
+        #expect(request.hasSuffix("what i asked was: turn on dark mode)"))
+        #expect(!request.contains("—"))
+        #expect(!GuidedStepClickCheck.offTargetCaption.contains("—"))
+    }
+
+    @Test func onTargetAndUnknownClicksKeepTodaysRequest() {
+        let plain = GuidedStepRules.nextStepRequest(forGoal: "turn on dark mode")
+        #expect(GuidedStepRules.nextStepRequest(forGoal: "turn on dark mode", clickCheck: .onTarget) == plain)
+        #expect(GuidedStepRules.nextStepRequest(forGoal: "turn on dark mode", clickCheck: .unknown) == plain)
+        #expect(plain.hasPrefix(GuidedStepRules.nextStepRequestOpening))
     }
 }
