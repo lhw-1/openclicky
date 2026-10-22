@@ -650,6 +650,7 @@ final class CompanionManager: ObservableObject {
         stopActiveAnswer()
         currentResponseTask?.cancel()
         isAskInFlight = false
+        askIslandStatus = nil
         if includingAgentWork { openClickyAgentClient.cancel() }
         answerVoicePlayer.stopPlayback()
         stopSystemVoice()
@@ -1646,14 +1647,29 @@ final class CompanionManager: ObservableObject {
         }
 
         isAskInFlight = true
+        // A guide's own "what's next?" never pauses: the person already let the task go ahead, and
+        // a pause after every click would only slow the steps down.
+        let pauseSeconds = AskSendPause.seconds(isEnabled: dictationSettings.pauseBeforeSendingScreen, isGuidedStepContinuation: isGuidedStepContinuation)
         currentResponseTask = Task {
             // Stay in processing (spinner) state — no streaming text displayed
             voiceState = .processing
 
             do {
-                // Capture all connected screens so the AI has full context (an account sends at most two)
                 // Where the mouse was when they let go: what "this" points at.
                 let mouseLocationAtRelease = NSEvent.mouseLocation
+                if let pauseSeconds {
+                    // A moment to call it off before anything leaves the Mac. Esc or a click on the
+                    // island cancels this task, and nothing is captured or sent.
+                    AppLog.append("ask: pausing \(pauseSeconds) s before sending the screen")
+                    askIslandStatus = AskSendPause.caption
+                    showAskCaptionAtOnce(AskSendPause.caption, holdSeconds: pauseSeconds + 1)
+                    let pauseRanOut = await AskSendPause.waitOut(seconds: pauseSeconds)
+                    guard pauseRanOut else { return }
+                    askIslandStatus = nil
+                    showAskCaption("“\(transcript)” · thinking…", holdSeconds: 30)
+                }
+                // Captured after the pause, so what is sent is what is on screen now.
+                // Capture all connected screens so the AI has full context (an account sends at most two)
                 let allScreenCaptures: [CompanionScreenCapture]
                 do {
                     allScreenCaptures = try await CompanionScreenCaptureUtility.captureAllScreensAsJPEG()
@@ -1961,6 +1977,9 @@ final class CompanionManager: ObservableObject {
     /// From the moment the ask lane takes a question (the pause before sending included) until its
     /// answer has been said, failed, or was stopped. Esc and a click on the island stop it.
     @Published private(set) var isAskInFlight = false
+    /// What the island's status says instead of the ask lane's state, while set: the pause before
+    /// sending the screen, or a reply that was not sure what to point at.
+    @Published private(set) var askIslandStatus: String?
     /// The ⌃⌥ press was stopped with esc while it was still listening or transcribing: words the
     /// session hands over after all are dropped.
     private var askPressWasStopped = false
@@ -2566,6 +2585,13 @@ final class CompanionManager: ObservableObject {
         } else {
             streamCursorCaption(message, holdSeconds: holdSeconds)
         }
+    }
+
+    /// A caption shown whole at once, beside the mouse when docked: one that has to be readable
+    /// within the moment it stands for (the pause before sending), where typing it out would not be.
+    private func showAskCaptionAtOnce(_ message: String, holdSeconds: TimeInterval) {
+        showAskLiveTranscript(message)
+        scheduleCursorCaptionDismiss(after: holdSeconds)
     }
 
     /// The question as it is being heard, shown at once (no typewriter): it changes many times a second.

@@ -270,6 +270,7 @@ final class DictationSettings: ObservableObject {
         keepMemoryOnThisMac = defaults.bool(forKey: Keys.keepMemoryOnThisMac)
         retainFailedTakeAudio = defaults.object(forKey: Keys.retainFailedTakeAudio) == nil ? true : defaults.bool(forKey: Keys.retainFailedTakeAudio)
         readNearbyText = defaults.object(forKey: Keys.readNearbyText) == nil ? true : defaults.bool(forKey: Keys.readNearbyText)
+        pauseBeforeSendingScreen = defaults.object(forKey: Keys.pauseBeforeSendingScreen) == nil ? true : defaults.bool(forKey: Keys.pauseBeforeSendingScreen)
         hasCompletedDictationOnboarding = defaults.bool(forKey: Keys.hasCompletedDictationOnboarding)
         preferredMicrophoneUID = defaults.string(forKey: Keys.preferredMicrophoneUID)
         orbPosition = Self.decodePoint(defaults.string(forKey: Keys.orbPosition))
@@ -306,6 +307,7 @@ final class DictationSettings: ObservableObject {
         static let keepMemoryOnThisMac = "dictation.keepMemoryOnThisMac"
         static let retainFailedTakeAudio = "dictation.retainFailedTakeAudio"
         static let readNearbyText = "dictation.readNearbyText"
+        static let pauseBeforeSendingScreen = "openclicky.ask.pauseBeforeSendingScreen"
         static let hasCompletedDictationOnboarding = "dictation.onboarded"
         static let preferredMicrophoneUID = "dictation.preferredMicrophoneUID"
         static let region = "openclicky.region"
@@ -413,6 +415,9 @@ final class DictationSettings: ObservableObject {
     @Published var retainFailedTakeAudio: Bool { didSet { defaults.set(retainFailedTakeAudio, forKey: Keys.retainFailedTakeAudio) } }
     /// Read captions near the cursor through Accessibility so names on screen are spelled right.
     @Published var readNearbyText: Bool { didSet { defaults.set(readNearbyText, forKey: Keys.readNearbyText) } }
+    /// A question to Clicky waits a moment (`AskSendPause`) before the screen is captured and sent,
+    /// so esc or a click on the island can still call it off. The ⌃⌥ lane only; on by default.
+    @Published var pauseBeforeSendingScreen: Bool { didSet { defaults.set(pauseBeforeSendingScreen, forKey: Keys.pauseBeforeSendingScreen) } }
     @Published var hasCompletedDictationOnboarding: Bool { didSet { defaults.set(hasCompletedDictationOnboarding, forKey: Keys.hasCompletedDictationOnboarding) } }
 
     /// Settings → general → reset, and the orb page's reset: back to a fresh install's values.

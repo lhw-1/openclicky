@@ -32,3 +32,25 @@ enum AskLaneEscape {
         !pressIsSettled || isAskInFlight || guideStep != nil
     }
 }
+
+/// The pause between a question and its screenshot. The question is heard, then for a moment the
+/// pointer and the island say the screen is about to be sent, and esc or a click on the island
+/// calls it off before anything is captured. Settings → Privacy turns it off.
+enum AskSendPause {
+    static let defaultSeconds: TimeInterval = 1.2
+    static let caption = "sending your screen · esc to cancel"
+
+    /// How long to wait before capturing the screen, or nil to capture at once. A guide's own
+    /// "what's next?" after each click never waits: the task was already let go ahead.
+    static func seconds(isEnabled: Bool, isGuidedStepContinuation: Bool, pauseSeconds: TimeInterval = defaultSeconds) -> TimeInterval? {
+        guard isEnabled, !isGuidedStepContinuation, pauseSeconds > 0 else { return nil }
+        return pauseSeconds
+    }
+
+    /// Waits out the pause; false when the task was cancelled meanwhile (esc, the island, a new
+    /// question), in which case nothing may be captured or sent.
+    static func waitOut(seconds: TimeInterval) async -> Bool {
+        try? await Task.sleep(for: .seconds(seconds))
+        return !Task.isCancelled
+    }
+}

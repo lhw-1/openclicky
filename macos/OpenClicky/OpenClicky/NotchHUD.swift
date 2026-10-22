@@ -1693,6 +1693,8 @@ struct NotchCompactStatusView: View {
     }
 
     private var statusText: String {
+        // A word from the ask lane that matters more than its state ("sending your screen · esc to cancel").
+        if let askIslandStatus = companionManager.askIslandStatus { return askIslandStatus }
         if let guideStep = companionManager.guideStepUnderWay {
             switch companionManager.voiceState {
             case .processing: return "step \(guideStep + 1) · looking"

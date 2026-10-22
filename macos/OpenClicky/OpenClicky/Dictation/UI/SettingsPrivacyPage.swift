@@ -40,6 +40,13 @@ extension SettingsCatalog {
                     SettingsToggle(settings: settings, keyPath: \.readNearbyText)
                 })),
             SettingsItem(
+                id: "privacy.pauseBeforeSendingScreen", page: .privacy, section: "Permissions",
+                title: "Pause before sending my screen", detail: "A moment to press esc before Clicky sends your screen.",
+                keywords: ["screenshot", "screen", "cancel", "esc", "send", "wait", "consent"],
+                view: AnyView(SettingsRow(title: "Pause before sending my screen", detail: "A moment to press esc before Clicky sends your screen.") {
+                    SettingsToggle(settings: settings, keyPath: \.pauseBeforeSendingScreen)
+                })),
+            SettingsItem(
                 id: "privacy.memoryOnThisMac", page: .privacy, section: "What it keeps",
                 title: "Keep my memory on this Mac only", detail: "History, dictionary and styles stay here. Questions to Clicky still go online.",
                 keywords: ["local", "memory", "cloud", "sync", "data"],
