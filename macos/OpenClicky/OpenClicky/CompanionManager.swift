@@ -567,6 +567,8 @@ final class CompanionManager: ObservableObject {
         detectedElementBubbleText = (trimmedLabel?.isEmpty == false) ? trimmedLabel : nil
         detectedElementDisplayFrame = capture.displayFrame
         detectedElementScreenLocation = location
+        // A guide checks the click that finishes this step against it.
+        guidedStepPointedLocation = location
         detectedElementPointToken &+= 1
         ClickyAnalytics.trackElementPointed(elementLabel: trimmedLabel)
         let formatted = { (value: CGFloat) in String(format: "%.0f", value) }
@@ -649,6 +651,8 @@ final class CompanionManager: ObservableObject {
         settingsTour.stop()
         stopActiveAnswer()
         currentResponseTask?.cancel()
+        isAskInFlight = false
+        askIslandStatus = nil
         if includingAgentWork { openClickyAgentClient.cancel() }
         answerVoicePlayer.stopPlayback()
         stopSystemVoice()
@@ -1399,8 +1403,16 @@ final class CompanionManager: ObservableObject {
             openTextComposer()
         case .handsFreeToggleRequested:
             toggleHandsFree()
-        case .dictationPressed, .dictationEditPressed, .dictationEditModifierJoined, .dictationReleased, .dictationDoubleTapped, .escapePressed:
+        case .dictationPressed, .dictationEditPressed, .dictationEditModifierJoined, .dictationReleased, .dictationDoubleTapped:
             dictationTakeController.handle(shortcutEvent)
+        case .escapePressed:
+            // A dictation take in progress keeps esc to itself (it cancels the take, as always);
+            // otherwise esc stops whatever the ask lane is doing.
+            switch AskLaneEscape.target(dictationTakeInProgress: dictationTakeController.isTakeInProgress, askLaneCanBeStopped: askLaneCanBeStopped) {
+            case .dictationTake: dictationTakeController.handle(shortcutEvent)
+            case .askLane: stopAskLane(from: "esc")
+            case .nothing: break
+            }
         case .talkPressed, .talkReleased:
             // Delivered through shortcutTransitionPublisher.
             break
@@ -1490,6 +1502,7 @@ final class CompanionManager: ObservableObject {
             lastQuestionFailed = false
             // A new press owns the outcome from here: whatever the last release was waiting for is over.
             askOutcome = .listening
+            askPressWasStopped = false
             askLiveWordsShownSincePress = false
 
             // Cancel any pending transient hide so the overlay stays visible
@@ -1529,7 +1542,8 @@ final class CompanionManager: ObservableObject {
                         self.showAskLiveTranscript(partialTranscript)
                     },
                     submitDraftText: { [weak self] finalTranscript in
-                        guard let self else { return }
+                        // Esc while it was still listening or transcribing: the words go nowhere.
+                        guard let self, !self.askPressWasStopped else { return }
                         self.lastTranscript = finalTranscript
                         self.askOutcome = .resolved
                         let question = finalTranscript.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -1612,8 +1626,12 @@ final class CompanionManager: ObservableObject {
     - element is on screen 2 (not where cursor is): "[POINT:400,300:terminal:screen2] that's over on your other monitor, see the terminal window?"
 
     guided steps:
-    when they ask how to do something that takes more than one step on screen, give only the first step, point at it, and end your reply with \(GuidedStepMarker.marker). a step is one click, or one thing to type, nothing more (a right-click that opens a menu is one step, the menu item is the next). openclicky then waits for them to do it (a click, or return or tab after typing) and asks you on its own with "\(GuidedStepRules.nextStepRequestOpening) …" and a fresh screenshot. look at the new screen and give the next step the same way: one step, pointed at, ending with \(GuidedStepMarker.marker) while more steps remain. leave \(GuidedStepMarker.marker) off the last step, and off any answer that isn't a step. if the new screen shows they clicked something else or went somewhere unexpected, gently help them back, still ending with \(GuidedStepMarker.marker). if the screen hasn't changed the way that step should change it, it didn't work yet: point at the same thing again and say to try once more. if you can't tell whether the step worked, say what they should see and what to do then, and end with \(GuidedStepMarker.marker) so you keep waiting with them. never end a step with a question. if a permission, password or security prompt is on screen and it isn't what they asked about, it is not a step: never point at it or tell them which button to pick. reply as usual, the tag first pointing at the first step of their task, then a few words that the prompt is theirs to decide, then the step, ending with \(GuidedStepMarker.marker). for a step that is typing, say what to type and to press tab or click the next thing when they're done.
+    when they ask how to do something that takes more than one step on screen, give only the first step, point at it, and end your reply with \(GuidedStepMarker.marker). a step is one click, or one thing to type, nothing more (a right-click that opens a menu is one step, the menu item is the next). openclicky then waits for them to do it (a click, or return or tab after typing) and asks you on its own with "\(GuidedStepRules.nextStepRequestOpening) …" and a fresh screenshot. look at the new screen and give the next step the same way: one step, pointed at, ending with \(GuidedStepMarker.marker) while more steps remain. leave \(GuidedStepMarker.marker) off the last step, and off any answer that isn't a step. if the new screen shows they clicked something else or went somewhere unexpected, gently help them back, still ending with \(GuidedStepMarker.marker). when openclicky's question starts with "\(GuidedStepRules.offTargetRequestOpening) …", their click landed away from where you pointed; your pointing is only approximate, so it may still have been right. check the new screen: if it was the right thing, give the next step as usual; if not, gently point them back, still ending with \(GuidedStepMarker.marker). if the screen hasn't changed the way that step should change it, it didn't work yet: point at the same thing again and say to try once more. if you can't tell whether the step worked, say what they should see and what to do then, and end with \(GuidedStepMarker.marker) so you keep waiting with them. never end a step with a question. if a permission, password or security prompt is on screen and it isn't what they asked about, it is not a step: never point at it or tell them which button to pick. reply as usual, the tag first pointing at the first step of their task, then a few words that the prompt is theirs to decide, then the step, ending with \(GuidedStepMarker.marker). for a step that is typing, say what to type and to press tab or click the next thing when they're done.
     example: user asks how to attach a file in mail: "[POINT:612,88:attach button] click the paperclip at the top of your message. \(GuidedStepMarker.marker)"
+
+    not sure:
+    if you can't find the control they need on the screen, or can't tell which one it is, don't guess with the pointer. start your reply with \(UnsureMarker.marker), send no point tag at all, and say in words what they should look for (its name, what it looks like, roughly where it usually is), or ask them to tell you what they see. leave \(GuidedStepMarker.marker) off that reply.
+    example: "\(UnsureMarker.marker) i can't spot the display settings on this screen. look for a gear icon called system settings in your dock, or tell me what you see."
 
     keep your first sentence short: it is spoken while the rest of your answer is still being written.
     """
@@ -1633,15 +1651,32 @@ final class CompanionManager: ObservableObject {
             guideStepUnderWay = nil
             guidedStepGoal = transcript
         }
+        guidedStepPointedLocation = nil
 
+        isAskInFlight = true
+        // A guide's own "what's next?" never pauses: the person already let the task go ahead, and
+        // a pause after every click would only slow the steps down.
+        let pauseSeconds = AskSendPause.seconds(isEnabled: dictationSettings.pauseBeforeSendingScreen, isGuidedStepContinuation: isGuidedStepContinuation)
         currentResponseTask = Task {
             // Stay in processing (spinner) state — no streaming text displayed
             voiceState = .processing
 
             do {
-                // Capture all connected screens so the AI has full context (an account sends at most two)
                 // Where the mouse was when they let go: what "this" points at.
                 let mouseLocationAtRelease = NSEvent.mouseLocation
+                if let pauseSeconds {
+                    // A moment to call it off before anything leaves the Mac. Esc or a click on the
+                    // island cancels this task, and nothing is captured or sent.
+                    AppLog.append("ask: pausing \(pauseSeconds) s before sending the screen")
+                    askIslandStatus = AskSendPause.caption
+                    showAskCaptionAtOnce(AskSendPause.caption, holdSeconds: pauseSeconds + 1)
+                    let pauseRanOut = await AskSendPause.waitOut(seconds: pauseSeconds)
+                    guard pauseRanOut else { return }
+                    askIslandStatus = nil
+                    showAskCaption("“\(transcript)” · thinking…", holdSeconds: 30)
+                }
+                // Captured after the pause, so what is sent is what is on screen now.
+                // Capture all connected screens so the AI has full context (an account sends at most two)
                 let allScreenCaptures: [CompanionScreenCapture]
                 do {
                     allScreenCaptures = try await CompanionScreenCaptureUtility.captureAllScreensAsJPEG()
@@ -1667,6 +1702,7 @@ final class CompanionManager: ObservableObject {
                     if lane == "agent" {
                         try await runOpenClickyAgentLane(transcript: transcript, screenCaptures: screenCaptures)
                         if !Task.isCancelled {
+                            isAskInFlight = false
                             voiceState = .idle
                             scheduleTransientHideIfNeeded()
                         }
@@ -1744,8 +1780,16 @@ final class CompanionManager: ObservableObject {
                     throw error
                 }
                 AppLog.append("ask: answer \(fullResponseText.count) chars in \(String(format: "%.1f", Date().timeIntervalSince(askStartedAt))) s")
+                // Stopped (esc, the island, a new question) while the answer was coming in: nothing
+                // it asked for may run. Each call is checked too, since a rewrite or an action awaits.
+                guard !Task.isCancelled else {
+                    answerSpeaker.cancel()
+                    answerPlayback.cancel()
+                    return
+                }
                 var toolOutcomes: [String] = []
                 for call in toolCalls.prefix(2) {
+                    guard !Task.isCancelled else { break }
                     if call.name == WriteInPlace.toolName {
                         guard let writingTarget else { continue }
                         let rewrite = await WriteInPlace.replace(writingTarget, with: call.arguments["text"] as? String ?? "")
@@ -1770,21 +1814,32 @@ final class CompanionManager: ObservableObject {
                 }
                 answerSpeaker.finish(closingSentences: toolOutcomes)
 
-                // The tag and the guide's marker are stripped so they don't confuse future context.
-                let replyIsAGuidedStep = GuidedStepMarker.containsMarker(fullResponseText)
-                let parseResult = Self.parsePointingCoordinates(from: GuidedStepMarker.removingMarkers(from: fullResponseText))
+                // The tag and the markers are stripped so they don't confuse future context.
+                // A reply that is not sure what to point at never points, and is never a guide's
+                // step: the guide ends there and the person asks again with what they see. Keeping
+                // the guide waiting for a click would only guess at what the next click means.
+                let replyIsUnsure = UnsureMarker.containsMarker(fullResponseText)
+                let replyIsAGuidedStep = !replyIsUnsure && GuidedStepMarker.containsMarker(fullResponseText)
+                let parseResult = Self.parsePointingCoordinates(
+                    from: UnsureMarker.removingMarkers(from: GuidedStepMarker.removingMarkers(from: fullResponseText)))
+                let pointedCoordinate = replyIsUnsure ? nil : parseResult.coordinate
                 let spokenText = Self.spokenReply(text: parseResult.spokenText, toolOutcomes: toolOutcomes)
-                if parseResult.coordinate == nil {
+                if replyIsUnsure {
+                    AppLog.append("ask: not sure what to point at\(parseResult.coordinate == nil ? "" : " (its point tag ignored)")")
+                    // The marker came after a tag the pointer already flew to: bring it back.
+                    clearDetectedElementLocation()
+                    showAskIslandStatus(UnsureMarker.islandStatus, holdSeconds: 10)
+                } else if parseResult.coordinate == nil {
                     print("🎯 Element pointing: \(parseResult.elementLabel ?? "no element")")
                 }
 
                 if spokenText.isEmpty {
                     // Nothing to say (an empty answer, or a bare tag): the queue never starts the
                     // voice, so "thinking…" would stay up in silence. An empty turn is not history.
-                    AppLog.append("ask: empty answer (\(parseResult.coordinate == nil ? "no point" : "point only"))")
+                    AppLog.append("ask: empty answer (\(pointedCoordinate == nil ? "no point" : "point only"))")
                     guideStepUnderWay = nil
                     dismissCursorCaption()
-                    if parseResult.coordinate == nil {
+                    if pointedCoordinate == nil {
                         lastQuestionFailed = true
                         speakWithSystemVoice(Self.emptyAnswerSentence)
                     }
@@ -1868,6 +1923,7 @@ final class CompanionManager: ObservableObject {
             // A notice in the system voice is still being said: the turn is over when it ends.
             await waitForSystemVoiceNoticeToEnd()
             if !Task.isCancelled {
+                isAskInFlight = false
                 voiceState = .idle
                 scheduleTransientHideIfNeeded()
             }
@@ -1882,6 +1938,9 @@ final class CompanionManager: ObservableObject {
     private var guidedStepWatcher: GuidedStepWatcher?
     /// What the person asked that started the guide, repeated in every "what's next?".
     private var guidedStepGoal = ""
+    /// Where the pointer last pointed for the answer under way (AppKit global screen coordinates),
+    /// so the click that finishes a step can be checked against it. Cleared with each new request.
+    private var guidedStepPointedLocation: CGPoint?
     /// The step of the guide under way (1, 2, …) from the first step until the guide ends; nil when
     /// there is no guide. The island turns into the guide's stop strip and the pointer carries
     /// "esc to stop" while it is set.
@@ -1898,21 +1957,29 @@ final class CompanionManager: ObservableObject {
         stopWatchingForGuidedStep()
         AppLog.append("guide: step \(guidedStepsGivenSoFar) given, waiting for a click or return")
         let watcher = GuidedStepWatcher(
-            onStepDone: { [weak self] in
+            onStepDone: { [weak self] clickLocation in
                 guard let self else { return }
-                AppLog.append("guide: step \(self.guidedStepsGivenSoFar) done, asking for the next")
+                let clickCheck = GuidedStepClickCheck.verdict(pointedAt: self.guidedStepPointedLocation, clickedAt: clickLocation)
+                AppLog.append("guide: step \(self.guidedStepsGivenSoFar) done (\(clickCheck)), asking for the next")
                 self.guidedStepWatcher = nil
+                if case .offTarget = clickCheck {
+                    self.showAskCaption(GuidedStepClickCheck.offTargetCaption, holdSeconds: 4)
+                }
                 self.sendTranscriptToClaudeWithScreenshot(
-                    transcript: GuidedStepRules.nextStepRequest(forGoal: self.guidedStepGoal), isGuidedStepContinuation: true)
+                    transcript: GuidedStepRules.nextStepRequest(forGoal: self.guidedStepGoal, clickCheck: clickCheck),
+                    isGuidedStepContinuation: true)
             },
             onEnded: { [weak self] reason in
                 guard let self else { return }
                 AppLog.append("guide: ended (\(reason.rawValue)) after \(self.guidedStepsGivenSoFar) steps")
                 self.guidedStepWatcher = nil
+                // Esc means stop: the step still being said goes quiet too, as esc does anywhere else.
+                if reason == .escape {
+                    self.stopAskLane(from: "esc during a guide")
+                    return
+                }
                 self.guidedStepsGivenSoFar = 0
                 self.guideStepUnderWay = nil
-                // Esc means stop: the step still being said goes quiet too.
-                if reason == .escape { self.stopSpeaking() }
             }
         )
         guidedStepWatcher = watcher
@@ -1921,18 +1988,70 @@ final class CompanionManager: ObservableObject {
     }
 
     /// The island's "stop guide": ends the guide wherever it is (waiting for a click, looking at the
-    /// screen for the next step, or saying it), silences it, and takes the caption away.
+    /// screen for the next step, or saying it) and silences it. It works from the first step on: a
+    /// guide is only known to be one once its first step comes back, and before that the question
+    /// on its way is what there is to stop.
     func stopGuide() {
-        guard guideStepUnderWay != nil else { return }
+        guard guideStepUnderWay != nil || isAskInFlight else { return }
         AppLog.append("guide: stopped from the island after \(guidedStepsGivenSoFar) steps")
+        stopAskLane(from: "the island")
+        realtimeVoiceClient.stopSpeaking()
+    }
+
+    // MARK: - Stopping the ask lane
+
+    /// From the moment the ask lane takes a question (the pause before sending included) until its
+    /// answer has been said, failed, or was stopped. Esc and a click on the island stop it.
+    @Published private(set) var isAskInFlight = false
+    /// What the island's status says instead of the ask lane's state, while set: the pause before
+    /// sending the screen, or a reply that was not sure what to point at.
+    @Published private(set) var askIslandStatus: String?
+    private var askIslandStatusExpiry: Task<Void, Never>?
+
+    /// Puts `status` on the island for a while (a new question or a stop takes it away sooner).
+    private func showAskIslandStatus(_ status: String, holdSeconds: TimeInterval) {
+        askIslandStatus = status
+        askIslandStatusExpiry?.cancel()
+        askIslandStatusExpiry = Task { [weak self] in
+            try? await Task.sleep(for: .seconds(holdSeconds))
+            guard !Task.isCancelled, let self, self.askIslandStatus == status else { return }
+            self.askIslandStatus = nil
+        }
+    }
+    /// The ⌃⌥ press was stopped with esc while it was still listening or transcribing: words the
+    /// session hands over after all are dropped.
+    private var askPressWasStopped = false
+
+    /// Whether esc has anything in the ask lane to stop: a press still listening or transcribing, a
+    /// question on its way or being answered, or a guide.
+    var askLaneCanBeStopped: Bool {
+        AskLaneEscape.canStop(pressIsSettled: askOutcome == .resolved, isAskInFlight: isAskInFlight, guideStep: guideStepUnderWay)
+    }
+
+    /// Esc, or a click on the island while a question is on its way: what a new question does,
+    /// without the question. The request in flight is cancelled (so nothing it asked for runs), the
+    /// voice and the pointer stop, a guide ends, and the island goes back to rest. Returns false
+    /// when there was nothing to stop.
+    @discardableResult
+    func stopAskLane(from source: String) -> Bool {
+        guard askLaneCanBeStopped else { return false }
+        AppLog.append("ask: stopped (\(source))")
+        if askOutcome != .resolved {
+            askOutcome = .resolved
+            askPressWasStopped = true
+            pendingKeyboardShortcutStartTask?.cancel()
+            pendingKeyboardShortcutStartTask = nil
+            buddyDictationManager.cancelCurrentDictation(preserveDraftText: false)
+        }
         guidedStepsGivenSoFar = 0
         guideStepUnderWay = nil
-        interruptCurrentAnswer(includingAgentWork: false)
-        realtimeVoiceClient.stopSpeaking()
+        interruptCurrentAnswer(includingAgentWork: true)
+        clearDetectedElementLocation()
         // A cancelled answer skips its own reset to idle.
         voiceState = .idle
-        dismissCursorCaption()
+        showAskCaption("stopped", holdSeconds: 1.5)
         scheduleTransientHideIfNeeded()
+        return true
     }
 
     private func stopWatchingForGuidedStep() {
@@ -2504,6 +2623,13 @@ final class CompanionManager: ObservableObject {
         } else {
             streamCursorCaption(message, holdSeconds: holdSeconds)
         }
+    }
+
+    /// A caption shown whole at once, beside the mouse when docked: one that has to be readable
+    /// within the moment it stands for (the pause before sending), where typing it out would not be.
+    private func showAskCaptionAtOnce(_ message: String, holdSeconds: TimeInterval) {
+        showAskLiveTranscript(message)
+        scheduleCursorCaptionDismiss(after: holdSeconds)
     }
 
     /// The question as it is being heard, shown at once (no typewriter): it changes many times a second.
