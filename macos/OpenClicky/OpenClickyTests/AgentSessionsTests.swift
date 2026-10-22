@@ -86,10 +86,13 @@ struct AgentSessionsTests {
     @MainActor @Test func theWatcherListsRecentLogsLiveFirstAndSkipsItsOwnScratchRuns() throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("agents-tests-\(UUID().uuidString)", isDirectory: true)
         let claude = root.appendingPathComponent("claude/projects/-Users-me-app", isDirectory: true)
-        let codex = root.appendingPathComponent("codex/sessions/2026/10/21", isDirectory: true)
+        let now = Date()
+        // Today's folder: the watcher only reads the day folders its recent window touches.
+        let today = Calendar.current.dateComponents([.year, .month, .day], from: now)
+        let dayPath = String(format: "codex/sessions/%04d/%02d/%02d", today.year!, today.month!, today.day!)
+        let codex = root.appendingPathComponent(dayPath, isDirectory: true)
         try FileManager.default.createDirectory(at: claude, withIntermediateDirectories: true)
         try FileManager.default.createDirectory(at: codex, withIntermediateDirectories: true)
-        let now = Date()
         let done = claude.appendingPathComponent("done.jsonl")
         try assistant([["type": "text", "text": "done"]], stopReason: "end_turn").write(to: done, atomically: true, encoding: .utf8)
         try FileManager.default.setAttributes([.modificationDate: now.addingTimeInterval(-30)], ofItemAtPath: done.path)
@@ -123,7 +126,12 @@ struct AgentSessionsTests {
 
     @Test func rowsShowThreeSessionsAndCountTheRest() {
         let now = Date()
-        let sessions = (0..<5).map { AgentSession(id: "\($0)", agent: $0 % 2 == 0 ? .claudeCode : .codex, project: "p\($0)", title: nil, activity: $0 < 2 ? .thinking : .idle, lastEventAt: now.addingTimeInterval(Double(-60 * $0))) }
+        let sessions: [AgentSession] = (0..<5).map { index in
+            let agent: AgentKind = index % 2 == 0 ? .claudeCode : .codex
+            let activity: AgentActivity = index < 2 ? .thinking : .idle
+            let lastEventAt = now.addingTimeInterval(Double(-60 * index))
+            return AgentSession(id: "\(index)", agent: agent, project: "p\(index)", title: nil, activity: activity, lastEventAt: lastEventAt)
+        }
         let rows = AgentsIslandView.rows(for: sessions, now: now)
         #expect(rows.count == 3)
         #expect(rows[0].agent == "claude" && rows[0].isLive && rows[0].line == "thinking")
