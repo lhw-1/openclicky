@@ -649,6 +649,7 @@ final class CompanionManager: ObservableObject {
         settingsTour.stop()
         stopActiveAnswer()
         currentResponseTask?.cancel()
+        isAskInFlight = false
         if includingAgentWork { openClickyAgentClient.cancel() }
         answerVoicePlayer.stopPlayback()
         stopSystemVoice()
@@ -1399,8 +1400,16 @@ final class CompanionManager: ObservableObject {
             openTextComposer()
         case .handsFreeToggleRequested:
             toggleHandsFree()
-        case .dictationPressed, .dictationEditPressed, .dictationEditModifierJoined, .dictationReleased, .dictationDoubleTapped, .escapePressed:
+        case .dictationPressed, .dictationEditPressed, .dictationEditModifierJoined, .dictationReleased, .dictationDoubleTapped:
             dictationTakeController.handle(shortcutEvent)
+        case .escapePressed:
+            // A dictation take in progress keeps esc to itself (it cancels the take, as always);
+            // otherwise esc stops whatever the ask lane is doing.
+            switch AskLaneEscape.target(dictationTakeInProgress: dictationTakeController.isTakeInProgress, askLaneCanBeStopped: askLaneCanBeStopped) {
+            case .dictationTake: dictationTakeController.handle(shortcutEvent)
+            case .askLane: stopAskLane(from: "esc")
+            case .nothing: break
+            }
         case .talkPressed, .talkReleased:
             // Delivered through shortcutTransitionPublisher.
             break
@@ -1490,6 +1499,7 @@ final class CompanionManager: ObservableObject {
             lastQuestionFailed = false
             // A new press owns the outcome from here: whatever the last release was waiting for is over.
             askOutcome = .listening
+            askPressWasStopped = false
             askLiveWordsShownSincePress = false
 
             // Cancel any pending transient hide so the overlay stays visible
@@ -1529,7 +1539,8 @@ final class CompanionManager: ObservableObject {
                         self.showAskLiveTranscript(partialTranscript)
                     },
                     submitDraftText: { [weak self] finalTranscript in
-                        guard let self else { return }
+                        // Esc while it was still listening or transcribing: the words go nowhere.
+                        guard let self, !self.askPressWasStopped else { return }
                         self.lastTranscript = finalTranscript
                         self.askOutcome = .resolved
                         let question = finalTranscript.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -1634,6 +1645,7 @@ final class CompanionManager: ObservableObject {
             guidedStepGoal = transcript
         }
 
+        isAskInFlight = true
         currentResponseTask = Task {
             // Stay in processing (spinner) state — no streaming text displayed
             voiceState = .processing
@@ -1667,6 +1679,7 @@ final class CompanionManager: ObservableObject {
                     if lane == "agent" {
                         try await runOpenClickyAgentLane(transcript: transcript, screenCaptures: screenCaptures)
                         if !Task.isCancelled {
+                            isAskInFlight = false
                             voiceState = .idle
                             scheduleTransientHideIfNeeded()
                         }
@@ -1744,8 +1757,16 @@ final class CompanionManager: ObservableObject {
                     throw error
                 }
                 AppLog.append("ask: answer \(fullResponseText.count) chars in \(String(format: "%.1f", Date().timeIntervalSince(askStartedAt))) s")
+                // Stopped (esc, the island, a new question) while the answer was coming in: nothing
+                // it asked for may run. Each call is checked too, since a rewrite or an action awaits.
+                guard !Task.isCancelled else {
+                    answerSpeaker.cancel()
+                    answerPlayback.cancel()
+                    return
+                }
                 var toolOutcomes: [String] = []
                 for call in toolCalls.prefix(2) {
+                    guard !Task.isCancelled else { break }
                     if call.name == WriteInPlace.toolName {
                         guard let writingTarget else { continue }
                         let rewrite = await WriteInPlace.replace(writingTarget, with: call.arguments["text"] as? String ?? "")
@@ -1868,6 +1889,7 @@ final class CompanionManager: ObservableObject {
             // A notice in the system voice is still being said: the turn is over when it ends.
             await waitForSystemVoiceNoticeToEnd()
             if !Task.isCancelled {
+                isAskInFlight = false
                 voiceState = .idle
                 scheduleTransientHideIfNeeded()
             }
@@ -1909,10 +1931,13 @@ final class CompanionManager: ObservableObject {
                 guard let self else { return }
                 AppLog.append("guide: ended (\(reason.rawValue)) after \(self.guidedStepsGivenSoFar) steps")
                 self.guidedStepWatcher = nil
+                // Esc means stop: the step still being said goes quiet too, as esc does anywhere else.
+                if reason == .escape {
+                    self.stopAskLane(from: "esc during a guide")
+                    return
+                }
                 self.guidedStepsGivenSoFar = 0
                 self.guideStepUnderWay = nil
-                // Esc means stop: the step still being said goes quiet too.
-                if reason == .escape { self.stopSpeaking() }
             }
         )
         guidedStepWatcher = watcher
@@ -1921,18 +1946,55 @@ final class CompanionManager: ObservableObject {
     }
 
     /// The island's "stop guide": ends the guide wherever it is (waiting for a click, looking at the
-    /// screen for the next step, or saying it), silences it, and takes the caption away.
+    /// screen for the next step, or saying it) and silences it. It works from the first step on: a
+    /// guide is only known to be one once its first step comes back, and before that the question
+    /// on its way is what there is to stop.
     func stopGuide() {
-        guard guideStepUnderWay != nil else { return }
+        guard guideStepUnderWay != nil || isAskInFlight else { return }
         AppLog.append("guide: stopped from the island after \(guidedStepsGivenSoFar) steps")
+        stopAskLane(from: "the island")
+        realtimeVoiceClient.stopSpeaking()
+    }
+
+    // MARK: - Stopping the ask lane
+
+    /// From the moment the ask lane takes a question (the pause before sending included) until its
+    /// answer has been said, failed, or was stopped. Esc and a click on the island stop it.
+    @Published private(set) var isAskInFlight = false
+    /// The ⌃⌥ press was stopped with esc while it was still listening or transcribing: words the
+    /// session hands over after all are dropped.
+    private var askPressWasStopped = false
+
+    /// Whether esc has anything in the ask lane to stop: a press still listening or transcribing, a
+    /// question on its way or being answered, or a guide.
+    var askLaneCanBeStopped: Bool {
+        AskLaneEscape.canStop(pressIsSettled: askOutcome == .resolved, isAskInFlight: isAskInFlight, guideStep: guideStepUnderWay)
+    }
+
+    /// Esc, or a click on the island while a question is on its way: what a new question does,
+    /// without the question. The request in flight is cancelled (so nothing it asked for runs), the
+    /// voice and the pointer stop, a guide ends, and the island goes back to rest. Returns false
+    /// when there was nothing to stop.
+    @discardableResult
+    func stopAskLane(from source: String) -> Bool {
+        guard askLaneCanBeStopped else { return false }
+        AppLog.append("ask: stopped (\(source))")
+        if askOutcome != .resolved {
+            askOutcome = .resolved
+            askPressWasStopped = true
+            pendingKeyboardShortcutStartTask?.cancel()
+            pendingKeyboardShortcutStartTask = nil
+            buddyDictationManager.cancelCurrentDictation(preserveDraftText: false)
+        }
         guidedStepsGivenSoFar = 0
         guideStepUnderWay = nil
-        interruptCurrentAnswer(includingAgentWork: false)
-        realtimeVoiceClient.stopSpeaking()
+        interruptCurrentAnswer(includingAgentWork: true)
+        clearDetectedElementLocation()
         // A cancelled answer skips its own reset to idle.
         voiceState = .idle
-        dismissCursorCaption()
+        showAskCaption("stopped", holdSeconds: 1.5)
         scheduleTransientHideIfNeeded()
+        return true
     }
 
     private func stopWatchingForGuidedStep() {

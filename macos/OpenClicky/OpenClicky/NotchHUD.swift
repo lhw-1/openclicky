@@ -1403,6 +1403,9 @@ struct NotchHUDView: View {
                                 guard abs(value.translation.width) < 6, abs(value.translation.height) < 6 else { return }
                                 if expansion == .compact && model.guideStep != nil { companionManager.stopGuide(); return }
                                 if expansion == .compact && model.isSpeaking { companionManager.stopSpeaking(); return }
+                                if expansion == .compact && companionManager.isAskInFlight && companionManager.agentActivityText == nil {
+                                    companionManager.stopAskLane(from: "the island"); return
+                                }
                                 model.islandClicked()
                             }
                     )
@@ -1628,6 +1631,14 @@ struct NotchCompactStatusView: View {
                     .onTapGesture { companionManager.stopSpeaking() }
                     .pointerCursor()
                     .help("click to stop speaking")
+            } else if isQuestionOnItsWay {
+                // A question on its way (the pause before sending, or the first step of a guide being
+                // looked up): a click stops it, as esc does.
+                Color.clear
+                    .contentShape(Rectangle())
+                    .onTapGesture { companionManager.stopAskLane(from: "the island") }
+                    .pointerCursor()
+                    .help("click to stop")
             }
         }
     }
@@ -1660,10 +1671,17 @@ struct NotchCompactStatusView: View {
                         .font(.system(size: 15))
                         .foregroundColor(DS.HUD.text)
                         .accessibilityLabel("stop speaking")
+                } else if isQuestionOnItsWay {
+                    Image(systemName: "stop.circle.fill")
+                        .font(.system(size: 15))
+                        .foregroundColor(DS.HUD.text)
+                        .accessibilityLabel("stop")
                 }
     }
 
     private var isSpeaking: Bool { companionManager.voiceState == .responding }
+    /// An agent's work keeps the click that opens the panel; only the ask lane's own question stops.
+    private var isQuestionOnItsWay: Bool { companionManager.isAskInFlight && companionManager.agentActivityText == nil }
 
     /// The strip's caption line, or nil for a strip with only its status. The HUD manager asks the
     /// same question to size the island, so it is static and takes the published values.
