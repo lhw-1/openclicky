@@ -28,9 +28,10 @@ guide and no pause before sending. On the demo Macs, make sure the classic lane 
 1. **Make screen text larger.** Ask "how do i make the text on my screen bigger". Follow the guide
    step by step (System Settings, Displays or Accessibility, the text size control).
 2. **Turn on Dark Mode.** Ask "how do i turn on dark mode". Follow the steps to Appearance.
-3. **A wrong click.** During one of the guides above, click the item next to the one the pointer
-   points at (for example the neighbouring row in the System Settings sidebar). Clicky should say
-   "that wasn't the spot i pointed at, let me look" and then point back.
+3. **A wrong click.** During one of the guides above, click a clearly different item, well away from
+   the one the pointer points at (for example a row four or more rows away in the System Settings
+   sidebar). The neighbouring row can fall inside the 120-point "on target" zone and would not trigger
+   the check. Clicky should say "that wasn't the spot i pointed at, let me look" and then point back.
 4. **Interrupt with a new question.** While Clicky is speaking a step, hold ⌃⌥ and ask something
    else. The old answer stops at once and the new one is answered.
 5. **Esc.** Ask a how-to question and press esc during the pause, while it is looking, and while it
