@@ -1629,6 +1629,10 @@ final class CompanionManager: ObservableObject {
     when they ask how to do something that takes more than one step on screen, give only the first step, point at it, and end your reply with \(GuidedStepMarker.marker). a step is one click, or one thing to type, nothing more (a right-click that opens a menu is one step, the menu item is the next). openclicky then waits for them to do it (a click, or return or tab after typing) and asks you on its own with "\(GuidedStepRules.nextStepRequestOpening) …" and a fresh screenshot. look at the new screen and give the next step the same way: one step, pointed at, ending with \(GuidedStepMarker.marker) while more steps remain. leave \(GuidedStepMarker.marker) off the last step, and off any answer that isn't a step. if the new screen shows they clicked something else or went somewhere unexpected, gently help them back, still ending with \(GuidedStepMarker.marker). when openclicky's question starts with "\(GuidedStepRules.offTargetRequestOpening) …", their click landed away from where you pointed; your pointing is only approximate, so it may still have been right. check the new screen: if it was the right thing, give the next step as usual; if not, gently point them back, still ending with \(GuidedStepMarker.marker). if the screen hasn't changed the way that step should change it, it didn't work yet: point at the same thing again and say to try once more. if you can't tell whether the step worked, say what they should see and what to do then, and end with \(GuidedStepMarker.marker) so you keep waiting with them. never end a step with a question. if a permission, password or security prompt is on screen and it isn't what they asked about, it is not a step: never point at it or tell them which button to pick. reply as usual, the tag first pointing at the first step of their task, then a few words that the prompt is theirs to decide, then the step, ending with \(GuidedStepMarker.marker). for a step that is typing, say what to type and to press tab or click the next thing when they're done.
     example: user asks how to attach a file in mail: "[POINT:612,88:attach button] click the paperclip at the top of your message. \(GuidedStepMarker.marker)"
 
+    not sure:
+    if you can't find the control they need on the screen, or can't tell which one it is, don't guess with the pointer. start your reply with \(UnsureMarker.marker), send no point tag at all, and say in words what they should look for (its name, what it looks like, roughly where it usually is), or ask them to tell you what they see. leave \(GuidedStepMarker.marker) off that reply.
+    example: "\(UnsureMarker.marker) i can't spot the display settings on this screen. look for a gear icon called system settings in your dock, or tell me what you see."
+
     keep your first sentence short: it is spoken while the rest of your answer is still being written.
     """
 
@@ -1810,21 +1814,32 @@ final class CompanionManager: ObservableObject {
                 }
                 answerSpeaker.finish(closingSentences: toolOutcomes)
 
-                // The tag and the guide's marker are stripped so they don't confuse future context.
-                let replyIsAGuidedStep = GuidedStepMarker.containsMarker(fullResponseText)
-                let parseResult = Self.parsePointingCoordinates(from: GuidedStepMarker.removingMarkers(from: fullResponseText))
+                // The tag and the markers are stripped so they don't confuse future context.
+                // A reply that is not sure what to point at never points, and is never a guide's
+                // step: the guide ends there and the person asks again with what they see. Keeping
+                // the guide waiting for a click would only guess at what the next click means.
+                let replyIsUnsure = UnsureMarker.containsMarker(fullResponseText)
+                let replyIsAGuidedStep = !replyIsUnsure && GuidedStepMarker.containsMarker(fullResponseText)
+                let parseResult = Self.parsePointingCoordinates(
+                    from: UnsureMarker.removingMarkers(from: GuidedStepMarker.removingMarkers(from: fullResponseText)))
+                let pointedCoordinate = replyIsUnsure ? nil : parseResult.coordinate
                 let spokenText = Self.spokenReply(text: parseResult.spokenText, toolOutcomes: toolOutcomes)
-                if parseResult.coordinate == nil {
+                if replyIsUnsure {
+                    AppLog.append("ask: not sure what to point at\(parseResult.coordinate == nil ? "" : " (its point tag ignored)")")
+                    // The marker came after a tag the pointer already flew to: bring it back.
+                    clearDetectedElementLocation()
+                    showAskIslandStatus(UnsureMarker.islandStatus, holdSeconds: 10)
+                } else if parseResult.coordinate == nil {
                     print("🎯 Element pointing: \(parseResult.elementLabel ?? "no element")")
                 }
 
                 if spokenText.isEmpty {
                     // Nothing to say (an empty answer, or a bare tag): the queue never starts the
                     // voice, so "thinking…" would stay up in silence. An empty turn is not history.
-                    AppLog.append("ask: empty answer (\(parseResult.coordinate == nil ? "no point" : "point only"))")
+                    AppLog.append("ask: empty answer (\(pointedCoordinate == nil ? "no point" : "point only"))")
                     guideStepUnderWay = nil
                     dismissCursorCaption()
-                    if parseResult.coordinate == nil {
+                    if pointedCoordinate == nil {
                         lastQuestionFailed = true
                         speakWithSystemVoice(Self.emptyAnswerSentence)
                     }
@@ -1991,6 +2006,18 @@ final class CompanionManager: ObservableObject {
     /// What the island's status says instead of the ask lane's state, while set: the pause before
     /// sending the screen, or a reply that was not sure what to point at.
     @Published private(set) var askIslandStatus: String?
+    private var askIslandStatusExpiry: Task<Void, Never>?
+
+    /// Puts `status` on the island for a while (a new question or a stop takes it away sooner).
+    private func showAskIslandStatus(_ status: String, holdSeconds: TimeInterval) {
+        askIslandStatus = status
+        askIslandStatusExpiry?.cancel()
+        askIslandStatusExpiry = Task { [weak self] in
+            try? await Task.sleep(for: .seconds(holdSeconds))
+            guard !Task.isCancelled, let self, self.askIslandStatus == status else { return }
+            self.askIslandStatus = nil
+        }
+    }
     /// The ⌃⌥ press was stopped with esc while it was still listening or transcribing: words the
     /// session hands over after all are dropped.
     private var askPressWasStopped = false

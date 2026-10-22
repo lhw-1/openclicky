@@ -17,8 +17,10 @@
 //  The [POINT:…] tag is never spoken. The ask prompt puts it first, so the chunker holds the text
 //  back until the tag is complete and records it in `pointTag`; a tag at the end (older prompts,
 //  or a model that ignores the instruction) is found when the stream finishes. The guide's [NEXT]
-//  marker (`GuidedStepMarker`) is never spoken either: it holds no sentence end, so it only ever
-//  arrives whole inside a piece, and is taken out of every piece.
+//  marker (`GuidedStepMarker`) and the [UNSURE] marker (`UnsureMarker`) are never spoken either:
+//  they hold no sentence end, so they only ever arrive whole inside a piece, and are taken out of
+//  every piece. [UNSURE] opens its answer, so a tag after it still counts as leading (and is then
+//  ignored by whoever points: `isUnsure`).
 //
 
 import Foundation
@@ -26,6 +28,8 @@ import Foundation
 struct SpokenChunker {
     /// The [POINT:…] tag, once it has been seen in full (leading, or trailing at `finish()`).
     private(set) var pointTag: String?
+    /// The answer carries the [UNSURE] marker: it is not sure what to point at, so it must not point.
+    private(set) var isUnsure = false
 
     private let laterChunkMinimum: Int
     private let firstChunkMinimum: Int
@@ -46,12 +50,13 @@ struct SpokenChunker {
     /// that are now ready to speak, in order.
     mutating func feed(accumulated accumulatedText: String) -> [String] {
         latestAccumulatedText = accumulatedText
+        if !isUnsure && UnsureMarker.containsMarker(accumulatedText) { isUnsure = true }
         guard resolveLeadingTag(in: accumulatedText) else { return [] }
 
         var readyChunks: [String] = []
         while let chunk = nextCompleteChunk(in: accumulatedText) {
-            // An empty chunk is only whitespace that was passed over (or a lone [NEXT] marker).
-            let spokenChunk = GuidedStepMarker.removingMarkers(from: chunk)
+            // An empty chunk is only whitespace that was passed over (or a lone marker).
+            let spokenChunk = Self.removingMarkers(from: chunk)
             if !spokenChunk.isEmpty { readyChunks.append(spokenChunk) }
         }
         return readyChunks
@@ -66,7 +71,7 @@ struct SpokenChunker {
             leadingTagResolved = true
         }
         // Without the marker first, so "… [POINT:10,20:x] [NEXT]" still finds the trailing tag.
-        var remainingText = GuidedStepMarker.removingMarkers(from: String(accumulatedText.dropFirst(consumedCharacterCount)))
+        var remainingText = Self.removingMarkers(from: String(accumulatedText.dropFirst(consumedCharacterCount)))
         consumedCharacterCount = accumulatedText.count
 
         // A trailing tag is never spoken, even after a leading one ("[POINT:none] [POINT:10,20:x]");
@@ -85,26 +90,36 @@ struct SpokenChunker {
             unspokenText = unspokenText[cut...]
         }
         lastChunks.append(unspokenText.trimmingCharacters(in: .whitespacesAndNewlines))
-        return lastChunks.map { GuidedStepMarker.removingMarkers(from: $0) }.filter { !$0.isEmpty }
+        return lastChunks.map { Self.removingMarkers(from: $0) }.filter { !$0.isEmpty }
     }
 
     // MARK: - Private
+
+    /// The text without the guide's [NEXT] and without [UNSURE], trimmed.
+    private static func removingMarkers(from text: String) -> String {
+        UnsureMarker.removingMarkers(from: GuidedStepMarker.removingMarkers(from: text))
+    }
 
     private static let completeLeadingTagPattern = #"^\s*\[POINT:[^\]]*\]"#
     private static let trailingTagPattern = #"\[POINT:[^\]]*\]\s*$"#
 
     /// True once speech may start: either the answer does not open with a tag, or the tag is complete.
+    /// An opening [UNSURE] is looked past, so a tag after it is still taken out and never spoken.
     private mutating func resolveLeadingTag(in accumulatedText: String) -> Bool {
         if leadingTagResolved { return true }
-        let trimmedStart = accumulatedText.drop { $0.isWhitespace }
+        let unsureMarkerLength = UnsureMarker.leadingMarkerLength(in: accumulatedText) ?? 0
+        let textAfterMarker = String(accumulatedText.dropFirst(unsureMarkerLength))
+        let trimmedStart = textAfterMarker.drop { $0.isWhitespace }
         if trimmedStart.isEmpty { return false }
+        // "[" or "[UNS…" could still become the marker: wait for more text before deciding.
+        if unsureMarkerLength == 0 && UnsureMarker.couldStillBecomeMarker(trimmedStart) { return false }
         // "[" or "[POI…" could still become a tag: wait for more text before deciding.
         if "[POINT:".hasPrefix(String(trimmedStart.prefix(7))) || trimmedStart.hasPrefix("[POINT:") {
-            guard let tagRange = accumulatedText.range(of: Self.completeLeadingTagPattern, options: .regularExpression) else {
+            guard let tagRange = textAfterMarker.range(of: Self.completeLeadingTagPattern, options: .regularExpression) else {
                 return false
             }
-            pointTag = String(accumulatedText[tagRange]).trimmingCharacters(in: .whitespacesAndNewlines)
-            consumedCharacterCount = accumulatedText.distance(from: accumulatedText.startIndex, to: tagRange.upperBound)
+            pointTag = String(textAfterMarker[tagRange]).trimmingCharacters(in: .whitespacesAndNewlines)
+            consumedCharacterCount = unsureMarkerLength + textAfterMarker.distance(from: textAfterMarker.startIndex, to: tagRange.upperBound)
         }
         leadingTagResolved = true
         return true

@@ -210,7 +210,8 @@ final class StreamingAnswerSpeaker {
     }
 
     private func handlePointTagIfKnown() {
-        guard !isCancelled, !hasHandledPointTag, let pointTag = chunker.pointTag else { return }
+        // An [UNSURE] answer never points, even when the model sent a tag with it.
+        guard !isCancelled, !hasHandledPointTag, !chunker.isUnsure, let pointTag = chunker.pointTag else { return }
         hasHandledPointTag = true
         onPointTag(pointTag)
     }
