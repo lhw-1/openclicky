@@ -33,8 +33,9 @@ enum TeacherPlugin {
     static let sketchGrammar = """
     One command per line (or separated by ";"). Board units, origin top-left, y grows downward; default board 400 by 300.
     board W H — optional first line to change the board's size.
-    line x1 y1 x2 y2 · arrow x1 y1 x2 y2 (head at the second point) · curve x1 y1 x2 y2 x3 y3 … (smooth freehand) · shape x1 y1 x2 y2 x3 y3 … (closed outline) · circle cx cy r · arc cx cy r from to (degrees, 0 right, 90 down) · box x y w h · right_angle vx vy ax ay bx by (square mark at vertex v between the arms to a and b) · angle vx vy ax ay bx by (arc marking that angle) · dot x y · text x y "words" (handwriting centred on x y) · pause seconds.
+    line x1 y1 x2 y2 · arrow x1 y1 x2 y2 (head at the second point) · curve x1 y1 x2 y2 x3 y3 … (smooth freehand) · shape x1 y1 x2 y2 x3 y3 … (closed outline) · circle cx cy r · arc cx cy r from to (degrees, 0 right, 90 down) · box x y w h · right_angle vx vy ax ay bx by (square mark at vertex v between the arms to a and b) · angle vx vy ax ay bx by (arc marking that angle; use this, not arc, to mark an angle) · dot x y · text x y "words" (handwriting centred on x y) · pause seconds.
     After the numbers, any of: a colour (ink, red, blue, green, orange, purple, grey), dashed, fill, thick, thin; for text, big or small.
+    Plan it like a textbook figure, using most of the board: first the setting (the surface or boundary between two materials, the block, the triangle, the axes), then what moves or acts across it (rays, forces, arrows), then labels last. Every line must be physically and mathematically right; work out the coordinates before you write them. Put each label just beside the thing it names, never on top of a line, and keep words short. A title goes at the very top, with nothing else within 50 units below it.
     Example, Pythagoras:
     shape 80 240 320 240 80 60
     right_angle 80 240 320 240 80 60
@@ -48,7 +49,7 @@ enum TeacherPlugin {
 
     static func realtimeToolDefinitions() -> [[String: Any]] {
         [
-            ["type": "function", "name": drawToolName, "description": drawToolDescription, "parameters": drawParameters],
+            ["type": "function", "name": drawToolName, "description": realtimeDrawToolDescription, "parameters": realtimeDrawParameters],
             ["type": "function", "name": pictureToolName, "description": pictureToolDescription, "parameters": pictureParameters],
         ]
     }
@@ -61,6 +62,17 @@ enum TeacherPlugin {
     }
 
     private static let drawToolDescription = "Draw a teaching diagram on the user's screen, in handwriting, in an empty area; it draws itself stroke by stroke while you explain. " + sketchGrammar
+    /// The voice model describes the drawing and `TeacherSketchWriter` writes it: asked for
+    /// coordinates itself, the Realtime model drew refraction with the ray down the normal.
+    private static let realtimeDrawToolDescription = "Draw a teaching diagram on the user's screen, in handwriting, in an empty area. Describe what to draw in words, never coordinates; a drawing model draws it stroke by stroke, appearing a few seconds after the call."
+    private static let realtimeDrawParameters: [String: Any] = [
+        "type": "object",
+        "properties": [
+            "title": ["type": "string", "description": "What the drawing shows, 1-5 words, e.g. 'Refraction of light'."],
+            "what_to_draw": ["type": "string", "description": "One or two sentences: the setting, each part and its label, and what must be right, e.g. 'light going from air into water: the boundary, the dashed normal, the incident ray, the refracted ray bending toward the normal, angles i and r marked'."],
+        ],
+        "required": ["title", "what_to_draw"],
+    ]
     private static let pictureToolDescription = "Show a real picture (from Wikimedia Commons or Wikipedia) on the user's screen when a drawing cannot show the idea well."
     private static let drawParameters: [String: Any] = [
         "type": "object",
@@ -90,6 +102,22 @@ enum TeacherPlugin {
         case drawToolName:
             let source = arguments["sketch"] as? String ?? ""
             let title = (arguments["title"] as? String ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+            let whatToDraw = (arguments["what_to_draw"] as? String ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+            if source.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty, !whatToDraw.isEmpty {
+                // Written in the background, for the same reason as a picture search below.
+                let requestToken = board.beginPictureSearch()
+                Task { @MainActor in
+                    guard let written = await TeacherSketchWriter.write(title: title, whatToDraw: whatToDraw),
+                          let sketch = TeacherSketchParser.parse(written).sketch else {
+                        AppLog.append("teacher: no drawing for the description")
+                        return
+                    }
+                    if !board.show(sketch: sketch, title: title, capture: capture, requestToken: requestToken) {
+                        AppLog.append("teacher: drawing arrived after the board moved on; not shown")
+                    }
+                }
+                return "the drawing appears on their screen in a few seconds; start explaining now, part by part in the order you described it"
+            }
             let result = TeacherSketchParser.parse(source)
             guard let sketch = result.sketch else {
                 AppLog.append("teacher: nothing drawable in the sketch (\(result.skippedLines.count) lines skipped)")
@@ -149,17 +177,22 @@ final class TeacherBoard: ObservableObject {
     /// Bumped by every show and clear, so a picture that arrives after the board moved on is dropped.
     private var requestToken = 0
 
-    func show(sketch: TeacherSketch, title: String, capture: CompanionScreenCapture?) {
+    /// False when the board moved on (another lesson, a clear) while this one was being written.
+    @discardableResult
+    func show(sketch: TeacherSketch, title: String, capture: CompanionScreenCapture?, requestToken expectedToken: Int? = nil) -> Bool {
+        if let expectedToken, expectedToken != requestToken { return false }
         requestToken &+= 1
         let drawingBounds = TeacherSketchLayout.drawingBounds(of: sketch)
         let placement = TeacherBoardPlacement.placement(
             aspectRatio: drawingBounds.width / max(drawingBounds.height, 1), in: capture, mouseLocation: NSEvent.mouseLocation)
         let lesson = Lesson(title: title.isEmpty ? "drawing" : title, content: .sketch(sketch), style: placement.style, startedAt: Date())
-        AppLog.append("teacher: drawing \"\(lesson.title)\" (\(sketch.strokes.count) strokes, \(placement.style)) at \(Int(placement.frame.width))×\(Int(placement.frame.height))")
+        AppLog.append("teacher: drawing \"\(lesson.title)\" (\(sketch.strokes.count) strokes, \(placement.style)) at \(Int(placement.frame.width))×\(Int(placement.frame.height)) (\(Int(placement.frame.minX)), \(Int(placement.frame.minY)))")
         present(lesson, in: placement.frame)
         pointAtLabels(of: sketch, in: placement.frame, style: placement.style, startedAt: lesson.startedAt)
+        return true
     }
 
+    /// The token a background job (a picture search, a drawing being written) shows its result with.
     func beginPictureSearch() -> Int {
         requestToken
     }

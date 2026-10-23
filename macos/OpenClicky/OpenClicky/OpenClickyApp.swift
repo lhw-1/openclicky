@@ -121,20 +121,17 @@ final class CompanionAppDelegate: NSObject, NSApplicationDelegate {
                     let started = Date()
                     try await client.connectIfNeeded(mode: .pushToTalk)
                     print("smoke: connected in \(Int(Date().timeIntervalSince(started) * 1000)) ms")
-                    // OPENCLICKY_SMOKE_TEACHER=1 offers the Teacher's tools (whatever its switch says)
-                    // and draws what the model sends, printing the sketch it wrote.
+                    // OPENCLICKY_SMOKE_TEACHER=1 offers the Teacher's tools (switching it on) and runs
+                    // what the model asks for as the app would, printing the call.
                     let offersTeacher = ProcessInfo.processInfo.environment["OPENCLICKY_SMOKE_TEACHER"] == "1"
                     if offersTeacher {
                         client.pluginToolsProvider = { TeacherPlugin.realtimeToolDefinitions() }
                         client.onPluginToolCall = { toolName, arguments, capture in
                             guard TeacherPlugin.toolNames.contains(toolName) else { return nil }
-                            print("smoke: \(toolName) \(arguments["title"] ?? arguments["query"] ?? "")\n\(arguments["sketch"] ?? "")")
-                            guard toolName == TeacherPlugin.drawToolName else { return "a picture appears on their screen in a moment" }
-                            let result = TeacherSketchParser.parse(arguments["sketch"] as? String ?? "")
-                            print("smoke: parsed \(result.sketch?.strokes.count ?? 0) strokes, skipped \(result.skippedLines)")
-                            guard let sketch = result.sketch else { return "could not read the drawing" }
-                            TeacherBoard.shared.show(sketch: sketch, title: arguments["title"] as? String ?? "", capture: capture)
-                            return "drawing it on their screen now; explain it part by part in the order you drew it"
+                            print("smoke: \(toolName) \(arguments)")
+                            var settings = IslandComponentSettings(defaults: .standard)
+                            if !settings.enabledPlugins.contains(TeacherPlugin.id) { settings.enabledPlugins.append(TeacherPlugin.id) }
+                            return await TeacherPlugin.perform(toolName: toolName, arguments: arguments, capture: capture)
                         }
                     }
                     // Installed after connect (like a skill toggled / app switch mid-session) so the
@@ -168,7 +165,8 @@ final class CompanionAppDelegate: NSObject, NSApplicationDelegate {
                     // A `point_at` that fell back to Claude is still resolving when the reply ends.
                     await client.awaitPendingPointing()
                     try? await Task.sleep(nanoseconds: 3_000_000_000)
-                    if TeacherBoard.shared.lesson != nil { try? await Task.sleep(nanoseconds: 8_000_000_000) }
+                    // The drawing is written in the background and then drawn; give it time to show.
+                    if offersTeacher { try? await Task.sleep(nanoseconds: 14_000_000_000) }
                     print("smoke: after idle → \(await client.debugSummary())")
                     client.disconnect(reason: finished ? "smoke done" : "smoke timed out waiting for the reply")
                     exit(finished ? 0 : 1)
@@ -214,6 +212,39 @@ final class CompanionAppDelegate: NSObject, NSApplicationDelegate {
                 }
             }
             return
+        }
+
+        if let argumentIndex = launchArguments.firstIndex(of: "--openclicky-teacher-render"), argumentIndex + 2 < launchArguments.count {
+            // Draws a sketch file, finished, into a PNG instead of onto the screen (comparing what
+            // models draw without showing whatever else is on screen).
+            //   OpenClicky --openclicky-teacher-render sketch.txt out.png [ink|chalk|paper]
+            let sketchPath = launchArguments[argumentIndex + 1]
+            let outputPath = launchArguments[argumentIndex + 2]
+            let styleWord = argumentIndex + 3 < launchArguments.count ? launchArguments[argumentIndex + 3] : "paper"
+            let style: TeacherBoardStyle = styleWord == "ink" ? .inkOnLightPage : (styleWord == "chalk" ? .chalkOnDarkPage : .paper)
+            let result = TeacherSketchParser.parse((try? String(contentsOfFile: sketchPath, encoding: .utf8)) ?? "")
+            guard let sketch = result.sketch else {
+                print("render: nothing drawable (\(result.skippedLines.count) lines skipped)")
+                exit(1)
+            }
+            let bounds = TeacherSketchLayout.drawingBounds(of: sketch)
+            let width: CGFloat = 560
+            let height = (width * bounds.height / max(bounds.width, 1)).rounded()
+            let background = style == .chalkOnDarkPage ? Color(hex: "#1E1F22") : (style == .inkOnLightPage ? .white : Color(hex: "#FFFDF6"))
+            let view = TeacherSketchView(sketch: sketch, style: style, startedAt: .distantPast)
+                .padding(22)
+                .frame(width: width, height: height)
+                .background(background)
+            let renderer = ImageRenderer(content: view)
+            renderer.scale = 2
+            guard let image = renderer.cgImage,
+                  let png = NSBitmapImageRep(cgImage: image).representation(using: .png, properties: [:]) else {
+                print("render: could not render")
+                exit(1)
+            }
+            try? png.write(to: URL(fileURLWithPath: outputPath))
+            print("render: \(sketch.strokes.count) strokes, skipped \(result.skippedLines) → \(outputPath)")
+            exit(0)
         }
 
         if let argumentIndex = launchArguments.firstIndex(of: "--openclicky-teacher-smoke") {

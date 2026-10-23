@@ -208,6 +208,23 @@ struct TeacherPluginTests {
         #expect(TeacherPlugin.anthropicToolDefinitions().allSatisfy { $0["input_schema"] != nil })
     }
 
+    @Test func theVoiceLaneDescribesTheDrawingAndTheAskLaneWritesIt() {
+        let realtimeDraw = TeacherPlugin.realtimeToolDefinitions().first { $0["name"] as? String == TeacherPlugin.drawToolName }
+        let realtimeRequired = (realtimeDraw?["parameters"] as? [String: Any])?["required"] as? [String]
+        #expect(realtimeRequired == ["title", "what_to_draw"])
+        let anthropicDraw = TeacherPlugin.anthropicToolDefinitions().first { $0["name"] as? String == TeacherPlugin.drawToolName }
+        let anthropicRequired = (anthropicDraw?["input_schema"] as? [String: Any])?["required"] as? [String]
+        #expect(anthropicRequired == ["title", "sketch"])
+    }
+
+    @Test func theSketchWritersReplyIsReadAndUnfenced() throws {
+        let reply = #"{"choices":[{"message":{"role":"assistant","content":"```\nline 0 0 10 10\n```"}}]}"#
+        let text = try #require(TeacherSketchWriter.chatCompletionText(from: Data(reply.utf8)))
+        #expect(TeacherSketchWriter.withoutCodeFences(text) == "line 0 0 10 10")
+        #expect(TeacherSketchWriter.chatCompletionText(from: Data(#"{"choices":[{"message":{"content":"  "}}]}"#.utf8)) == nil)
+        #expect(TeacherSketchWriter.userPrompt(title: "Refraction", whatToDraw: "a ray").contains("Draw: a ray"))
+    }
+
     @MainActor @Test func anotherToolIsNotTheTeachersBusiness() async {
         #expect(await TeacherPlugin.perform(toolName: "open_app", arguments: [:], capture: nil) == nil)
     }
