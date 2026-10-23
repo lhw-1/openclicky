@@ -126,6 +126,10 @@ final class CompanionAppDelegate: NSObject, NSApplicationDelegate {
                     let offersTeacher = ProcessInfo.processInfo.environment["OPENCLICKY_SMOKE_TEACHER"] == "1"
                     if offersTeacher {
                         client.pluginToolsProvider = { TeacherPlugin.realtimeToolDefinitions() }
+                        client.onTranscript = { role, text in
+                            print("smoke: \(role == .user ? "you" : "openclicky"): \(text)")
+                            if role == .user { TeacherPlugin.startLesson(for: text, capture: client.lastScreenCapture) }
+                        }
                         client.onPluginToolCall = { toolName, arguments, capture in
                             guard TeacherPlugin.toolNames.contains(toolName) else { return nil }
                             print("smoke: \(toolName) \(arguments)")

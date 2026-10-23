@@ -24,22 +24,60 @@ enum TeacherSketchWriter {
         "Draw: \(whatToDraw)\nTitle: \(title)"
     }
 
-    /// The drawing commands, or nil when no model could write them.
-    @MainActor static func write(title: String, whatToDraw: String) async -> String? {
-        let startedAt = Date()
-        let sketch: String?
-        if let openAIKey = ProviderRouter.currentCredentials().openAIKey {
-            sketch = await writeWithOpenAI(key: openAIKey, title: title, whatToDraw: whatToDraw)
-        } else {
-            let answers = ClaudeAPI(currentProxyURL: { "\(OpenClickyConfiguration.backendBaseURL)/chat" })
-            sketch = try? await answers.analyzeImage(images: [], systemPrompt: systemPrompt,
-                                                     userPrompt: userPrompt(title: title, whatToDraw: whatToDraw)).text
-        }
-        AppLog.append("teacher: sketch \(sketch == nil ? "not written" : "written") in \(String(format: "%.1f", Date().timeIntervalSince(startedAt))) s")
-        return sketch.map(withoutCodeFences)
+    /// For a question nobody has described a drawing for yet (`TeacherPlugin.startLesson`).
+    static func userPrompt(question: String) -> String {
+        """
+        The student asked: "\(question)"
+        Draw the one diagram a good teacher would put on the whiteboard to answer it, with a short title at the top. \
+        If no simple diagram can show it well (a real animal, an organ, a place, a painting, a photo of a machine), \
+        reply with exactly one line instead: PICTURE: <a short search phrase in English>
+        """
     }
 
-    private static func writeWithOpenAI(key: String, title: String, whatToDraw: String) async -> String? {
+    /// What the writer answered: drawing commands, or a picture to search for.
+    enum Reply: Equatable {
+        case sketch(String)
+        case picture(query: String)
+
+        static func parse(_ text: String) -> Reply {
+            let trimmed = withoutCodeFences(text).trimmingCharacters(in: .whitespacesAndNewlines)
+            if trimmed.uppercased().hasPrefix("PICTURE:") {
+                return .picture(query: String(trimmed.dropFirst("PICTURE:".count)).trimmingCharacters(in: .whitespacesAndNewlines))
+            }
+            return .sketch(trimmed)
+        }
+    }
+
+    /// The drawing commands, or nil when no model could write them.
+    @MainActor static func write(title: String, whatToDraw: String) async -> String? {
+        await complete(userPrompt: userPrompt(title: title, whatToDraw: whatToDraw)).map(withoutCodeFences)
+    }
+
+    /// The lesson for a question: drawing commands or a picture search; nil when no model answered.
+    @MainActor static func lesson(for question: String) async -> Reply? {
+        await complete(userPrompt: userPrompt(question: question)).map(Reply.parse)
+    }
+
+    /// Only on an own OpenAI key: without it the writer is the ask lane's source, which on a plan
+    /// takes 15 s or more, so a lesson started early would race the model's own drawing for nothing.
+    @MainActor static var canStartLessonsEarly: Bool {
+        ProviderRouter.currentCredentials().openAIKey != nil
+    }
+
+    @MainActor private static func complete(userPrompt: String) async -> String? {
+        let startedAt = Date()
+        let reply: String?
+        if let openAIKey = ProviderRouter.currentCredentials().openAIKey {
+            reply = await writeWithOpenAI(key: openAIKey, userPrompt: userPrompt)
+        } else {
+            let answers = ClaudeAPI(currentProxyURL: { "\(OpenClickyConfiguration.backendBaseURL)/chat" })
+            reply = try? await answers.analyzeImage(images: [], systemPrompt: systemPrompt, userPrompt: userPrompt).text
+        }
+        AppLog.append("teacher: sketch \(reply == nil ? "not written" : "written") in \(String(format: "%.1f", Date().timeIntervalSince(startedAt))) s")
+        return reply
+    }
+
+    private static func writeWithOpenAI(key: String, userPrompt: String) async -> String? {
         var request = DirectProviderRequests.openAIChatCompletions(key: key)
         request.timeoutInterval = timeoutSeconds
         request.httpBody = try? JSONSerialization.data(withJSONObject: [
@@ -47,7 +85,7 @@ enum TeacherSketchWriter {
             "reasoning_effort": "none",
             "messages": [
                 ["role": "system", "content": systemPrompt],
-                ["role": "user", "content": userPrompt(title: title, whatToDraw: whatToDraw)],
+                ["role": "user", "content": userPrompt],
             ],
         ] as [String: Any])
         guard let (data, response) = try? await URLSession.shared.data(for: request) else { return nil }

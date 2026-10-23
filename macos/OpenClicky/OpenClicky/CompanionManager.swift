@@ -236,6 +236,7 @@ final class CompanionManager: ObservableObject {
                 self.lastTranscript = text
                 print("🗣️ (realtime) \(text)")
                 AppLog.append("talk: you said: \(text.prefix(300))")
+                TeacherPlugin.startLesson(for: text, capture: self.realtimeVoiceClient.lastScreenCapture)
             case .assistant:
                 AppLog.append("talk: openclicky said: \(text.prefix(300))")
                 self.rememberExchange(userTranscript: self.lastTranscript ?? "", assistantResponse: text)
@@ -1461,6 +1462,7 @@ final class CompanionManager: ObservableObject {
         interruptCurrentAnswer(includingAgentWork: true)
         clearDetectedElementLocation()
         dismissCursorCaption()
+        TeacherPlugin.clearBoard(reason: "a new question")
         lastTranscript = trimmedText
         ClickyAnalytics.trackUserMessageSent(characterCount: trimmedText.count)
         print("⌨️ Typed request: \(trimmedText)")
@@ -1475,6 +1477,7 @@ final class CompanionManager: ObservableObject {
             do {
                 try await self.realtimeVoiceClient.connectIfNeeded(mode: self.isAlwaysListening ? .alwaysOn : .pushToTalk)
                 await self.realtimeVoiceClient.sendTextTurn(trimmedText)
+                TeacherPlugin.startLesson(for: trimmedText, capture: self.realtimeVoiceClient.lastScreenCapture)
             } catch {
                 print("⚠️ Realtime unavailable for the typed request (\(error.localizedDescription)); using the teacher lane")
                 self.sendTranscriptToClaudeWithScreenshot(transcript: trimmedText)
@@ -1749,6 +1752,9 @@ final class CompanionManager: ObservableObject {
                 let isRepeatedQuestion = RepeatedQuestion.isRepeat(transcript, of: lastAskQuestion?.transcript, secondsSincePrevious: secondsSinceLastQuestion)
                 lastAskQuestion = (transcript: transcript, askedAt: Date())
                 if isRepeatedQuestion { AppLog.append("ask: the same question again; answering about what is under the pointer") }
+                if !isGuidedStepContinuation {
+                    TeacherPlugin.startLesson(for: transcript, capture: screenCaptures.first(where: { $0.isCursorScreen }) ?? screenCaptures.first)
+                }
                 // The text a "rephrase this" would replace: the highlight, or the box the cursor is in.
                 let writingTarget = await WritingTarget.captureFromFrontApp()
                 guard !Task.isCancelled else { return }

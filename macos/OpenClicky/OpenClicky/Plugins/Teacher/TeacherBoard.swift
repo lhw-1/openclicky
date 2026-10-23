@@ -27,7 +27,7 @@ enum TeacherPlugin {
     }
 
     static let promptInstruction = """
-    teaching: when they ask you to teach or explain an idea that a picture makes clearer (a theorem, a shape, a graph, how light bends, a cycle, forces, a circuit), draw it on their screen with \(drawToolName) first, before you explain, then explain it part by part in the order you drew it. it appears in handwriting in an empty part of their screen, so label every part (a, b, c, angles, names) and use arrows with short notes to point things out. keep it simple, like a good teacher on a whiteboard: one clear diagram, no more than about twenty five commands. a lesson may be longer than your usual answers, up to about eighty words, walking through the drawing; don't use point_at or point tags for it, the pointer follows the labels on its own. when a drawing can't show it well (a real animal, an organ, a place, a famous painting, detailed apparatus), call \(pictureToolName) with a short search phrase instead. don't draw for ordinary questions or for how-to steps on screen; those use pointing.
+    teaching: when they ask you to teach or explain an idea that a picture makes clearer (a theorem, a shape, a graph, how light bends, a cycle, forces, a circuit), draw it on their screen with \(drawToolName) first, before you explain, then explain it part by part in the order you drew it. it appears in handwriting in an empty part of their screen, so label every part (a, b, c, angles, names) and use arrows with short notes to point things out. keep it simple, like a good teacher on a whiteboard: one clear diagram, no more than about twenty five commands. a lesson may be longer than your usual answers, up to about eighty words, walking through the drawing; don't use point_at or point tags for it, the pointer follows the labels on its own. when a drawing can't show it well (a real animal, an organ, a place, a famous painting, detailed apparatus), call \(pictureToolName) with a short search phrase instead. don't draw for ordinary questions or for how-to steps on screen; those use pointing. never list or read out what you would draw instead of calling the tool; the drawing may already be appearing, so explain the idea while it does.
     """
 
     static let sketchGrammar = """
@@ -35,7 +35,7 @@ enum TeacherPlugin {
     board W H — optional first line to change the board's size.
     line x1 y1 x2 y2 · arrow x1 y1 x2 y2 (head at the second point) · curve x1 y1 x2 y2 x3 y3 … (smooth freehand) · shape x1 y1 x2 y2 x3 y3 … (closed outline) · circle cx cy r · arc cx cy r from to (degrees, 0 right, 90 down) · box x y w h · right_angle vx vy ax ay bx by (square mark at vertex v between the arms to a and b) · angle vx vy ax ay bx by (arc marking that angle; use this, not arc, to mark an angle) · dot x y · text x y "words" (handwriting centred on x y) · pause seconds.
     After the numbers, any of: a colour (ink, red, blue, green, orange, purple, grey), dashed, fill, thick, thin; for text, big or small.
-    Plan it like a textbook figure, using most of the board: first the setting (the surface or boundary between two materials, the block, the triangle, the axes), then what moves or acts across it (rays, forces, arrows), then labels last. Every line must be physically and mathematically right; work out the coordinates before you write them. Put each label just beside the thing it names, never on top of a line, and keep words short. A title goes at the very top, with nothing else within 50 units below it.
+    Plan it like a textbook figure, using most of the board: first the setting (the surface or boundary between two materials, the block, the triangle, the axes), then what moves or acts across it (rays, forces, arrows), then labels last. Every line must be physically and mathematically right; work out the coordinates before you write them. Put each label just beside the thing it names, never on top of a line, and keep words short. A title goes at the very top, with nothing else within 50 units below it. Use at most 25 commands: a few clear parts beat many small ones. For a comparison, draw the two side by side, each with its own small heading.
     Example, Pythagoras:
     shape 80 240 320 240 80 60
     right_angle 80 240 320 240 80 60
@@ -98,6 +98,11 @@ enum TeacherPlugin {
         guard toolNames.contains(toolName) else { return nil }
         guard isEnabled else { return "the teacher plugin is off; explain in words" }
         let board = TeacherBoard.shared
+        // The app already started this question's lesson (`startLesson`): one drawing per question.
+        if board.questionHasLesson {
+            return "the drawing for this is already appearing on their screen; explain the idea part by part, as a teacher walking through a whiteboard diagram"
+        }
+        board.questionHasLesson = true
         switch toolName {
         case drawToolName:
             let source = arguments["sketch"] as? String ?? ""
@@ -144,6 +149,41 @@ enum TeacherPlugin {
         }
     }
 
+    /// Starts the lesson for a question as soon as it is known, without waiting for the model to
+    /// call `draw_on_screen` (the Realtime model sometimes describes the drawing in words instead).
+    /// Only for teaching questions (`TeacherQuestion`), and only where the drawing is written fast
+    /// (`TeacherSketchWriter.canStartLessonsEarly`); a tool call that comes later is told the
+    /// drawing is on its way.
+    @MainActor static func startLesson(for question: String, capture: CompanionScreenCapture?) {
+        let board = TeacherBoard.shared
+        guard isEnabled, !board.questionHasLesson, TeacherQuestion.isTeachingQuestion(question),
+              TeacherSketchWriter.canStartLessonsEarly else { return }
+        board.questionHasLesson = true
+        AppLog.append("teacher: a teaching question; starting the lesson")
+        let requestToken = board.beginPictureSearch()
+        let title = String(question.trimmingCharacters(in: .whitespacesAndNewlines).prefix(60))
+        Task { @MainActor in
+            switch await TeacherSketchWriter.lesson(for: question) {
+            case .sketch(let written)?:
+                let result = TeacherSketchParser.parse(written)
+                guard let sketch = result.sketch else {
+                    AppLog.append("teacher: nothing drawable in the written lesson (\(result.skippedLines.count) lines skipped)")
+                    return
+                }
+                if !board.show(sketch: sketch, title: title, capture: capture, requestToken: requestToken) {
+                    AppLog.append("teacher: lesson arrived after the board moved on; not shown")
+                }
+            case .picture(let query)?:
+                guard let picture = await TeacherPictureFinder.find(query: query, caption: query) else { return }
+                if !board.show(picture: picture, capture: capture, requestToken: requestToken) {
+                    AppLog.append("teacher: picture arrived after the board moved on; not shown")
+                }
+            case nil:
+                AppLog.append("teacher: no lesson written for the question")
+            }
+        }
+    }
+
     @MainActor @discardableResult static func clearBoard(reason: String) -> Bool {
         TeacherBoard.shared.clear(reason: reason)
     }
@@ -167,6 +207,9 @@ final class TeacherBoard: ObservableObject {
     }
 
     @Published private(set) var lesson: Lesson?
+    /// A drawing or picture was asked for since the board was last cleared (each question clears
+    /// it), whether by the app or by the model; a second request for the same question is ignored.
+    var questionHasLesson = false
 
     /// The buddy flies to each label as it is written: (AppKit screen point, display frame).
     var onLabelWritten: ((CGPoint, CGRect) -> Void)?
@@ -216,6 +259,7 @@ final class TeacherBoard: ObservableObject {
     @discardableResult
     func clear(reason: String) -> Bool {
         requestToken &+= 1
+        questionHasLesson = false
         guard lesson != nil else { return false }
         AppLog.append("teacher: board cleared (\(reason))")
         labelPointingTask?.cancel()

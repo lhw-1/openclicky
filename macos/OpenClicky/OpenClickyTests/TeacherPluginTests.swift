@@ -225,6 +225,35 @@ struct TeacherPluginTests {
         #expect(TeacherSketchWriter.userPrompt(title: "Refraction", whatToDraw: "a ray").contains("Draw: a ray"))
     }
 
+    @Test func teachingQuestionsAreToldApartFromScreenAndHowToQuestions() {
+        let lessons = [
+            "how does a rotatry engine work compared to a normal engine",
+            "Teach me how the Pythagoras theorem works.",
+            "teach me refraction",
+            "how do vaccines work?",
+            "explain how photosynthesis happens",
+            "what's the difference between a series and a parallel circuit",
+            "AC vs DC",
+        ]
+        let notLessons = [
+            "how do I export this video",
+            "how does this button work",
+            "where is the save menu",
+            "open safari",
+            "what time is it in Tokyo",
+            "how to make a folder on the desktop",
+            "hi",
+        ]
+        for question in lessons { #expect(TeacherQuestion.isTeachingQuestion(question), "\(question)") }
+        for question in notLessons { #expect(!TeacherQuestion.isTeachingQuestion(question), "\(question)") }
+    }
+
+    @Test func theWritersReplyIsADrawingOrAPicture() {
+        #expect(TeacherSketchWriter.Reply.parse("```\nline 0 0 1 1\n```") == .sketch("line 0 0 1 1"))
+        #expect(TeacherSketchWriter.Reply.parse("PICTURE: human heart diagram") == .picture(query: "human heart diagram"))
+        #expect(TeacherSketchWriter.Reply.parse("picture: neuron") == .picture(query: "neuron"))
+    }
+
     @MainActor @Test func anotherToolIsNotTheTeachersBusiness() async {
         #expect(await TeacherPlugin.perform(toolName: "open_app", arguments: [:], capture: nil) == nil)
     }
