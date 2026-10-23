@@ -34,7 +34,7 @@ enum TeacherPlugin {
     One command per line (or separated by ";"). Board units, origin top-left, y grows downward; default board 400 by 300.
     board W H — optional first line to change the board's size.
     line x1 y1 x2 y2 · arrow x1 y1 x2 y2 (head at the second point) · curve x1 y1 x2 y2 x3 y3 … (smooth freehand) · shape x1 y1 x2 y2 x3 y3 … (closed outline) · circle cx cy r · arc cx cy r from to (degrees, 0 right, 90 down) · box x y w h · right_angle vx vy ax ay bx by (square mark at vertex v between the arms to a and b) · angle vx vy ax ay bx by (arc marking that angle; use this, not arc, to mark an angle) · dot x y · text x y "words" (handwriting centred on x y) · pause seconds.
-    After the numbers, any of: a colour (ink, red, blue, green, orange, purple, grey), dashed, fill, thick, thin; for text, big or small.
+    After the numbers, any of: a colour (ink, red, blue, green, orange, purple, grey), dashed, fill, thick, thin; for text, big or small, and left to start the words at x instead of centring them on it.
     Plan it like a textbook figure, using most of the board: first the setting (the surface or boundary between two materials, the block, the triangle, the axes), then what moves or acts across it (rays, forces, arrows), then labels last. Every line must be physically and mathematically right; work out the coordinates before you write them. Put each label just beside the thing it names, never on top of a line, and keep words short. A title goes at the very top, with nothing else within 50 units below it. Use at most 25 commands: a few clear parts beat many small ones. For a comparison, draw the two side by side, each with its own small heading.
     Example, Pythagoras:
     shape 80 240 320 240 80 60
@@ -162,8 +162,10 @@ enum TeacherPlugin {
         AppLog.append("teacher: a teaching question; starting the lesson")
         let requestToken = board.beginPictureSearch()
         let title = String(question.trimmingCharacters(in: .whitespacesAndNewlines).prefix(60))
+        // "Solve this": the writer reads the problem off the same screenshot the question carried.
+        let screenshotJPEG = TeacherQuestion.needsTheScreen(question) ? capture?.imageData : nil
         Task { @MainActor in
-            switch await TeacherSketchWriter.lesson(for: question) {
+            switch await TeacherSketchWriter.lesson(for: question, screenshotJPEG: screenshotJPEG) {
             case .sketch(let written)?:
                 let result = TeacherSketchParser.parse(written)
                 guard let sketch = result.sketch else {
@@ -182,6 +184,19 @@ enum TeacherPlugin {
                 AppLog.append("teacher: no lesson written for the question")
             }
         }
+    }
+
+    /// When they cannot hear (`TeacherListening`), a reply that brought no lesson is written on the
+    /// screen as a handwritten note, so a muted or noisy room still gets the answer.
+    @MainActor static func writeAnswerIfTheyCannotHear(_ answer: String, questionWasTyped: Bool, capture: CompanionScreenCapture?) {
+        let board = TeacherBoard.shared
+        guard isEnabled, !board.questionHasLesson else { return }
+        let output = TeacherListening.currentOutput()
+        guard TeacherListening.answersShouldBeWritten(questionWasTyped: questionWasTyped, output: output),
+              let note = TeacherNote.sketch(for: answer.trimmingCharacters(in: .whitespacesAndNewlines)) else { return }
+        board.questionHasLesson = true
+        AppLog.append("teacher: writing the answer down (typed \(questionWasTyped), volume \(output.volume.map { String(format: "%.0f%%", $0 * 100) } ?? "unknown"), muted \(output.isMuted))")
+        board.show(sketch: note, title: "the answer", capture: capture)
     }
 
     @MainActor @discardableResult static func clearBoard(reason: String) -> Bool {

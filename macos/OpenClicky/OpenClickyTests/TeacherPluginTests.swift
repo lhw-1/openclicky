@@ -248,6 +248,49 @@ struct TeacherPluginTests {
         for question in notLessons { #expect(!TeacherQuestion.isTeachingQuestion(question), "\(question)") }
     }
 
+    @Test func solvingWhatIsOnTheScreenIsALessonThatNeedsTheScreenshot() {
+        for question in ["please solve this equaltion in the screen", "can you help me solve this", "work this out step by step"] {
+            #expect(TeacherQuestion.isTeachingQuestion(question), "\(question)")
+            #expect(TeacherQuestion.needsTheScreen(question), "\(question)")
+        }
+        #expect(!TeacherQuestion.needsTheScreen("how does a rotary engine work"))
+        #expect(!TeacherQuestion.isProblemToSolve("how does a rotary engine work"))
+    }
+
+    @Test func answersAreWrittenWhenTheyCannotHear() {
+        let loud = TeacherListening.Output(volume: 0.8, isMuted: false)
+        #expect(!TeacherListening.answersShouldBeWritten(questionWasTyped: false, output: loud))
+        #expect(TeacherListening.answersShouldBeWritten(questionWasTyped: true, output: loud))
+        #expect(TeacherListening.answersShouldBeWritten(questionWasTyped: false, output: .init(volume: 0.8, isMuted: true)))
+        #expect(TeacherListening.answersShouldBeWritten(questionWasTyped: false, output: .init(volume: 0.31, isMuted: false)))
+        #expect(!TeacherListening.answersShouldBeWritten(questionWasTyped: false, output: .init(volume: nil, isMuted: false)))
+    }
+
+    @Test func aWrittenAnswerWrapsIntoLeftAlignedLines() throws {
+        let answer = "Add the two equations: (x + y) + (2x - y) = 24 + (-6). That gives 3x = 18, so x = 6. Then 6 + y = 24, so y = 18."
+        let lines = TeacherNote.wrappedLines(answer)
+        #expect(lines.count >= 3)
+        #expect(lines.allSatisfy { $0.count <= TeacherNote.charactersPerLine || !$0.contains(" ") })
+        #expect(lines.joined(separator: " ") == answer)
+        let note = try #require(TeacherNote.sketch(for: answer))
+        #expect(note.strokes.allSatisfy { $0.isLeftAligned })
+        let long = TeacherNote.wrappedLines(String(repeating: "word ", count: 400))
+        #expect(long.count == TeacherNote.maximumLines && long.last?.hasSuffix("…") == true)
+        #expect(TeacherNote.sketch(for: "   ") == nil)
+    }
+
+    @Test func leftIsAnOptionNotAWord() throws {
+        let sketch = try #require(TeacherSketchParser.parse("text 10 20 \"x = 6\" left red").sketch)
+        #expect(sketch.strokes[0].isLeftAligned && sketch.strokes[0].ink == .red && sketch.strokes[0].kind == .text("x = 6"))
+    }
+
+    @Test func theScreenshotRidesAlongAsAnImage() {
+        #expect(TeacherSketchWriter.userContent(userPrompt: "hi", screenshotJPEG: nil) as? String == "hi")
+        let parts = TeacherSketchWriter.userContent(userPrompt: "hi", screenshotJPEG: Data([1, 2])) as? [[String: Any]]
+        #expect(parts?.count == 2)
+        #expect(((parts?[1]["image_url"] as? [String: Any])?["url"] as? String)?.hasPrefix("data:image/jpeg;base64,") == true)
+    }
+
     @Test func theWritersReplyIsADrawingOrAPicture() {
         #expect(TeacherSketchWriter.Reply.parse("```\nline 0 0 1 1\n```") == .sketch("line 0 0 1 1"))
         #expect(TeacherSketchWriter.Reply.parse("PICTURE: human heart diagram") == .picture(query: "human heart diagram"))

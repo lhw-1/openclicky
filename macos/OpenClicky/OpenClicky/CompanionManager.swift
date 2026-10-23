@@ -239,6 +239,7 @@ final class CompanionManager: ObservableObject {
                 TeacherPlugin.startLesson(for: text, capture: self.realtimeVoiceClient.lastScreenCapture)
             case .assistant:
                 AppLog.append("talk: openclicky said: \(text.prefix(300))")
+                TeacherPlugin.writeAnswerIfTheyCannotHear(text, questionWasTyped: self.lastQuestionWasTyped, capture: self.realtimeVoiceClient.lastScreenCapture)
                 self.rememberExchange(userTranscript: self.lastTranscript ?? "", assistantResponse: text)
                 print("🔊 (realtime) \(text)")
             }
@@ -639,6 +640,10 @@ final class CompanionManager: ObservableObject {
     /// Account notices (a limit, the free service's trouble) already spoken this session: each is
     /// said once, then the lane falls back silently.
     private var spokenAccountNotices: Set<String> = []
+
+    /// The question in flight was typed (the composer), not spoken: they may not be able to hear
+    /// either, so the Teacher writes the answer down (`TeacherListening`).
+    private var lastQuestionWasTyped = false
 
     /// The currently running AI response task, if any. Cancelled when the user
     /// speaks again so a new response can begin immediately.
@@ -1463,6 +1468,7 @@ final class CompanionManager: ObservableObject {
         clearDetectedElementLocation()
         dismissCursorCaption()
         TeacherPlugin.clearBoard(reason: "a new question")
+        lastQuestionWasTyped = true
         lastTranscript = trimmedText
         ClickyAnalytics.trackUserMessageSent(characterCount: trimmedText.count)
         print("⌨️ Typed request: \(trimmedText)")
@@ -1515,6 +1521,7 @@ final class CompanionManager: ObservableObject {
         }
         switch transition {
         case .pressed:
+            lastQuestionWasTyped = false
             // The fn take has its own manager: a take in progress (a tapped one keeps the microphone
             // after the key is up) is the dictation this guard means too.
             guard !buddyDictationManager.isDictationInProgress, !dictationTakeController.isTakeInProgress else {
@@ -1884,6 +1891,8 @@ final class CompanionManager: ObservableObject {
                     }
                 } else {
                     rememberExchange(userTranscript: transcript, assistantResponse: spokenText)
+                    TeacherPlugin.writeAnswerIfTheyCannotHear(spokenText, questionWasTyped: lastQuestionWasTyped,
+                                                              capture: screenCaptures.first(where: { $0.isCursorScreen }) ?? screenCaptures.first)
                     if replyIsAGuidedStep {
                         waitForTheGuidedStepToBeDone()
                     } else {
@@ -2167,6 +2176,7 @@ final class CompanionManager: ObservableObject {
     private func handleRealtimeShortcutTransition(_ transition: BuddyPushToTalkShortcut.ShortcutTransition) {
         switch transition {
         case .pressed:
+            lastQuestionWasTyped = false
             guard !isDictatingToFrontApp else { return }
             lastQuestionFailed = false
             dismissCursorCaption()

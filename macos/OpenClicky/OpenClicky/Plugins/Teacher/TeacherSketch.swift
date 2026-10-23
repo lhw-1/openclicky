@@ -65,6 +65,8 @@ struct TeacherStroke: Equatable, Sendable {
     var ink: TeacherInk = .ink
     var isDashed = false
     var isFilled = false
+    /// Text only: the words start at the point instead of being centred on it (worked solutions).
+    var isLeftAligned = false
     /// 1 normal, 0.6 thin, 1.6 thick; for text, the size.
     var weight: CGFloat = 1
 }
@@ -122,6 +124,7 @@ enum TeacherSketchParser {
                 switch option {
                 case "dashed", "dotted": stroke.isDashed = true
                 case "fill", "filled", "shaded": stroke.isFilled = true
+                case "left": stroke.isLeftAligned = true
                 case "thick", "big", "large", "bold": stroke.weight = 1.6
                 case "thin", "small", "tiny": stroke.weight = 0.65
                 default: break
@@ -208,7 +211,7 @@ enum TeacherSketchParser {
         }
     }
 
-    private static let optionWords: Set<String> = ["dashed", "dotted", "fill", "filled", "shaded", "thick", "big", "large", "bold", "thin", "small", "tiny"]
+    private static let optionWords: Set<String> = ["left", "dashed", "dotted", "fill", "filled", "shaded", "thick", "big", "large", "bold", "thin", "small", "tiny"]
 
     /// Commands are one per line; a model that wrote everything on one line may separate them with
     /// ";" instead. A ";" inside quotes is part of the words.
@@ -358,7 +361,7 @@ struct TeacherSketchLayout: Equatable {
                 guard let anchor = stroke.points.first else { continue }
                 let width = CGFloat(words.count) * letterWidth * stroke.weight
                 let height = lineHeight * stroke.weight
-                include(CGRect(x: anchor.x - width / 2, y: anchor.y - height / 2, width: width, height: height))
+                include(CGRect(x: stroke.isLeftAligned ? anchor.x : anchor.x - width / 2, y: anchor.y - height / 2, width: width, height: height))
             case .circle(let radius), .arc(let radius, _, _):
                 guard let centre = stroke.points.first else { continue }
                 include(CGRect(x: centre.x - radius, y: centre.y - radius, width: radius * 2, height: radius * 2))

@@ -23,6 +23,9 @@ enum TeacherQuestion {
         // About what is on the screen, or about doing something: not a lesson.
         let pointsAtTheScreen = [" this ", " that ", " these ", " those ", " here ", " button", " screen", " menu", " click", " app "]
             .contains { text.contains($0) }
+        // "solve this", "work out the equation on my screen": a worked solution on the board, read
+        // off the screenshot. Checked before the screen and how-to rules, which "this" and "help me" trip.
+        if isProblemToSolve(text) { return true }
         let asksHowToDoSomething = [" how do i ", " how can i ", " how should i ", " how to ", " where is ", " where do i ", " can you open ", " help me "]
             .contains { text.contains($0) }
         if asksHowToDoSomething { return false }
@@ -43,5 +46,19 @@ enum TeacherQuestion {
             return true
         }
         return false
+    }
+
+    /// Asks for a worked solution: "solve", "work out", "show me the steps", "step by step".
+    static func isProblemToSolve(_ question: String) -> Bool {
+        let text = " " + question.lowercased().components(separatedBy: CharacterSet.alphanumerics.union(CharacterSet(charactersIn: "' ")).inverted).joined(separator: " ") + " "
+        return [" solve ", " solving ", " work out ", " work this out ", " show me the steps ", " step by step ", " show the working ", " show your working "]
+            .contains { text.contains($0) }
+    }
+
+    /// The question is about something on the screen, so the writer needs the screenshot.
+    static func needsTheScreen(_ question: String) -> Bool {
+        let text = " " + question.lowercased().components(separatedBy: CharacterSet.alphanumerics.union(CharacterSet(charactersIn: "' ")).inverted).joined(separator: " ") + " "
+        return isProblemToSolve(question)
+            || [" this ", " that ", " these ", " those ", " here ", " screen ", " on my screen ", " above ", " below "].contains { text.contains($0) }
     }
 }

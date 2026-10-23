@@ -25,10 +25,12 @@ enum TeacherSketchWriter {
     }
 
     /// For a question nobody has described a drawing for yet (`TeacherPlugin.startLesson`).
-    static func userPrompt(question: String) -> String {
+    static func userPrompt(question: String, withScreenshot: Bool = false) -> String {
         """
-        The student asked: "\(question)"
+        The student asked: "\(question)"\(withScreenshot ? "\nThe attached screenshot is what they are looking at; \"this\" means what is on it." : "")
         Draw the one diagram a good teacher would put on the whiteboard to answer it, with a short title at the top. \
+        If they ask to solve or work something out, write the worked solution instead: the problem first, then one \
+        short line per step, in order, left-aligned under each other (text with the option left), the answer last in red. \
         If no simple diagram can show it well (a real animal, an organ, a place, a painting, a photo of a machine), \
         reply with exactly one line instead: PICTURE: <a short search phrase in English>
         """
@@ -50,12 +52,13 @@ enum TeacherSketchWriter {
 
     /// The drawing commands, or nil when no model could write them.
     @MainActor static func write(title: String, whatToDraw: String) async -> String? {
-        await complete(userPrompt: userPrompt(title: title, whatToDraw: whatToDraw)).map(withoutCodeFences)
+        await complete(userPrompt: userPrompt(title: title, whatToDraw: whatToDraw), screenshotJPEG: nil).map(withoutCodeFences)
     }
 
     /// The lesson for a question: drawing commands or a picture search; nil when no model answered.
-    @MainActor static func lesson(for question: String) async -> Reply? {
-        await complete(userPrompt: userPrompt(question: question)).map(Reply.parse)
+    /// `screenshotJPEG` goes along when the question is about the screen ("solve this").
+    @MainActor static func lesson(for question: String, screenshotJPEG: Data?) async -> Reply? {
+        await complete(userPrompt: userPrompt(question: question, withScreenshot: screenshotJPEG != nil), screenshotJPEG: screenshotJPEG).map(Reply.parse)
     }
 
     /// Only on an own OpenAI key: without it the writer is the ask lane's source, which on a plan
@@ -64,20 +67,21 @@ enum TeacherSketchWriter {
         ProviderRouter.currentCredentials().openAIKey != nil
     }
 
-    @MainActor private static func complete(userPrompt: String) async -> String? {
+    @MainActor private static func complete(userPrompt: String, screenshotJPEG: Data?) async -> String? {
         let startedAt = Date()
         let reply: String?
         if let openAIKey = ProviderRouter.currentCredentials().openAIKey {
-            reply = await writeWithOpenAI(key: openAIKey, userPrompt: userPrompt)
+            reply = await writeWithOpenAI(key: openAIKey, userPrompt: userPrompt, screenshotJPEG: screenshotJPEG)
         } else {
             let answers = ClaudeAPI(currentProxyURL: { "\(OpenClickyConfiguration.backendBaseURL)/chat" })
-            reply = try? await answers.analyzeImage(images: [], systemPrompt: systemPrompt, userPrompt: userPrompt).text
+            let images = screenshotJPEG.map { [(data: $0, label: "the student's screen")] } ?? []
+            reply = try? await answers.analyzeImage(images: images, systemPrompt: systemPrompt, userPrompt: userPrompt).text
         }
         AppLog.append("teacher: sketch \(reply == nil ? "not written" : "written") in \(String(format: "%.1f", Date().timeIntervalSince(startedAt))) s")
         return reply
     }
 
-    private static func writeWithOpenAI(key: String, userPrompt: String) async -> String? {
+    private static func writeWithOpenAI(key: String, userPrompt: String, screenshotJPEG: Data?) async -> String? {
         var request = DirectProviderRequests.openAIChatCompletions(key: key)
         request.timeoutInterval = timeoutSeconds
         request.httpBody = try? JSONSerialization.data(withJSONObject: [
@@ -85,7 +89,7 @@ enum TeacherSketchWriter {
             "reasoning_effort": "none",
             "messages": [
                 ["role": "system", "content": systemPrompt],
-                ["role": "user", "content": userPrompt],
+                ["role": "user", "content": userContent(userPrompt: userPrompt, screenshotJPEG: screenshotJPEG)],
             ],
         ] as [String: Any])
         guard let (data, response) = try? await URLSession.shared.data(for: request) else { return nil }
@@ -94,6 +98,15 @@ enum TeacherSketchWriter {
             return nil
         }
         return chatCompletionText(from: data)
+    }
+
+    /// Plain text, or text plus the screenshot as a data URL (Chat Completions' image input).
+    static func userContent(userPrompt: String, screenshotJPEG: Data?) -> Any {
+        guard let screenshotJPEG else { return userPrompt }
+        return [
+            ["type": "text", "text": userPrompt],
+            ["type": "image_url", "image_url": ["url": "data:image/jpeg;base64,\(screenshotJPEG.base64EncodedString())"]],
+        ]
     }
 
     static func chatCompletionText(from data: Data) -> String? {

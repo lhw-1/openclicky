@@ -142,7 +142,8 @@ enum TeacherStrokeRenderer {
             let shown = graphics.resolve(Text(String(words.prefix(shownCount))).font(TeacherInkPalette.handwritingFont(size: fontSize)).foregroundColor(color))
             // Written from the left so the letters already down never move; centred as a whole,
             // and never past the board's edge (the estimate that sized the board can be short).
-            let left = min(max(anchor.x - fullSize.width / 2, 0), max(canvasSize.width - fullSize.width, 0))
+            let wantedLeft = stroke.isLeftAligned ? anchor.x : anchor.x - fullSize.width / 2
+            let left = min(max(wantedLeft, 0), max(canvasSize.width - fullSize.width, 0))
             let middle = min(max(anchor.y, fullSize.height / 2), canvasSize.height - fullSize.height / 2)
             graphics.draw(shown, at: CGPoint(x: left, y: middle), anchor: .leading)
             return
