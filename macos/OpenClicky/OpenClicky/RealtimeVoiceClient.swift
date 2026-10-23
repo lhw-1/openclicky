@@ -112,6 +112,13 @@ final class RealtimeVoiceClient: NSObject, ObservableObject {
     /// Performs a fast local action (open an app, make a folder…) and returns the sentence to say.
     /// Main-actor isolated: `MacActionRunner` touches AppKit.
     var onMacAction: (@MainActor (MacAction) async -> MacActionOutcome)?
+    /// Tools a plugin adds to the session while it is on (the Teacher's drawing tools). Read with
+    /// every session update; a plugin switched on or off also changes the instructions, which is
+    /// what sends the update.
+    var pluginToolsProvider: (() -> [[String: Any]])?
+    /// Runs a plugin's tool call with the screenshot the turn carried; nil when no plugin owns the
+    /// tool. Must return quickly: tool calls are handled on the receive loop.
+    var onPluginToolCall: (@MainActor (String, [String: Any], CompanionScreenCapture?) async -> String?)?
     /// Builds the session instructions for the next turn: the base prompt plus the skills that
     /// apply right now (the app in front, the user's activated skills). Read at connect and before
     /// every turn; only a change is sent to the server as `session.update`.
@@ -550,7 +557,7 @@ final class RealtimeVoiceClient: NSObject, ObservableObject {
             "session": [
                 "type": "realtime",
                 "instructions": text,
-                "tools": [tool, pointTool] + MacAction.realtimeToolDefinitions(),
+                "tools": [tool, pointTool] + MacAction.realtimeToolDefinitions() + (pluginToolsProvider?() ?? []),
                 "tool_choice": "auto",
                 "audio": ["input": input, "output": output],
             ],
@@ -1135,7 +1142,10 @@ final class RealtimeVoiceClient: NSObject, ObservableObject {
                 output = "invalid coordinates: point_at needs finite integer x and y"
             }
         default:
-            break
+            if let pluginOutput = await onPluginToolCall?(name, arguments, lastScreenCapture) {
+                log("plugin tool: \(name)")
+                output = pluginOutput
+            }
         }
         // The output goes out immediately; the follow-up response is requested once, on response.done.
         try? send(["type": "conversation.item.create", "item": ["type": "function_call_output", "call_id": callId, "output": String(output.prefix(4000))]])

@@ -274,8 +274,17 @@ final class CompanionManager: ObservableObject {
         realtimeVoiceClient.instructionsProvider = { [weak self] in
             guard let self else { return RealtimeVoiceClient.defaultInstructions }
             return Self.composeTalkInstructions(
-                base: Self.withReplyLanguage(self.realtimeVoiceClient.baseInstructions),
+                base: Self.withReplyLanguage(self.realtimeVoiceClient.baseInstructions + Self.pluginPromptLines()),
                 skillsBlock: self.talkSkillsBlock())
+        }
+        realtimeVoiceClient.pluginToolsProvider = {
+            TeacherPlugin.isEnabled ? TeacherPlugin.realtimeToolDefinitions() : []
+        }
+        realtimeVoiceClient.onPluginToolCall = { toolName, arguments, capture in
+            await TeacherPlugin.perform(toolName: toolName, arguments: arguments, capture: capture)
+        }
+        TeacherBoard.shared.onLabelWritten = { [weak self] screenLocation, displayFrame in
+            self?.pointAt(screenLocation: screenLocation, displayFrame: displayFrame, label: nil)
         }
         realtimeVoiceClient.onPointAt = { [weak self] screenshotPoint, label, capture in
             self?.pointAt(screenshotPoint: screenshotPoint, label: label, in: capture)
@@ -552,6 +561,14 @@ final class CompanionManager: ObservableObject {
     /// has its answer; a second call while the buddy is already pointing retargets it.
     func pointAt(screenshotPoint: CGPoint, label: String?, in capture: CompanionScreenCapture) {
         let location = Self.screenLocation(forScreenshotPoint: screenshotPoint, in: capture)
+        pointAt(screenLocation: location, displayFrame: capture.displayFrame, label: label)
+        let formatted = { (value: CGFloat) in String(format: "%.0f", value) }
+        print("🎯 Element pointing: (\(formatted(screenshotPoint.x)), \(formatted(screenshotPoint.y))) → \"\(label ?? "element")\"")
+    }
+
+    /// Fly the buddy to a place in AppKit screen coordinates (the Teacher's labels, which it
+    /// placed itself, have no screenshot point).
+    func pointAt(screenLocation location: CGPoint, displayFrame: CGRect, label: String?) {
         // Granting a permission is the person's choice, never a step: no pointing at macOS's prompts.
         let mainDisplayHeight = NSScreen.screens.first?.frame.height ?? 0
         if SystemPromptGuard.isOnSystemPrompt(appKitPoint: location, mainDisplayHeight: mainDisplayHeight) {
@@ -565,14 +582,17 @@ final class CompanionManager: ObservableObject {
 
         let trimmedLabel = label?.trimmingCharacters(in: .whitespacesAndNewlines)
         detectedElementBubbleText = (trimmedLabel?.isEmpty == false) ? trimmedLabel : nil
-        detectedElementDisplayFrame = capture.displayFrame
+        detectedElementDisplayFrame = displayFrame
         detectedElementScreenLocation = location
         // A guide checks the click that finishes this step against it.
         guidedStepPointedLocation = location
         detectedElementPointToken &+= 1
         ClickyAnalytics.trackElementPointed(elementLabel: trimmedLabel)
-        let formatted = { (value: CGFloat) in String(format: "%.0f", value) }
-        print("🎯 Element pointing: (\(formatted(screenshotPoint.x)), \(formatted(screenshotPoint.y))) → \"\(trimmedLabel ?? "element")\"")
+    }
+
+    /// The prompt lines the switched-on plugins add to both voice lanes.
+    static func pluginPromptLines() -> String {
+        TeacherPlugin.isEnabled ? "\n\n" + TeacherPlugin.promptInstruction : ""
     }
 
     /// Moves the pointer for the ask lane's [POINT:…] tag, on the screen the tag names (the cursor's
@@ -1410,8 +1430,12 @@ final class CompanionManager: ObservableObject {
             // otherwise esc stops whatever the ask lane is doing.
             switch AskLaneEscape.target(dictationTakeInProgress: dictationTakeController.isTakeInProgress, askLaneCanBeStopped: askLaneCanBeStopped) {
             case .dictationTake: dictationTakeController.handle(shortcutEvent)
-            case .askLane: stopAskLane(from: "esc")
-            case .nothing: break
+            case .askLane:
+                stopAskLane(from: "esc")
+                TeacherPlugin.clearBoard(reason: "esc")
+            case .nothing:
+                // Nothing else to stop: esc takes a lesson off the screen.
+                TeacherPlugin.clearBoard(reason: "esc")
             }
         case .talkPressed, .talkReleased:
             // Delivered through shortcutTransitionPublisher.
@@ -1590,7 +1614,7 @@ final class CompanionManager: ObservableObject {
 
     // MARK: - Companion Prompt
 
-    private static let companionVoiceResponseSystemPrompt = """
+    static let companionVoiceResponseSystemPrompt = """
     you're openclicky, a friendly always-on companion that lives in the user's menu bar. the user just spoke to you via push-to-talk and you can see their screen(s). your reply will be spoken aloud via text-to-speech, so write the way you'd actually talk. this is an ongoing conversation, you remember everything they've said before.
 
     rules:
@@ -1650,6 +1674,7 @@ final class CompanionManager: ObservableObject {
             guidedStepsGivenSoFar = 0
             guideStepUnderWay = nil
             guidedStepGoal = transcript
+            TeacherPlugin.clearBoard(reason: "a new question")
         }
         guidedStepPointedLocation = nil
 
@@ -1742,7 +1767,8 @@ final class CompanionManager: ObservableObject {
                 let toolsLine = tools.isEmpty ? "" : "\n\n" + Self.accountToolsInstruction
                 // Offered whatever the lane setup, but only when there is text to write over;
                 // without one the model is told not to read a rewrite out.
-                let askTools = writingTarget == nil ? tools : tools + [WriteInPlace.anthropicToolDefinition()]
+                var askTools = writingTarget == nil ? tools : tools + [WriteInPlace.anthropicToolDefinition()]
+                if TeacherPlugin.isEnabled { askTools += TeacherPlugin.anthropicToolDefinitions() }
                 let writeInPlaceLine = "\n\n" + (writingTarget == nil ? WriteInPlace.noTargetPromptInstruction : WriteInPlace.promptInstruction)
                 // The answer is spoken while it is still being written: each finished sentence goes to
                 // the voice, and the pointer moves when the voice starts (the prompt puts the tag first).
@@ -1766,7 +1792,7 @@ final class CompanionManager: ObservableObject {
                 do {
                     (fullResponseText, toolCalls, _) = try await claudeAPI.analyzeImageStreaming(
                         images: labeledImages,
-                        systemPrompt: Self.composeTalkInstructions(base: Self.withReplyLanguage(Self.companionVoiceResponseSystemPrompt) + toolsLine + writeInPlaceLine, skillsBlock: talkSkillsBlock()),
+                        systemPrompt: Self.composeTalkInstructions(base: Self.withReplyLanguage(Self.companionVoiceResponseSystemPrompt + Self.pluginPromptLines()) + toolsLine + writeInPlaceLine, skillsBlock: talkSkillsBlock()),
                         conversationHistory: historyForAPI,
                         userPrompt: Self.askUserPrompt(transcript: transcript, writingTarget: writingTarget, pointer: pointer, isRepeatedQuestion: isRepeatedQuestion),
                         tools: askTools,
@@ -1790,6 +1816,13 @@ final class CompanionManager: ObservableObject {
                 var toolOutcomes: [String] = []
                 for call in toolCalls.prefix(2) {
                     guard !Task.isCancelled else { break }
+                    // The drawing is the answer's picture, not something to say: nothing is added
+                    // to the spoken reply.
+                    if TeacherPlugin.toolNames.contains(call.name) {
+                        let cursorCapture = screenCaptures.first(where: { $0.isCursorScreen }) ?? screenCaptures.first
+                        _ = await TeacherPlugin.perform(toolName: call.name, arguments: call.arguments, capture: cursorCapture)
+                        continue
+                    }
                     if call.name == WriteInPlace.toolName {
                         guard let writingTarget else { continue }
                         let rewrite = await WriteInPlace.replace(writingTarget, with: call.arguments["text"] as? String ?? "")
@@ -2138,6 +2171,7 @@ final class CompanionManager: ObservableObject {
             }
             interruptCurrentAnswer(includingAgentWork: true)
             clearDetectedElementLocation()
+            TeacherPlugin.clearBoard(reason: "a new question")
             ClickyAnalytics.trackPushToTalkStarted()
             voiceState = .listening
             Task { [weak self] in
