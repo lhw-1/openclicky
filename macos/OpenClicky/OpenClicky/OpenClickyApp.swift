@@ -109,6 +109,7 @@ final class CompanionAppDelegate: NSObject, NSApplicationDelegate {
                 client.onAgentTask = { task in "smoke agent would run: \(task)" }
                 client.onMacAction = { action in .failed("smoke run does not perform \(action)") }
                 client.screenContextProvider = { await CompanionScreenCaptureUtility.captureCursorScreenContext() }
+                client.writingTargetProvider = { await WritingTarget.captureFromFrontApp() }
                 client.onPointAt = { screenshotPoint, label, capture in
                     // No overlay in the smoke harness: print what the buddy would fly to.
                     let screenLocation = CompanionManager.screenLocation(forScreenshotPoint: screenshotPoint, in: capture)

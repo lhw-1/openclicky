@@ -279,6 +279,9 @@ final class CompanionManager: ObservableObject {
                 base: Self.withReplyLanguage(self.realtimeVoiceClient.baseInstructions + Self.pluginPromptLines()),
                 skillsBlock: self.talkSkillsBlock())
         }
+        realtimeVoiceClient.writingTargetProvider = {
+            await WritingTarget.captureFromFrontApp()
+        }
         realtimeVoiceClient.pluginToolsProvider = {
             TeacherPlugin.isEnabled ? TeacherPlugin.realtimeToolDefinitions() : []
         }
