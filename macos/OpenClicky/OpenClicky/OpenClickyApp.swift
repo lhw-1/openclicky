@@ -252,6 +252,51 @@ final class CompanionAppDelegate: NSObject, NSApplicationDelegate {
             exit(0)
         }
 
+        if let argumentIndex = launchArguments.firstIndex(of: "--openclicky-teacher-lesson"), argumentIndex + 2 < launchArguments.count {
+            // Writes the lesson for a question the way the app starts one (whatever route this
+            // Mac's keys or account give), then draws it into a PNG and prints the route and time.
+            //   OpenClicky --openclicky-teacher-lesson "teach me refraction" out.png [screen.jpg]
+            let question = launchArguments[argumentIndex + 1]
+            let outputPath = launchArguments[argumentIndex + 2]
+            let screenshotJPEG = argumentIndex + 3 < launchArguments.count ? FileManager.default.contents(atPath: launchArguments[argumentIndex + 3]) : nil
+            setvbuf(stdout, nil, _IONBF, 0)
+            Task { @MainActor in
+                let route = TeacherSketchWriter.route(for: ProviderRouter.currentCredentials())
+                print("lesson: route \(TeacherSketchWriter.routeName(route)), starts early: \(TeacherSketchWriter.canStartLessonsEarly)")
+                let startedAt = Date()
+                let reply = await TeacherSketchWriter.lesson(for: question, screenshotJPEG: screenshotJPEG)
+                print("lesson: answered in \(String(format: "%.1f", Date().timeIntervalSince(startedAt))) s")
+                switch reply {
+                case .picture(let query)?:
+                    print("lesson: a picture of \(query)")
+                    exit(0)
+                case .sketch(let written)?:
+                    try? written.write(toFile: outputPath + ".txt", atomically: true, encoding: .utf8)
+                    let result = TeacherSketchParser.parse(written)
+                    guard let sketch = result.sketch else {
+                        print("lesson: nothing drawable")
+                        exit(1)
+                    }
+                    let bounds = TeacherSketchLayout.drawingBounds(of: sketch)
+                    let view = TeacherSketchView(sketch: sketch, style: .paper, startedAt: .distantPast)
+                        .padding(22)
+                        .frame(width: 560, height: (560 * bounds.height / max(bounds.width, 1)).rounded())
+                        .background(Color(hex: "#FFFDF6"))
+                    let renderer = ImageRenderer(content: view)
+                    renderer.scale = 2
+                    if let image = renderer.cgImage, let png = NSBitmapImageRep(cgImage: image).representation(using: .png, properties: [:]) {
+                        try? png.write(to: URL(fileURLWithPath: outputPath))
+                    }
+                    print("lesson: \(sketch.strokes.count) strokes, skipped \(result.skippedLines) → \(outputPath)")
+                    exit(0)
+                case nil:
+                    print("lesson: nothing written (see app.log)")
+                    exit(1)
+                }
+            }
+            return
+        }
+
         if let argumentIndex = launchArguments.firstIndex(of: "--openclicky-teacher-smoke") {
             // Draws a lesson on the cursor's screen without a voice turn, then exits: the draw
             // tool's own Pythagoras example, a sketch file, or `picture:<search words>`.

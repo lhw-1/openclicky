@@ -291,6 +291,30 @@ struct TeacherPluginTests {
         #expect(((parts?[1]["image_url"] as? [String: Any])?["url"] as? String)?.hasPrefix("data:image/jpeg;base64,") == true)
     }
 
+    func credentials(openAI: String? = nil, anthropic: String? = nil, account: String? = nil, gemini: String? = nil, claudeCodePlan: Bool = false) -> ProviderCredentials {
+        ProviderCredentials(openAIKey: openAI, anthropicKey: anthropic, accountToken: account, geminiKey: gemini, claudeCodePlanOn: claudeCodePlan)
+    }
+
+    @Test func lessonsAreWrittenWithoutOpenAITooButNeverOnAPlanAlone() {
+        #expect(TeacherSketchWriter.route(for: credentials(openAI: "sk-o", anthropic: "sk-a", account: "t")) == .openAI(key: "sk-o"))
+        #expect(TeacherSketchWriter.route(for: credentials(anthropic: "sk-a", account: "t")) == .anthropic(key: "sk-a"))
+        #expect(TeacherSketchWriter.route(for: credentials(account: "t", claudeCodePlan: true)) == .account)
+        #expect(TeacherSketchWriter.route(for: credentials(gemini: "g")) == .answerSource(.gemini))
+        #expect(TeacherSketchWriter.route(for: credentials(claudeCodePlan: true)) == nil)
+        #expect(TeacherSketchWriter.route(for: credentials()) == nil)
+    }
+
+    @Test func claudeWritesWithThinkingOffAndRoomForADrawing() throws {
+        let body = TeacherSketchWriter.claudeBody(userPrompt: "draw", screenshotJPEG: Data([1]))
+        #expect(body["model"] as? String == "claude-sonnet-5-5")
+        #expect(body["max_tokens"] as? Int == 1024)
+        #expect((body["thinking"] as? [String: String])?["type"] == "between_tools")
+        let content = try #require(((body["messages"] as? [[String: Any]])?.first?["content"]) as? [[String: Any]])
+        #expect(content.map { $0["type"] as? String } == ["image", "text"])
+        let plain = TeacherSketchWriter.claudeBody(userPrompt: "draw", screenshotJPEG: nil)
+        #expect((((plain["messages"] as? [[String: Any]])?.first?["content"]) as? [[String: Any]])?.count == 1)
+    }
+
     @Test func theWritersReplyIsADrawingOrAPicture() {
         #expect(TeacherSketchWriter.Reply.parse("```\nline 0 0 1 1\n```") == .sketch("line 0 0 1 1"))
         #expect(TeacherSketchWriter.Reply.parse("PICTURE: human heart diagram") == .picture(query: "human heart diagram"))

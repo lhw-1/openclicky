@@ -6,14 +6,42 @@
 //  ray straight down the normal. So on that lane it only says what to draw, and a text model
 //  writes the drawing while the voice is already explaining. On an own OpenAI key that is gpt-5.5
 //  with reasoning off (refraction correct in ~3.5 s, where gpt-4.1 at 2 s piled labels on each
-//  other and gpt-5.4-mini barely bent the ray; measured 2026-10-23); otherwise the ask lane's
-//  answer source writes it.
+//  other and gpt-5.4-mini barely bent the ray; measured 2026-10-23).
+//
+//  It also writes the lessons the app starts itself (`TeacherPlugin.startLesson`), so it has to
+//  work without OpenAI too, since most people have no key: an Anthropic key gets Claude Sonnet 5.5
+//  with thinking off (3-4 s and the clearest drawings of those measured; Haiku 4.5 overlapped
+//  its labels), a free account gets the backend's /chat (Sonnet 5.5 there, thinking off once the
+//  backend keeps that setting), and another API key its own provider. Plans (the Claude Code and
+//  Codex apps) take 15 s or more to start, so they never start a lesson early.
 //
 
 import Foundation
 
 enum TeacherSketchWriter {
     static let openAIModel = "gpt-5.5"
+    static let anthropicModel = "claude-sonnet-5-5"
+    /// The output a lesson needs: 25 commands is 400-700 tokens. The backend caps an account at this.
+    static let maximumOutputTokens = 1024
+
+    /// Where a lesson is written, best first.
+    enum Route: Equatable {
+        case openAI(key: String)
+        case anthropic(key: String)
+        /// The free account: the backend's /chat on the account token.
+        case account
+        /// Another API key the ask lane answers with (OpenRouter, Gemini, Groq, Mistral, xAI).
+        case answerSource(AnswerSource)
+    }
+
+    /// Nil when the only way to write is a plan, or nothing at all.
+    static func route(for credentials: ProviderCredentials) -> Route? {
+        if let openAIKey = credentials.openAIKey { return .openAI(key: openAIKey) }
+        if let anthropicKey = credentials.anthropicKey { return .anthropic(key: anthropicKey) }
+        if credentials.accountToken != nil { return .account }
+        let fastSources = credentials.answerSourcesInOrder.filter { ![.claudeCodePlan, .codexPlan, .openClickyAccount, .anthropic, .openAI].contains($0) }
+        return fastSources.first.map(Route.answerSource)
+    }
     static let timeoutSeconds: TimeInterval = 20
 
     static var systemPrompt: String {
@@ -61,24 +89,85 @@ enum TeacherSketchWriter {
         await complete(userPrompt: userPrompt(question: question, withScreenshot: screenshotJPEG != nil), screenshotJPEG: screenshotJPEG).map(Reply.parse)
     }
 
-    /// Only on an own OpenAI key: without it the writer is the ask lane's source, which on a plan
-    /// takes 15 s or more, so a lesson started early would race the model's own drawing for nothing.
+    /// Wherever a lesson can be written in a few seconds; a plan alone would race the model's own
+    /// drawing for nothing.
     @MainActor static var canStartLessonsEarly: Bool {
-        ProviderRouter.currentCredentials().openAIKey != nil
+        route(for: ProviderRouter.currentCredentials()) != nil
     }
 
     @MainActor private static func complete(userPrompt: String, screenshotJPEG: Data?) async -> String? {
         let startedAt = Date()
+        let route = route(for: ProviderRouter.currentCredentials())
         let reply: String?
-        if let openAIKey = ProviderRouter.currentCredentials().openAIKey {
-            reply = await writeWithOpenAI(key: openAIKey, userPrompt: userPrompt, screenshotJPEG: screenshotJPEG)
-        } else {
+        switch route {
+        case .openAI(let key)?:
+            reply = await writeWithOpenAI(key: key, userPrompt: userPrompt, screenshotJPEG: screenshotJPEG)
+        case .anthropic(let key)?:
+            reply = await writeWithClaude(request: DirectProviderRequests.anthropicMessages(key: key), goesToBackend: false,
+                                          userPrompt: userPrompt, screenshotJPEG: screenshotJPEG)
+        case .account?:
+            var request = URLRequest(url: URL(string: "\(OpenClickyConfiguration.backendBaseURL)/chat")!)
+            request.httpMethod = "POST"
+            request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+            OpenClickyConfiguration.authorize(&request)
+            reply = await writeWithClaude(request: request, goesToBackend: true, userPrompt: userPrompt, screenshotJPEG: screenshotJPEG)
+        case .answerSource?, nil:
+            // ClaudeAPI hands these to the source's AnswerProvider (1,024 tokens); a plan is slow but
+            // still draws what the Realtime lane described.
             let answers = ClaudeAPI(currentProxyURL: { "\(OpenClickyConfiguration.backendBaseURL)/chat" })
             let images = screenshotJPEG.map { [(data: $0, label: "the student's screen")] } ?? []
             reply = try? await answers.analyzeImage(images: images, systemPrompt: systemPrompt, userPrompt: userPrompt).text
         }
-        AppLog.append("teacher: sketch \(reply == nil ? "not written" : "written") in \(String(format: "%.1f", Date().timeIntervalSince(startedAt))) s")
+        AppLog.append("teacher: sketch \(reply == nil ? "not written" : "written") via \(routeName(route)) in \(String(format: "%.1f", Date().timeIntervalSince(startedAt))) s")
         return reply
+    }
+
+    static func routeName(_ route: Route?) -> String {
+        switch route {
+        case .openAI?: return "openai \(openAIModel)"
+        case .anthropic?: return "anthropic \(anthropicModel)"
+        case .account?: return "the account"
+        case .answerSource(let source)?: return source.rawValue
+        case nil: return "the answer source"
+        }
+    }
+
+    /// The Messages body for a lesson. Thinking is turned off: Sonnet 5.5 thinks by default and
+    /// spent the whole budget before writing a stroke (it takes "between_tools", not "disabled").
+    /// On the account the backend picks the model and maps this to what that model accepts.
+    static func claudeBody(userPrompt: String, screenshotJPEG: Data?) -> [String: Any] {
+        var content: [[String: Any]] = []
+        if let screenshotJPEG {
+            content.append(["type": "image", "source": ["type": "base64", "media_type": "image/jpeg", "data": screenshotJPEG.base64EncodedString()]])
+        }
+        content.append(["type": "text", "text": userPrompt])
+        return [
+            "model": anthropicModel,
+            "max_tokens": maximumOutputTokens,
+            "thinking": ["type": "between_tools"],
+            "system": systemPrompt,
+            "messages": [["role": "user", "content": content]],
+        ]
+    }
+
+    private static func writeWithClaude(request: URLRequest, goesToBackend: Bool, userPrompt: String, screenshotJPEG: Data?) async -> String? {
+        var request = request
+        request.timeoutInterval = timeoutSeconds
+        request.httpBody = try? JSONSerialization.data(withJSONObject: claudeBody(userPrompt: userPrompt, screenshotJPEG: screenshotJPEG))
+        let session = URLSession.shared
+        let answer: (Data, URLResponse)?
+        if goesToBackend {
+            answer = try? await BackendSignIn.send(request) { try await session.data(for: $0) }
+        } else {
+            answer = try? await session.data(for: request)
+        }
+        guard let (data, response) = answer else { return nil }
+        guard (response as? HTTPURLResponse)?.statusCode == 200 else {
+            AppLog.append("teacher: sketch writer refused (\((response as? HTTPURLResponse)?.statusCode ?? 0))")
+            return nil
+        }
+        // Nil at max_tokens: half a drawing is not drawn.
+        return DirectProviderRequests.anthropicReplyText(from: data)
     }
 
     private static func writeWithOpenAI(key: String, userPrompt: String, screenshotJPEG: Data?) async -> String? {
