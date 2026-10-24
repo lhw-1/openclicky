@@ -73,7 +73,7 @@ struct TeacherPictureView: View {
         VStack(spacing: 8) {
             Image(nsImage: picture.image)
                 .resizable()
-                .aspectRatio(contentMode: .fit)
+                .scaledToFit()
                 .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
             if !picture.caption.isEmpty {

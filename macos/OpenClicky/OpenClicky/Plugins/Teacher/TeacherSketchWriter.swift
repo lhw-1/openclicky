@@ -106,11 +106,15 @@ enum TeacherSketchWriter {
             reply = await writeWithClaude(request: DirectProviderRequests.anthropicMessages(key: key), goesToBackend: false,
                                           userPrompt: userPrompt, screenshotJPEG: screenshotJPEG)
         case .account?:
-            var request = URLRequest(url: URL(string: "\(OpenClickyConfiguration.backendBaseURL)/chat")!)
-            request.httpMethod = "POST"
-            request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-            OpenClickyConfiguration.authorize(&request)
-            reply = await writeWithClaude(request: request, goesToBackend: true, userPrompt: userPrompt, screenshotJPEG: screenshotJPEG)
+            if let chatURL = URL(string: "\(OpenClickyConfiguration.backendBaseURL)/chat") {
+                var request = URLRequest(url: chatURL)
+                request.httpMethod = "POST"
+                request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+                OpenClickyConfiguration.authorize(&request)
+                reply = await writeWithClaude(request: request, goesToBackend: true, userPrompt: userPrompt, screenshotJPEG: screenshotJPEG)
+            } else {
+                reply = nil
+            }
         case .answerSource?, nil:
             // ClaudeAPI hands these to the source's AnswerProvider (1,024 tokens); a plan is slow but
             // still draws what the Realtime lane described.

@@ -191,8 +191,8 @@ struct TeacherPluginTests {
         #expect(TeacherPictureFinder.wikipediaThumbnailURLs(from: Data(reply.utf8)).map(\.absoluteString) == ["https://upload.wikimedia.org/neuron.jpg"])
     }
 
-    @Test func theSearchSendsOnlyTheWords() {
-        let url = TeacherPictureFinder.commonsSearchURL(for: "neuron diagram")
+    @Test func theSearchSendsOnlyTheWords() throws {
+        let url = try #require(TeacherPictureFinder.commonsSearchURL(for: "neuron diagram"))
         #expect(url.host == "commons.wikimedia.org")
         let query = URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems ?? []
         #expect(query.first(where: { $0.name == "gsrsearch" })?.value == "neuron diagram filetype:bitmap|drawing")

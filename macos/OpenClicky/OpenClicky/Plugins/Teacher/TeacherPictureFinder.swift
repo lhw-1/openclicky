@@ -38,8 +38,8 @@ enum TeacherPictureFinder {
         return nil
     }
 
-    static func commonsSearchURL(for query: String) -> URL {
-        var components = URLComponents(string: "https://commons.wikimedia.org/w/api.php")!
+    static func commonsSearchURL(for query: String) -> URL? {
+        guard var components = URLComponents(string: "https://commons.wikimedia.org/w/api.php") else { return nil }
         components.queryItems = [
             URLQueryItem(name: "action", value: "query"),
             URLQueryItem(name: "format", value: "json"),
@@ -51,11 +51,11 @@ enum TeacherPictureFinder {
             URLQueryItem(name: "iiprop", value: "url|mime"),
             URLQueryItem(name: "iiurlwidth", value: String(thumbnailWidth)),
         ]
-        return components.url!
+        return components.url
     }
 
-    static func wikipediaSearchURL(for query: String) -> URL {
-        var components = URLComponents(string: "https://en.wikipedia.org/w/api.php")!
+    static func wikipediaSearchURL(for query: String) -> URL? {
+        guard var components = URLComponents(string: "https://en.wikipedia.org/w/api.php") else { return nil }
         components.queryItems = [
             URLQueryItem(name: "action", value: "query"),
             URLQueryItem(name: "format", value: "json"),
@@ -66,7 +66,7 @@ enum TeacherPictureFinder {
             URLQueryItem(name: "piprop", value: "thumbnail"),
             URLQueryItem(name: "pithumbsize", value: String(thumbnailWidth)),
         ]
-        return components.url!
+        return components.url
     }
 
     /// Commons results in search order (`index`), still images only, as their thumbnail URLs
@@ -96,7 +96,8 @@ enum TeacherPictureFinder {
             .sorted { ($0["index"] as? Int ?? .max) < ($1["index"] as? Int ?? .max) }
     }
 
-    private static func firstURL(from searchURL: URL, parse: (Data) -> [URL]) async throws -> URL? {
+    private static func firstURL(from searchURL: URL?, parse: (Data) -> [URL]) async throws -> URL? {
+        guard let searchURL else { return nil }
         var request = URLRequest(url: searchURL, timeoutInterval: 6)
         request.setValue(userAgent, forHTTPHeaderField: "User-Agent")
         let (data, response) = try await URLSession.shared.data(for: request)
