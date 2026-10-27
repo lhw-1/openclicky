@@ -50,7 +50,9 @@ FLIGHT_FRAME_MILLISECONDS = 16
 # they fly or a caption appears.
 RAISE_EVERY_FOLLOW_TICKS = 15
 # Wayland: where the pointer rests, below the top of the main monitor's work area (under the top bar).
-HOME_TOP_MARGIN = 6
+# Below the island's busy strip (island.py), which hangs from the top centre too: their captions
+# overlapped when both sat at the top edge.
+HOME_TOP_MARGIN = 52
 # Wayland: once an answer is typed out, this long before a mouse movement sends the pointer home.
 STEP_ASIDE_AFTER_SECONDS = 1.0
 
@@ -75,6 +77,10 @@ def _make_click_through(window: Gtk.Window, outline_rows=None) -> None:
     shape_window(window.get_window().get_xid(), outline_rows=outline_rows, click_through=True, display_name=display.get_name())
 
 
+def _contains(area, x: int, y: int) -> bool:
+    return area.x <= x < area.x + area.width and area.y <= y < area.y + area.height
+
+
 class PointerView:
     def __init__(self, presence: str = "always", on_caption_finished: Callable[[], None] = lambda: None,
                  rest_delay_seconds: float = 3.0, knows_the_mouse: bool = True) -> None:
@@ -86,6 +92,10 @@ class PointerView:
         self._caption_typed_at: float | None = None
         self.on_caption_finished = on_caption_finished
         self.mode = "following"  # "following" | "flying" | "pointing"
+        self.reduce_motion = False
+        # Docked (the island's "dock"): the pointer waits at the top of the screen, by the island,
+        # until an answer needs it, as it always does on Wayland.
+        self.docked = False
         self.position = (0.0, 0.0)
         self._flight: tuple[tuple[float, float], tuple[float, float], float, float, str] | None = None
         self._caption_text = ""
@@ -129,6 +139,7 @@ class PointerView:
         self._apply_presence()
         self._ticks_since_raise = 0
         GLib.timeout_add(FOLLOW_INTERVAL_MILLISECONDS, self._follow_tick)
+        Gdk.Screen.get_default().connect("monitors-changed", lambda _screen: self.displays_changed())
 
     # MARK: where it is
 
@@ -145,8 +156,22 @@ class PointerView:
         area = monitor.get_workarea()
         return float(area.x + (area.width - POINTER_WIDTH) // 2), float(area.y + HOME_TOP_MARGIN)
 
+    def displays_changed(self) -> None:
+        """A monitor came or went (the Mac rebuilds its overlays): a pointer left pointing where no
+        monitor is now comes back, and on Wayland the resting pointer moves to the new home."""
+        display = Gdk.Display.get_default()
+        point_x, point_y = round(self.position[0]), round(self.position[1])
+        on_a_monitor = any(_contains(display.get_monitor(index).get_geometry(), point_x, point_y)
+                           for index in range(display.get_n_monitors()))
+        if self.mode == "following":
+            self.position = self._follow_target()
+            self._move_triangle()
+        elif not on_a_monitor:
+            self.dismiss_caption()
+            self.return_to_mouse()
+
     def _follow_target(self) -> tuple[float, float]:
-        if not self.knows_the_mouse:
+        if not self.knows_the_mouse or self.docked:
             return self.home_position()
         mouse_x, mouse_y = self.mouse_position()
         return float(mouse_x + FOLLOW_OFFSET[0]), float(mouse_y + FOLLOW_OFFSET[1])
@@ -237,7 +262,9 @@ class PointerView:
         self.mode = "flying"
         self._apply_presence()
         self.raise_above_other_windows()
-        self._flight = (start, destination, time.monotonic(), flight_seconds(start, destination), then)
+        # Reduce motion (Settings → General): the flight takes no time, so the pointer is simply there.
+        seconds = 0.01 if self.reduce_motion else flight_seconds(start, destination)
+        self._flight = (start, destination, time.monotonic(), seconds, then)
         GLib.timeout_add(FLIGHT_FRAME_MILLISECONDS, self._flight_tick)
 
     def _flight_tick(self) -> bool:
@@ -281,18 +308,27 @@ class PointerView:
                 window.hide()
                 window.show_all()
 
-    def show_caption(self, text: str, hold_seconds: float | None) -> None:
-        """Types `text` out beside the pointer; holds it `hold_seconds` once typed (None: until replaced)."""
+    def show_caption(self, text: str, hold_seconds: float | None, continue_typing: bool = False) -> None:
+        """Types `text` out beside the pointer; holds it `hold_seconds` once typed (None: until replaced).
+        `continue_typing`: `text` carries on the caption showing (a streamed answer that grew), so the
+        letters already typed stay and typing goes on from there."""
+        if continue_typing and self.caption.get_visible() and text.startswith(self._caption_text):
+            typed = self._caption_typed
+        else:
+            typed = 0
+        if self.reduce_motion:
+            # Shown whole, not typed out (the last "letter" is typed by the first tick).
+            typed = max(typed, len(text) - 1)
         self._cancel_caption_timers()
         self._caption_text = text
-        self._caption_typed = 0
+        self._caption_typed = typed
         self._caption_typed_at = None
         # The bubble is sized and placed for the whole caption (up to 42 characters a line) before
         # it shows, so it never grows, wraps differently or moves while it types.
         if not self.knows_the_mouse and self.caption.get_visible():
             self.caption.hide()
         self.caption_label.set_width_chars(min(len(text), 42))
-        self.caption_label.set_markup(self._caption_markup(0))
+        self.caption_label.set_markup(self._caption_markup(typed))
         self.caption.resize(1, 1)
         self._place_caption(self.caption.get_preferred_size()[1].width)
         self._caption_hold_seconds = hold_seconds

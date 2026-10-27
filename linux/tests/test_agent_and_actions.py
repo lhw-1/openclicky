@@ -106,7 +106,7 @@ def test_a_question_the_gate_keeps_goes_to_the_ask_lane_without_quick_actions(st
     settings = LinuxSettings(anthropic_api_key="sk-ant-own")
     offered = []
 
-    def ask_model(question, screenshot, conversation, settings, tools=None, extra_instructions=""):
+    def ask_model(question, screenshot, conversation, settings, tools=None, extra_instructions="", **_streaming):
         offered.append(tools)
         return "[POINT:5,5:save] that one.", []
     routing = lanes.Lanes(agent=agent.AgentClient(lambda: settings), settings_reader=lambda: settings,
@@ -219,7 +219,7 @@ def test_the_ask_lane_offers_quick_actions_where_the_agent_lane_does_not_run_and
     stand_in = StandInDesktop(tmp_path)
     offered = []
 
-    def ask_model(question, screenshot, conversation, settings, tools=None, extra_instructions=""):
+    def ask_model(question, screenshot, conversation, settings, tools=None, extra_instructions="", **_streaming):
         offered.append(([tool["name"] for tool in tools or []], extra_instructions))
         return "sure.[NEXT]", [ToolCall("create_folder", {"name": "trip", "location": "documents"})]
     routing = lanes.Lanes(settings_reader=lambda: LinuxSettings(account_token="account"), tool_installed=lambda _settings: False,
@@ -236,14 +236,23 @@ def test_what_a_quick_action_did_goes_before_the_answers_trailing_tags():
     assert lanes.with_outcomes("no tools here.", []) == "no tools here."
 
 
-def test_tool_calls_are_read_from_anthropic_and_openai_answers():
-    from openclicky_linux.ask import tool_calls_in
+def test_tool_calls_are_read_from_each_vendors_stream():
+    from openclicky_linux import answers
 
-    anthropic = {"content": [{"type": "text", "text": "ok"}, {"type": "tool_use", "name": "open_app", "input": {"name": "Files"}}]}
-    assert tool_calls_in("anthropic", anthropic) == [ToolCall("open_app", {"name": "Files"})]
-    openai = {"choices": [{"message": {"content": None, "tool_calls": [{"function": {"name": "set_volume", "arguments": "{\"level\": 30}"}},
-                                                                     {"function": {"name": "open_url", "arguments": "not json"}}]}}]}
-    assert tool_calls_in("openai", openai) == [ToolCall("set_volume", {"level": 30}), ToolCall("open_url", {})]
+    anthropic = answers.AnthropicStream()
+    for event in ({"type": "content_block_start", "index": 1, "content_block": {"type": "tool_use", "name": "open_app"}},
+                  {"type": "content_block_delta", "index": 1, "delta": {"type": "input_json_delta", "partial_json": "{\"name\": "}},
+                  {"type": "content_block_delta", "index": 1, "delta": {"type": "input_json_delta", "partial_json": "\"Files\"}"}}):
+        anthropic.consume("data: " + json.dumps(event))
+    assert anthropic.tool_calls == [ToolCall("open_app", {"name": "Files"})]
+    openai = answers.OpenAIStream()
+    for chunk in ({"index": 0, "function": {"name": "set_volume", "arguments": "{\"level\""}}, {"index": 0, "function": {"arguments": ": 30}"}},
+                  {"index": 1, "function": {"name": "open_url", "arguments": "not json"}}):
+        openai.consume("data: " + json.dumps({"choices": [{"delta": {"tool_calls": [chunk]}}]}))
+    assert openai.tool_calls == [ToolCall("set_volume", {"level": 30}), ToolCall("open_url", {})]
+    gemini = answers.GeminiStream()
+    gemini.consume("data: " + json.dumps({"candidates": [{"content": {"parts": [{"functionCall": {"name": "media_control", "args": {"action": "next"}}}]}}]}))
+    assert gemini.tool_calls == [ToolCall("media_control", {"action": "next"})]
 
 
 def test_tools_go_to_each_vendor_in_its_own_shape():
@@ -260,3 +269,23 @@ def test_tools_go_to_each_vendor_in_its_own_shape():
     assert actions.TOOLS_INSTRUCTION in openai["messages"][0]["content"]
     plain = json.loads(request_for("q", screen, Conversation(), LinuxSettings(anthropic_api_key="k")).request.data)
     assert "tools" not in plain
+
+
+def test_the_rewrite_tool_writes_in_place_and_its_sentence_follows_the_answer():
+    from openclicky_linux.ask import AskExtras
+    from openclicky_linux.answers import ToolCall
+    from openclicky_linux.config import LinuxSettings
+    from openclicky_linux.lanes import Lanes
+    from openclicky_linux.ask import Conversation, Screenshot
+    offered = []
+
+    def ask_model(question, screenshot, conversation, settings, tools=None, extra_instructions="", **_streaming):
+        offered.append([tool["name"] for tool in tools or []])
+        return "made it politer.", [ToolCall("write_in_place", {"text": "Could you send it?"})]
+    written = []
+    lanes = Lanes(settings_reader=lambda: LinuxSettings(anthropic_api_key="k"), ask_model=ask_model,
+                  tool_installed=lambda _settings: False, agent_mode=lambda: False)
+    extras = AskExtras(tools=({"name": "write_in_place"},), write_in_place=lambda text: written.append(text) or "it's in place.")
+    answer = lanes.answer("rephrase this", Screenshot(b"png", 10, 10, 1.0), Conversation(), extras=extras)
+    assert answer == "made it politer. it's in place." and written == ["Could you send it?"]
+    assert "write_in_place" in offered[0] and "open_app" in offered[0]

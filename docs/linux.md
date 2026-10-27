@@ -4,12 +4,16 @@ The Linux client of OpenClicky. It runs against the same backend contract and re
 `~/.openclicky` files as the Mac app, but is its own program: Python and GTK 3, under
 [`linux/`](../linux). It works on **Wayland** (GNOME, KDE, Sway, Hyprland) and on **X11**.
 
-What it does: **ask about your screen** by typing or out loud (the pointer answers, points and
-speaks), **step by step guidance**, **dictation** typed where your cursor is (offline with Parakeet,
-or with a key or an account), cleaned up **in the style of the app** you are in, a searchable
-**history** of what you dictated with your **dictionary** and **spoken shortcuts**, **quick
-actions** ("open firefox", "make a folder called trip") and the **agent** for bigger tasks, a
-**free account** by email, a **first-run setup**, **Settings** and a **tray icon**.
+What it does: **ask about your screen** by typing or out loud (the pointer answers as it is written,
+points and speaks), **fast voice** that talks back at once and **hands-free** listening,
+**step by step guidance**, **"rephrase this"** written straight into your text box, **dictation**
+typed where your cursor is (offline with Parakeet, or with a key or an account; typed as you speak
+when nothing cleans it up), **Hey Clicky** edits of selected text, cleaned up **in the style of the
+app** you are in, a searchable **history** you can ask questions of, your **dictionary**, **spoken
+shortcuts** and **styles**, **quick actions** ("open firefox", "make a folder called trip") and the
+**agent** for bigger tasks, a choice of **voices**, the **island** at the top of the screen with
+its plugins, a **free account** by email, a **first-run setup** and **welcome tour**, the main
+window with **Settings**, **updates**, and a **tray icon**.
 
 ## Install
 
@@ -58,6 +62,26 @@ Follow-ups remember the last ten exchanges. Clicks go straight through the point
 
 **Out loud:** hold **left ctrl + left alt** (the Mac's control + option), ask, let go.
 
+**You stay in charge:** after you ask, the pointer says "sending your screen · esc to cancel" for a
+moment; esc then and nothing is captured or sent (Settings → Privacy & Security turns the pause
+off). When the answer cannot find what you need on screen, it says what to look for instead of
+pointing at a guess. It never points at a password or permission prompt (X11).
+
+**"What is this?"** On X11 the question carries where your mouse is and a close-up around it, so
+"this" is the thing under the pointer; asking the same thing again within three minutes tells the
+model its first answer probably missed.
+
+**Rephrase in place:** with **Read text boxes** on (Settings → Privacy & Security; it switches on
+your desktop's accessibility, which screen readers use), ask "make this more polite" about the text
+you highlighted, or about everything in the text box your cursor is in (an email you are writing),
+and the new version replaces it; ctrl+z gets yours back, and your original is left on the clipboard.
+
+**Fast voice:** with your own OpenAI key, asking out loud talks to OpenAI Realtime: the answer is
+spoken as soon as it starts, and the pointer flies to each step as it is said (snapped onto the
+element's text when `tesseract` is installed, else found by Claude). Tap **left ctrl twice while
+holding left alt** for **hands-free**: just talk, no keys, until you do it again. Settings → Clicky
+→ Fast voice switches it off.
+
 **Quick actions:** "open firefox", "open github.com", "make a folder called trip in my documents",
 "show me the trip folder", "volume to 30", "pause the music" are done at once (the Mac's fast lane):
 the app, the site, the folder, the volume (PipeWire or PulseAudio), the player (MPRIS). Only those,
@@ -102,11 +126,21 @@ that nothing you say leaves the computer.
 |---|---|
 | Hold left ctrl, speak, let go | The words are typed where your cursor is |
 | Hold left ctrl + left alt, speak, let go | A question for the pointer, nothing typed |
+| Hold left ctrl + shift, say "make it formal", let go | **Hey Clicky**: the selected text is rewritten (or, with nothing selected, your last take) |
 | Esc while it listens | Cancel |
 | Left ctrl + another key | A shortcut, not dictation: nothing is typed |
 
 Another dictation key (Settings → Hold to dictate: right ctrl, right alt, right super or the menu
 key) listens at once, and can also be tapped to start and tapped again to finish.
+
+**Typed as you speak:** on a streaming engine (AssemblyAI, through the account) and with no AI
+clean-up to wait for, a tapped take types its words while you speak; the rest is typed when you
+finish. Short tones mark a take's start and end, a tapped take ends by itself after three minutes
+of quiet, and a take an engine could not finish keeps its recording so **Your words** can retry it.
+Settings → Dictation also has the **language** (and, for Indian languages, native or roman
+**script**; **Region** decides which are offered), **Sarvam** (your key) and **AssemblyAI** engines,
+and **Paste my last take**. With **Read text boxes** on, a take outside any text box waits for you
+to click into one, and a password box is never typed into.
 
 The words are pasted and your own clipboard is put back afterwards. On X11 they go only into the
 window that was in front when you pressed the key (otherwise "copied, press ctrl+v"), and terminals
@@ -115,19 +149,50 @@ when they are ready; the paste is shift+insert, which pastes in terminals too.
 
 ## Your words
 
-Tray icon → **Your words…**: every take with what was written, searchable, editable, copyable,
-deletable (kept only on this computer, in `~/.local/share/openclicky/dictation.sqlite`, the Mac's
-format; **Incognito** in Settings keeps takes out of it), and your **dictionary** ("you say aditya
-shatriya → it writes Aaditya Kshatriya") and **spoken shortcuts** ("my sign off" → your sign-off),
-the Mac app's own files under `~/.openclicky/dictation`.
+Tray icon → **Your words…** (a page of the main window): a box to **try it here**, this week's
+words day by day, and every take with what was written, searchable, filterable (dictated, Hey
+Clicky edits, copied, couldn't finish), editable, copyable, deletable, retryable, and a box to
+**ask your takes** ("what did i say about the budget?"). Kept only on this computer, in
+`~/.local/share/openclicky/dictation.sqlite`, the Mac's format; **Incognito** keeps takes out of it,
+and **Keep what I copy** adds your copies. **How it writes**: your **dictionary** ("you say aditya
+shatriya → it writes Aaditya Kshatriya"), **spoken shortcuts** ("my sign off" → your sign-off) and
+the **styles** (the rules the clean-up reads for each kind of app, and which apps use each), the Mac
+app's own files under `~/.openclicky/dictation`.
+
+## The island
+
+A small black handle at the top of the screen (Settings → General: or a drawer on the left or right
+edge, or hidden). Hover to peek at what the pointer is doing; while OpenClicky listens, thinks,
+speaks or guides, a strip says which, with a stop button; click it for the panel: the voice on or
+off, **dock** (the pointer waits up here until an answer needs it), Settings, quit, and the
+**Shortcuts**, **Transcript** and **Agent** views. Settings → Plugins adds **System** (CPU, memory,
+disk, battery), **Now playing** (any MPRIS player, with its controls), **Coding agents** (what your
+Claude Code and Codex sessions are doing, and your Claude plan's limits) and a **Shelf** (drop files,
+links or text on the island; drag them out again). How far the black melts into glass is
+Settings → General → Glass.
+
+When an agent task finishes, a card in the top-right corner holds what it said and the files it
+made, with Copy and **Follow up with the agent**.
+
+## Voices
+
+Settings → Voice → **Who speaks**: Automatic (your own voice keys first, then Kokoro once
+downloaded, then the account's free voice, then this computer's voice), or OpenAI, ElevenLabs,
+Google Cloud, Google Gemini, Amazon Polly or Sarvam on your key, Kokoro, or this computer's own voice
+(speech-dispatcher). A voice that fails partway hands the rest to Kokoro or this computer's voice.
+**Test** says a sentence; on the free voice it says how many characters are left this month. A few
+failures ("i couldn't reach openclicky…") are said in OpenClicky's recorded voice.
 
 ## Settings
 
-From the tray icon (**Settings…**), by starting OpenClicky again, or `openclicky-linux settings`:
+From the tray icon (**Settings…**), by starting OpenClicky again, or `openclicky-linux settings`.
+One window with a sidebar, as on the Mac (General, Dictation, Clicky, Voice, Your words, How it
+writes, The Orb, Plugins, Shortcuts, Keys & Plans, Account, Privacy & Security, About) and a search
+over every setting:
 
 ![The Settings window: dictation key, language, show the pointer, and the keys](media/linux/settings.png)
 
-The shortcuts for the key you picked; the microphone (with a **Test** that shows a level and says
+The shortcuts for the key you picked, on a sketch of the keyboard; the microphone (with a **Test** that shows a level and says
 whether it heard you); the dictation engine (Automatic: offline once downloaded, else your OpenAI
 key, else the account); the clean-up, incognito; the voice; the pointer; your **account** (sign
 in by email, confirm with the code, sign out); your own keys; the agent; start at login. **Save**
@@ -139,7 +204,12 @@ else in it alone; the file stays readable by you only.
 | an Anthropic key | Anthropic (Claude Sonnet 4.6) | — |
 | an OpenRouter key | OpenRouter (Claude Sonnet 4.6, or `answerModels.openrouter`) | — |
 | an OpenAI key | OpenAI (GPT-4.1) | OpenAI (`gpt-4o-mini-transcribe`) |
+| a Gemini, xAI, Mistral or Groq key | that company's model | — |
+| Claude Code or Codex signed in (Settings → Clicky) | your Claude or ChatGPT plan | — |
 | a free account | the OpenClicky backend (`/chat`) | the OpenClicky backend (`/agent/transcribe`) |
+
+**Answers come from** (Settings → Clicky) picks one instead of the first that works, each with a
+**Test**; the **Claude model** is Sonnet or Opus.
 
 Your own keys go straight to their company and never to the OpenClicky backend. A key set in an
 environment variable (`OPENCLICKY_OPENROUTER_KEY` and the like) wins over Settings while it is set.
@@ -167,11 +237,24 @@ Wayland never tells an app where the mouse is, so the pointer cannot follow it t
 of sight at the top centre of the screen (where the Mac's flies out of the notch), comes out to
 answer, and goes back once you move the mouse after reading the answer.
 
+## Tours and updates
+
+Right after the setup, a **welcome tour** in a card under the island shows dictating, asking and
+handing over a task, waiting for each to work; the first time Settings opens after it, a
+one-minute **Settings tour** flies the pointer over the rows that matter. Both play again from
+Settings → General, and the welcome from the tray. Esc ends either.
+
+Once a day OpenClicky looks for a newer Linux package on the GitHub releases; Settings → General
+says when one is ready and **Install and restart** installs it (its checksum checked first). A copy
+run from a checkout updates with `git pull`. The offline models download by themselves once the
+setup is done, unless you skipped or removed them (never on a metered network).
+
 ## Privacy
 
 - A question sends a picture of **every monitor** to whoever answers it (at most two on a free
   account): keep anything private out of sight before you ask.
-- Spoken answers are made on this computer: nothing is sent to be spoken.
+- Spoken answers are made on this computer with Kokoro or its own voice; a cloud voice (picked, or
+  Automatic with a voice key) sends the answer's words to that company.
 - Dictation with the offline engine sends nothing anywhere. With a key or an account, it sends only
   the audio recorded while you hold the key, and (with the clean-up on) its words.
 - The history and your words stay on this computer.
@@ -179,6 +262,10 @@ answer, and goes back once you move the mouse after reading the answer.
   clicks only while a guide waits), and the pointer only reads where your mouse is (X11).
 - Keys and the account's session live in `~/.openclicky/shell.json`, readable by your user only.
 - Your own pointer and captions are hidden while a picture is taken.
+- **Read text boxes** is off until you switch it on; then OpenClicky reads the text box you are in
+  when you ask or dictate (never a password box), and only sends it with a question about it.
+- Settings → Privacy & Security lists every folder OpenClicky keeps things in, and deletes your
+  history and kept recordings at once.
 
 ## When something does not work
 

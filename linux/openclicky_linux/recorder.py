@@ -35,12 +35,13 @@ class RecorderUnavailable(Exception):
     pass
 
 
-def find_recorder_command(microphone: str | None = None) -> tuple[str, ...]:
+def find_recorder_command(microphone: str | None = None, rate: int = SAMPLE_RATE) -> tuple[str, ...]:
     """The recorder to run; `microphone` is a PulseAudio/PipeWire source name from
     `list_microphones` (None: the system default). Only parecord can pick one; arecord, the ALSA
-    fallback, always uses the default."""
+    fallback, always uses the default. `rate`: fast voice records at 24 kHz."""
     for command in RECORDER_COMMANDS:
         if shutil.which(command[0]):
+            command = tuple(part.replace(str(SAMPLE_RATE), str(rate)) for part in command)
             if microphone and command[0] == "parecord":
                 return command + (f"--device={microphone}",)
             return command

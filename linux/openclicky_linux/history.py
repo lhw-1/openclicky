@@ -2,6 +2,10 @@
 `TakeStore.swift` with the same tables and columns (so a database can be read by either), at
 `$XDG_DATA_HOME/openclicky/dictation.sqlite`. Nothing in it ever leaves the computer; incognito
 (Settings) keeps takes out of it, and the Words window's history can delete one or all.
+
+A take an engine could not finish keeps its audio beside it (`TakeAudioStore`, the Mac's), so the
+history can retry it once the network, the key or the credits are back: at most 100 takes and
+1 GB, the oldest dropped first, deleted once retried, and none at all when Settings says so.
 """
 
 from __future__ import annotations
@@ -130,6 +134,13 @@ class TakeStore:
             self._connection.execute("UPDATE takes SET formatted_text = ? WHERE id = ?", (new_text, take_id))
             self._connection.commit()
 
+    def complete_retried(self, take_id: str, raw_text: str, formatted_text: str) -> None:
+        """A failed take heard again: its words, and it is complete now."""
+        with self._lock:
+            self._connection.execute("UPDATE takes SET status = 'complete', raw_text = ?, formatted_text = ?, failure_reason = NULL, "
+                                     "paste_outcome = 'leftOnPasteboard' WHERE id = ?", (raw_text, formatted_text, take_id))
+            self._connection.commit()
+
     def set_pinned(self, take_id: str, pinned: bool) -> None:
         with self._lock:
             self._connection.execute("UPDATE takes SET pinned = ? WHERE id = ?", (1 if pinned else 0, take_id))
@@ -176,6 +187,13 @@ class TakeStore:
             rows = self._connection.execute(sql, arguments).fetchall()
         return [self._record(row) for row in rows]
 
+    def matches_for(self, question: str) -> list[TakeRecord]:
+        """The takes a history question is answered from: those holding every longer word of it;
+        when none do, the latest (the Mac's `historyMatches`)."""
+        words = [word for word in (part.strip("?!.,;:\"'“”") for part in question.split()) if len(word) > 3]
+        matching = self.recent(limit=60, query=" ".join(words)) if words else []
+        return [take for take in (matching or self.recent(limit=60)) if take.status == "complete"]
+
     def revised_take_ids(self) -> set[str]:
         with self._lock:
             return {row[0] for row in self._connection.execute("SELECT DISTINCT take_id FROM take_revisions")}
@@ -190,3 +208,47 @@ class TakeStore:
             all_time = self._connection.execute("SELECT COUNT(*) FROM takes WHERE mode != 'clipboard'").fetchone()[0]
         return TakeStats(words_today=sum(take.word_count for take in today), takes_today=len(today),
                          words_this_week=sum(take.word_count for take in week), takes_this_week=len(week), all_time_takes=all_time)
+
+
+class TakeAudioStore:
+    MAXIMUM_TAKES = 100
+    MAXIMUM_BYTES = 1_000_000_000
+
+    def __init__(self, directory: Path | None = None) -> None:
+        self.directory = directory or default_path().parent / "take-audio"
+
+    def path_for(self, take_id: str) -> Path:
+        return self.directory / f"{take_id}.wav"
+
+    def has_audio(self, take_id: str) -> bool:
+        return self.path_for(take_id).exists()
+
+    def retain(self, take_id: str, wav: bytes) -> None:
+        self.directory.mkdir(parents=True, exist_ok=True, mode=0o700)
+        temporary = self.directory / f".{take_id}.tmp"
+        temporary.write_bytes(wav)
+        os.chmod(temporary, 0o600)
+        temporary.replace(self.path_for(take_id))
+        self.prune()
+
+    def read(self, take_id: str) -> bytes:
+        return self.path_for(take_id).read_bytes()
+
+    def discard(self, take_id: str) -> None:
+        self.path_for(take_id).unlink(missing_ok=True)
+
+    def discard_all(self) -> None:
+        for path in self.directory.glob("*.wav"):
+            path.unlink(missing_ok=True)
+
+    def prune(self) -> None:
+        """Oldest first beyond the caps."""
+        try:
+            files = sorted(((path, path.stat()) for path in self.directory.glob("*.wav")), key=lambda entry: entry[1].st_mtime)
+        except OSError:
+            return
+        total = sum(stat.st_size for _path, stat in files)
+        while files and (len(files) > self.MAXIMUM_TAKES or total > self.MAXIMUM_BYTES):
+            oldest, stat = files.pop(0)
+            oldest.unlink(missing_ok=True)
+            total -= stat.st_size

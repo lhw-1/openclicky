@@ -8,8 +8,14 @@
   pointer answers in a caption (and out loud) and flies to what it is talking about; a how-to is
   guided **one step at a time**. Quick actions ("open firefox", "make a folder…") happen at once;
   bigger tasks go to the **agent** (a Codex thread through the `openclicky` CLI) when it is installed.
-- **Your words:** a searchable history, the dictionary and spoken shortcuts.
-- **First-run setup, Settings, a free account by email, the tray icon.**
+- **Hey Clicky** (left ctrl + shift: "make it formal" rewrites the selection), words **typed as you
+  speak** on a streaming engine, and **"rephrase this" written in place** (with Read text boxes on).
+- **Fast voice** (OpenAI Realtime) and **hands-free**, the pointer flying to each step as it is said.
+- **Your words:** a searchable history you can ask questions of, the dictionary, spoken shortcuts
+  and the styles editor.
+- **The island** at the top of the screen with its plugins; a choice of **voices**.
+- **First-run setup, a welcome tour, the main window with Settings, a free account by email,
+  updates, the tray icon.**
 - **X11 and Wayland** (GNOME, KDE, Sway, Hyprland).
 
 The user guide, with pictures, is [docs/linux.md](../docs/linux.md). This page is for building,
@@ -26,7 +32,10 @@ testing and reviewing it.
 - Keys or an account, set in the setup or **Settings**. They are saved in `~/.openclicky/shell.json`,
   the file the Mac app and the CLI read, and every other key in it is left alone:
   - dictation: the **offline engine** (Parakeet, downloaded in Settings), an **OpenAI key**, or the account
-  - answers: an **Anthropic key**, else an **OpenRouter key**, else the OpenAI key, else the account
+  - answers: the source picked in Settings → Clicky, else the first that works: an **Anthropic**,
+    **OpenRouter**, **OpenAI**, **Gemini**, **xAI**, **Mistral** or **Groq** key, the **Claude Code** or
+    **Codex** plan (when switched on), else the account
+- Optional: `tesseract` (sharper pointing on fast voice), `spd-say` (this computer's voice).
 
 ## Run
 
@@ -77,7 +86,12 @@ windows on the private display). With the offline models downloaded, the real-en
 | `screencast.py` | Wayland: a question's picture through the ScreenCast portal, asked once (restore token), then about 0.1 s each, every monitor its own stream (GStreamer `pipewiresrc`). |
 | `portal.py` | Wayland fallbacks: `grim` on wlroots, the Screenshot portal elsewhere (GNOME asks every time; kept from leaving files behind). |
 | `screen.py` | The pictures: one per monitor, the one with the mouse (Wayland: the main monitor) first, each at most 1280 px and 1.15 MP, with its scale and place on the desktop. |
-| `companion.py` | Asking, one question at a time: the ask box, the picture (on Wayland taken off the main thread), the answer, the pointer's flight and caption, the agent's progress; guided steps. Reaches the desktop only through `AskHost` and `PointerSurface`. |
+| `companion.py` | Asking, one question at a time: the ask box, the pause before the screen is sent, the picture (on Wayland taken off the main thread), the answer as it streams (the pointer flies once the tag is in, the caption grows, the voice starts on the first sentence), [UNSURE], the mouse's place and close-up, the prompt guard, the agent's progress; guided steps and the wrong-click check. Reaches the desktop only through `AskHost` and `PointerSurface`. |
+| `ask_lane.py` | The Mac's `AskLaneControl`, `AskPointerContext`, `GuidedStepClickCheck` and `SystemPromptGuard`: the numbers and sentences, pure. |
+| `answers.py` | Every answer source (Anthropic, OpenRouter, OpenAI, Gemini, xAI, Mistral, Groq, the Claude Code and Codex plans, the account): the order, the requests, the streams (SSE), the plans' CLIs and `[ACTION:]` lines, the Test buttons' check. |
+| `writing.py`, `accessibility.py` | "Rephrase this" written in place (the Mac's `WriteInPlace`), and what AT-SPI says about the focused text box (when the desktop's accessibility is on): focus followed from its events, short timeouts. |
+| `skills.py` | App-teaching skills (`app-skills/`, shipped through the `app_skills` link) matched to the window in front, and the person's skill library; the prompt block with its budgets. |
+| `realtime.py`, `grounding.py`, `websocket.py` | Fast voice (OpenAI Realtime): push to talk, hands-free, typed turns, its tools; `point_at` snapped to the element's text (Tesseract) or found by Claude; a standard-library WebSocket client. |
 | `lanes.py` | Which lane a question goes down (the Mac's two-tier routing): the agent through the CLI's gate, else the ask lane, offering the quick actions where the agent does not run. |
 | `ask.py` | The question + pictures to a model (own Anthropic key → Messages; OpenRouter; OpenAI; account → backend `POST /chat`), with tools; the Mac's ask prompt. |
 | `actions.py` | The quick actions (the Mac's `MacActions`): open an app, a site, make or show a folder, volume, media; typed arguments only. |
@@ -89,14 +103,18 @@ windows on the private display). With the offline models downloaded, the real-en
 | `controller.py` | One take at a time (idle → listening → finishing): the formatting and clean-up off the main thread, the paste, the history. Reaches the desktop only through `DictationHost`. |
 | `gestures.py` | Hold, tap, double tap, esc and "a shortcut, not a take" from raw key downs and ups, with the Mac's timings. |
 | `recorder.py` | 16 kHz mono PCM from `parecord` (30 ms fragments: at its default a short take came back empty) or `arecord`; the microphones; loudness. |
-| `transcriber.py`, `offline.py`, `offline_helper.py` | The dictation engine: offline Parakeet (a helper process), own OpenAI key, or the account. |
+| `transcriber.py`, `offline.py`, `offline_helper.py`, `streaming.py` | The dictation engine: offline Parakeet (a helper process), own OpenAI key, Sarvam, the account, or AssemblyAI streaming while the key is held. |
+| `live_typing.py` | Live typing (the Mac's `LiveTyping`): which words have settled, each phrase's formatting, the final transcript lined up against what was typed; X11 types through XTEST (`x11.LiveKeyboard`, any character), Wayland through the virtual keyboard and the layout's keymap. |
+| `languages.py` | The languages, the region and the script. |
+| `earcons.py`, `clipboard_history.py` | The tones around a take; the opt-in clipboard history. |
 | `formatter.py`, `spoken_numbers.py`, `polish.py` | The Mac's `TakeFormatter` (local pass and the model pass's checks), `SpokenNumbers`, and the polishers (OpenAI, Claude Haiku, OpenRouter, the backend's `/v1/polish`) under a 3 s limit. |
 | `space.py` | Styles by app (Mac bundle ids and Linux window classes), the dictionary and spoken shortcuts: `~/.openclicky/dictation`. |
 | `history.py` | The takes in SQLite, the Mac's `TakeStore` schema. |
-| `voice.py`, `voice_helper.py` | Spoken answers in Kokoro's voice, a sentence at a time; played with `paplay`, else `pw-play` or `aplay`, a player that fails passed over (Ubuntu 22.04 has `pw-play` but no PipeWire speakers); muted speakers said once. |
+| `voice.py`, `voice_helper.py`, `speech_voices.py` | Spoken answers, a sentence at a time, in Kokoro's voice, a cloud voice (OpenAI, ElevenLabs, Google, Gemini, Polly with SigV4, Sarvam, the account) decoded by GStreamer, or speech-dispatcher; a failing voice hands over to the next; played with `paplay`, else `pw-play` or `aplay`, a player that fails passed over (Ubuntu 22.04 has `pw-play` but no PipeWire speakers); muted speakers said once; the Mac's recorded notices (`recorded_voice` links to its `RecordedVoice`). |
 | `accounts.py`, `account_form.py` | The free account by email and 6-digit code, the session's refresh, sign out; the form the setup and Settings share. |
-| `onboarding.py` | The first-run setup window. |
-| `windows.py`, `words_window.py`, `desktop.py` | The ask box, Settings, the tray icon; the Words window; the paste and the orb. |
+| `onboarding.py`, `tour.py`, `auto_download.py`, `updater.py` | The first-run setup window (a guest account when nothing else answers); the welcome and Settings tours; the models downloading by themselves; updates from GitHub Releases. |
+| `island.py`, `island_plugins.py`, `result_card.py`, `farewell.py` | The island (handle, peek, busy strip, panel, side drawers, glass) and its plugins (system, MPRIS, coding agents with Claude's limits, shelf); the agent's result card; the line on quitting. |
+| `windows.py`, `words_window.py`, `desktop.py` | The ask box, the main window (sidebar pages, search, keyboard sketch), the tray icon; Your words and How it writes (history, ask your takes, styles editor); the paste and the orb. |
 | `config.py`, `preferences.py`, `applog.py`, `autostart.py`, `instance.py` | shell.json; the app's own state; the log; start at login and the applications menu; one instance. |
 
 ## For reviewers
@@ -124,6 +142,13 @@ together:
 | `guided.py` | `GuidedSteps.swift` | the [NEXT] marker, the settle times, 120 s idle, 15 steps |
 | `offline.py`, `voice.py` | `Parakeet/`, `Kokoro/`, `Sherpa/ModelDownload.swift` | the models, URLs and SHA-256s, the helper processes |
 | `presence.py` | `PointerPresence.swift` | the shake detector's numbers, the 3 s rest |
+| `ask_lane.py`, `companion.py` | `AskLaneControl.swift`, `AskPointerContext.swift`, `SystemPromptGuard.swift`, `SpokenChunker.swift` | the 1.2 s pause and its caption, [UNSURE], the 480 px close-up, 180 s and 25 % for a repeated question, 120 px off target, the first sentence alone then 120 characters |
+| `answers.py` | `AnswerProvider.swift`, `PlanCLIs.swift`, `PlanToolProtocol.swift`, `AnswerSourceCheck.swift` | the sources and their order, default models, the plans' flags, `[ACTION:]` parsing, the red-square test |
+| `live_typing.py` | `LiveTyping.swift` | 0.3 s stable, one volatile word, 0.7 s pause, the alignment's runs and distances |
+| `speech_voices.py` | `SpeechVoices.swift` | Automatic's order, each vendor's request and voice, SigV4 (AWS's own test vectors) |
+| `realtime.py`, `grounding.py` | `RealtimeVoiceClient.swift`, `ScreenTextLocator.swift`, `ScreenElementGrounder.swift` | the session, the tools, the 0.4 s release tail, the empty-turn rule; 30 % and 10 % of the width, Haiku's prompt |
+| `island.py`, `island_plugins.py` | `NotchHUD*.swift`, `IslandComponents.swift`, `Plugins/` | the states and status sentences, the components' order, the plugins' figures and parsers |
+| `skills.py` | `SkillFile.swift`, `AppSkillMatcher.swift`, `SkillPromptBuilder.swift`, `SkillLibraryStore.swift` | the frontmatter, site before app, 4,000 and 6,000 characters, `activations.json` |
 
 **Decisions worth a look:**
 

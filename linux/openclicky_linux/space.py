@@ -177,3 +177,18 @@ def save_words(dictionary: list[DictionaryTerm], shortcuts: list[SpokenShortcut]
     _write_json(directory / "shortcuts.json", [
         {"id": shortcut.id or new_id(), "trigger": shortcut.trigger, "replacement": shortcut.replacement, "createdAt": shortcut.created_at or now}
         for shortcut in shortcuts if shortcut.trigger.strip()])
+
+
+def save_styles(styles: list[DictationStyle], directory: Path | None = None) -> None:
+    """Writes the styles as the Mac writes them, keeping what it keeps that Linux does not use (a
+    style's tagline)."""
+    directory = directory or default_directory()
+    existing = {entry["id"]: entry for entry in _read_json_list(directory / "styles.json")
+                if isinstance(entry, dict) and isinstance(entry.get("id"), str)}
+    entries = []
+    for style in styles:
+        entry = dict(existing.get(style.id, {"tagline": ""}))
+        entry.update(id=style.id, name=style.name, rules=style.rules, sentenceCase=style.sentence_case,
+                     removeFillers=style.remove_fillers, polishWithModel=style.polish_with_model, appBundleIDs=list(style.apps))
+        entries.append(entry)
+    _write_json(directory / "styles.json", entries)

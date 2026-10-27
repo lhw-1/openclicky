@@ -69,7 +69,7 @@ def test_the_pointer_flies_to_the_monitor_the_answer_names():
     class Pointer:
         def hide_for_screenshot(self): pass
         def show_after_screenshot(self): pass
-        def show_caption(self, text, hold_seconds): pass
+        def show_caption(self, text, hold_seconds, continue_typing=False): pass
         def dismiss_caption(self): pass
         def fly_to(self, screen_x, screen_y): flights.append((screen_x, screen_y))
         def return_to_mouse(self): pass
@@ -77,7 +77,7 @@ def test_the_pointer_flies_to_the_monitor_the_answer_names():
     timers, background = [], []
     asking = AskController(AskHost(
         show_composer=lambda: None, hide_composer=lambda: None, capture_screen=lambda: screens,
-        ask=lambda question, pictures, conversation: "[POINT:100,50:terminal:screen2] that's your terminal, on the left.",
+        ask=lambda question, pictures, conversation, **_streaming: "[POINT:100,50:terminal:screen2] that's your terminal, on the left.",
         run_in_background=lambda work, done: background.append((work, done)),
         schedule=lambda seconds, action: timers.append(action)), Pointer())
     asking.submit("where is my terminal?")

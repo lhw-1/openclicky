@@ -200,7 +200,7 @@ def scenario_ask_and_point() -> dict:
     window, save_center = app_window_with_a_save_button()
     asked = []
 
-    def stand_in_model(question, screenshot_taken, conversation):
+    def stand_in_model(question, screenshot_taken, conversation, **_streaming):
         # One picture per monitor; the private display has one.
         from openclicky_linux.ask import as_screen_list
         pictures = as_screen_list(screenshot_taken)
@@ -223,9 +223,12 @@ def scenario_ask_and_point() -> dict:
     screenshot("ask-box")
     typed = app.composer.entry.get_text()
     tap("Return")
-    pump(0.06)
+    # First a moment to call it off (Settings → Privacy, on by default), then out of sight.
+    pump(0.3, until=lambda: app.pointer.caption_label.get_text() != "")
+    paused_with = app.pointer.caption_label.get_text()
+    pump(2, until=lambda: not app.pointer.triangle.get_visible())
     hidden_for_the_screenshot = not app.pointer.triangle.get_visible()
-    pump(2, until=lambda: app.pointer.caption_label.get_text() != "")
+    pump(2, until=lambda: app.pointer.caption_label.get_text() not in ("", paused_with))
     thinking = app.pointer.caption_label.get_text()
     pump(6, until=lambda: app.pointer.mode == "pointing" and "keeps your note" in app.pointer.caption_label.get_text())
     pump(0.3)
@@ -237,7 +240,7 @@ def scenario_ask_and_point() -> dict:
     pump(3, until=lambda: app.pointer.mode == "following")
     pump(0.2)
     app.listener.stop()
-    return {"hidden_for_the_screenshot": hidden_for_the_screenshot,
+    return {"hidden_for_the_screenshot": hidden_for_the_screenshot, "paused_with": paused_with,
             "composer_opened": composer_opened, "composer_has_keyboard": composer_has_keyboard, "typed": typed,
             "composer_closed": composer_closed, "thinking": thinking, "asked": asked, "save_center": list(save_center),
             "pointed_at": pointed_at, "caption": caption, "after_escape": [app.pointer.mode, app.pointer.caption.get_visible()]}
@@ -251,7 +254,7 @@ def scenario_settings_window() -> dict:
     shortcuts_shown = list(settings.shortcut_lines)
     routes_before = settings.routes_label.get_text()
     settings.fields["anthropic_api_key"].set_text("sk-ant-test")
-    settings.fields["language_code"].set_text("en-IN")
+    settings._fill_languages("en-IN")  # kept even where the region does not offer it
     settings.fields["dictation_key"].set_active_id("Alt_R")
     settings.fields["pointer_presence"].set_active_id("whenAnswering")
     pump(0.2)
@@ -412,7 +415,7 @@ def scenario_guided_steps() -> dict:
     live = os.environ.get("OPENCLICKY_LIVE") == "1"
     questions = []
 
-    def stand_in_model(question, screenshot_taken, conversation):
+    def stand_in_model(question, screenshot_taken, conversation, **_streaming):
         questions.append(question)
         time.sleep(0.3)
         if len(questions) == 1:
@@ -427,9 +430,9 @@ def scenario_guided_steps() -> dict:
         from openclicky_linux.ask import ask as ask_model
         from openclicky_linux.config import load_settings
 
-        def model(question, screenshot_taken, conversation):
+        def model(question, screenshot_taken, conversation, **streaming):
             questions.append(question)
-            return ask_model(question, screenshot_taken, conversation, load_settings())
+            return ask_model(question, screenshot_taken, conversation, load_settings(), **streaming)
     else:
         model = stand_in_model
 
@@ -535,7 +538,7 @@ def scenario_paste_problems() -> dict:
 
 def scenario_escape_closing_the_ask_box_keeps_the_guide() -> dict:
     app = wire_up("Control_R", start_recording=StandInRecording, transcribe=lambda _wav: "",
-                  ask=lambda question, pictures, conversation: "[POINT:200,200:menu] open the menu first. [NEXT]")
+                  ask=lambda question, pictures, conversation, **_streaming: "[POINT:200,200:menu] open the menu first. [NEXT]")
     app.listener.start()
     pump(0.3)
     app.asking.submit("how do i do it?")
@@ -751,7 +754,7 @@ def scenario_left_ctrl() -> dict:
     transcripts = iter(["um, buy more lemons", "where do i save this"])
     questions = []
 
-    def stand_in_model(question, pictures, conversation):
+    def stand_in_model(question, pictures, conversation, **_streaming):
         questions.append(question)
         return f"[POINT:{save_center[0]},{save_center[1]}:save button] that save button keeps it."
 
@@ -824,7 +827,7 @@ def scenario_live_minimize() -> dict:
     pump(1.5)
     frame = window.get_window().get_frame_extents()
     app = wire_up("Control_L", start_recording=StandInRecording, transcribe=lambda _wav: "",
-                  ask=lambda question, pictures, conversation: ask_model(question, pictures, conversation, load_settings()))
+                  ask=lambda question, pictures, conversation, **streaming: ask_model(question, pictures, conversation, load_settings(), **streaming))
     pump(0.5)
     app.asking.submit("how do i minimize this window?")
     pump(60, until=lambda: len(app.asking.conversation.exchanges) >= 1 and app.pointer.mode != "flying")
@@ -984,6 +987,8 @@ def scenario_words_window() -> dict:
     store = TakeStore()
     store.insert(TakeRecord(raw_text="um hello from the test", formatted_text="Hello from the test", app_name="gedit"))
     store.insert(TakeRecord(raw_text="see you at five", formatted_text="See you at five", app_name="Slack"))
+    store.insert(TakeRecord(raw_text="", formatted_text="", app_name="gedit", status="failed", failure_reason="couldn't reach openai",
+                            created_at=1.0))
     window = WordsWindow(store)
     window.show()
     pump(0.4)
@@ -992,6 +997,10 @@ def scenario_words_window() -> dict:
     pump(0.5)
     searched = [row[3] for row in window.history_rows]
     window.search.set_text("")
+    window.filter.set_active_id("failed")
+    pump(0.3)
+    failed = [row[3] for row in window.history_rows]
+    window.filter.set_active_id("all")
     pump(0.5)
     screenshot("words-history")
     window.notebook.set_current_page(1)
@@ -1005,9 +1014,25 @@ def scenario_words_window() -> dict:
     pump(0.3)
     screenshot("words-shortcuts")
     space = load_space()
-    return {"shown": shown, "searched": searched, "stats": window.stats_label.get_text(),
+    return {"shown": shown, "searched": searched, "failed": failed, "stats": window.stats_label.get_text(),
             "dictionary": [[term.written, list(term.heard_as)] for term in space.dictionary],
             "shortcuts": [[shortcut.trigger, shortcut.replacement] for shortcut in space.shortcuts]}
+
+
+def scenario_live_typing() -> dict:
+    """Live typing's keystrokes into a text box: the layout's own keys, and characters it lacks."""
+    from openclicky_linux.x11 import LiveKeyboard
+
+    window = Gtk.Window(title="typing target")
+    entry = Gtk.Entry()
+    window.add(entry)
+    window.show_all()
+    window.present()
+    pump(1.0, until=lambda: entry.has_focus())
+    keyboard = LiveKeyboard()
+    typed = keyboard.type_text("Héllo → wörld") and keyboard.type_text(", OK? é")
+    pump(1.5)
+    return {"typed": typed, "text": entry.get_text(), "given_back": not keyboard._borrowed}
 
 
 if __name__ == "__main__":

@@ -213,7 +213,7 @@ def decode_events(data: bytes) -> list[tuple[float, int, int, int]]:
 class InputDeviceListener:
     """Calls the X11 watcher's callbacks from its own thread, for every keyboard and pointer:
     `on_dictation_key(is_down, at_seconds)`, `on_composer_key(is_down, at_seconds)`,
-    `on_ask_key(is_down)`, `on_other_key_down(is_escape)` (a click while a key is held counts as
+    `on_ask_key(is_down)`, `on_edit_key(is_down)` (either shift), `on_other_key_down(is_escape)` (a click while a key is held counts as
     another key, as on X11), `on_step_input(kind)` ("click", "step key", "escape", "other key") and
     `on_pointer_moved()` (at most every `MOVE_INTERVAL_SECONDS`)."""
 
@@ -226,6 +226,7 @@ class InputDeviceListener:
                  on_step_input: Callable[[str], None] = lambda _kind: None,
                  ask_key_name: str | None = "Alt_L",
                  on_ask_key: Callable[[bool], None] = lambda _is_down: None,
+                 on_edit_key: Callable[[bool], None] = lambda _is_down: None,
                  on_pointer_moved: Callable[[], None] = lambda: None,
                  device_paths: Callable[[], list[str]] | None = None,
                  probe: Callable[[str], "tuple[int, str, DeviceKind] | None"] = probe_device) -> None:
@@ -240,6 +241,8 @@ class InputDeviceListener:
         self._on_dictation_key = on_dictation_key
         self._on_composer_key = on_composer_key
         self._on_ask_key = on_ask_key
+        self.edit_codes = {KEY_LEFTSHIFT, KEY_RIGHTSHIFT} - {self.dictation_code, self.ask_code}
+        self._on_edit_key = on_edit_key
         self._on_other_key_down = on_other_key_down
         self._on_step_input = on_step_input
         self._on_pointer_moved = on_pointer_moved
@@ -362,6 +365,8 @@ class InputDeviceListener:
                 self._on_composer_key(is_down, at_seconds)
             elif code == self.ask_code:
                 self._on_ask_key(is_down)
+            elif code in self.edit_codes:
+                self._on_edit_key(is_down)
             elif is_down:
                 is_escape = code == KEY_ESC
                 self._on_other_key_down(is_escape)

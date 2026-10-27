@@ -100,6 +100,8 @@ def test_left_ctrl_twice_asks_and_the_pointer_flies_to_the_answer(private_displa
     assert outcome["composer_opened"] and outcome["composer_has_keyboard"]
     assert outcome["typed"] == "where do i save this?"
     assert outcome["composer_closed"]
+    # The pause before the screen is sent ("sending your screen · esc to cancel"), typed out.
+    assert outcome["paused_with"].startswith("s")
     assert outcome["hidden_for_the_screenshot"]  # the model never sees the pointer
     assert outcome["thinking"].startswith("t")  # typing out "thinking…"
     # The question went with a real screenshot of the whole screen (the private display is 1280x800).
@@ -324,12 +326,17 @@ def test_the_words_window_shows_and_searches_the_history_and_saves_words_the_mac
     home = tmp_path / "openclicky-home"
     home.mkdir()
     outcome = run_scenario("words_window", private_display, openclicky_home=home)
-    assert outcome["shown"] == ["See you at five", "Hello from the test"]
+    assert outcome["shown"] == ["See you at five", "Hello from the test", "couldn't finish: couldn't reach openai"]
     assert outcome["searched"] == ["Hello from the test"]
+    assert outcome["failed"] == ["couldn't finish: couldn't reach openai"]
     assert "takes in all, kept only on this computer" in outcome["stats"]
     assert outcome["dictionary"] == [["Aaditya Kshatriya", ["aditya shatriya", "aditya"]]]
     assert outcome["shortcuts"] == [["my sign off", "Best,\nSam"]]
 
+
+
+def test_live_typing_types_any_character_whatever_the_layout(private_display):
+    assert run_scenario("live_typing", private_display) == {"typed": True, "text": "Héllo → wörld, OK? é", "given_back": True}
 
 
 def test_on_wayland_words_the_compositor_never_took_up_are_never_typed(private_display):

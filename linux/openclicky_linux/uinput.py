@@ -11,6 +11,10 @@ xterm, kitty) alike, while ctrl+v is a literal ^V in a terminal. Terminals paste
 selection on shift+insert, so the paste puts the words in both (`desktop.ClipboardPaster`).
 Insert is the same key in every layout, which v is not (Dvorak).
 
+Live typing (`live_typing.py`) types on the same keyboard, one character at a time: which key gives
+a character comes from the layout the compositor uses (XWayland's keymap mirrors it), so
+`type_keys` is handed key codes, never letters.
+
 The device is made once, at start, and kept: a compositor takes a moment to pick up a new keyboard.
 """
 
@@ -41,8 +45,9 @@ UI_SET_EVBIT = _ioc(1, 100, 4)
 UI_SET_KEYBIT = _ioc(1, 101, 4)
 INPUT_EVENT = struct.Struct("llHHi")
 
-# Every key the virtual keyboard can press.
-KEYS = (KEY_LEFTCTRL, KEY_LEFTSHIFT, KEY_V, KEY_INSERT)
+# Every key the virtual keyboard can press: the paste's, and every ordinary key for live typing.
+KEYS = tuple(sorted({KEY_LEFTCTRL, KEY_LEFTSHIFT, KEY_V, KEY_INSERT} | set(range(1, 249))))
+TYPING_GAP_SECONDS = 0.004
 # Between one key and the next: a compositor reads a modifier and the key in the same frame
 # otherwise, and some apps then see the key without it.
 KEY_GAP_SECONDS = 0.012
@@ -78,12 +83,17 @@ class VirtualKeyboard:
                 os.close(self._descriptor)
                 raise
 
-    def press(self, keys: tuple[int, ...]) -> None:
+    def press(self, keys: tuple[int, ...], gap_seconds: float | None = None) -> None:
         for event_type, code, value in keystroke_events(keys):
             now = time.time()
             os.write(self._descriptor, INPUT_EVENT.pack(int(now), int(now % 1 * 1_000_000), event_type, code, value))
             if event_type == EV_SYN:
-                time.sleep(self._key_gap_seconds)
+                time.sleep(self._key_gap_seconds if gap_seconds is None else gap_seconds)
+
+    def type_keys(self, strokes: list[tuple[int, bool]]) -> None:
+        """Each (key code, with shift) pressed and released in turn: a phrase of live typing."""
+        for code, with_shift in strokes:
+            self.press((KEY_LEFTSHIFT, code) if with_shift else (code,), gap_seconds=TYPING_GAP_SECONDS)
 
     def paste(self) -> None:
         self.press((KEY_LEFTSHIFT, KEY_INSERT))

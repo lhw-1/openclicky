@@ -18,6 +18,7 @@ gi.require_version("GdkPixbuf", "2.0")
 from gi.repository import Gdk, GdkPixbuf  # noqa: E402
 
 from .ask import MAXIMUM_SCREENS, Screenshot  # noqa: E402
+from .ask_lane import PointerInCapture, close_up_square  # noqa: E402
 from .pointing import MonitorArea, monitors_mouse_first  # noqa: E402
 
 # The Mac app's size (CompanionScreenCaptureUtility: 1280 on the longest side). A bigger picture is
@@ -140,6 +141,22 @@ def capture_screens() -> list[Screenshot]:
     _screen, mouse_x, mouse_y = Gdk.Display.get_default().get_default_seat().get_pointer().get_position()[0:3]
     ordered = monitors_mouse_first(monitor_areas(), mouse_x, mouse_y)[:MAXIMUM_SCREENS]
     return [_capture_area(root, area) for area in ordered]
+
+
+def cut_close_up(screenshot: Screenshot, pointer: PointerInCapture) -> bytes | None:
+    """The square around the mouse, cut from the picture it is on, as PNG (`ask_lane.close_up_square`)."""
+    square = close_up_square(pointer, screenshot.width, screenshot.height)
+    if square is None:
+        return None
+    loader = GdkPixbuf.PixbufLoader.new_with_type("png")
+    loader.write(screenshot.png_bytes)
+    loader.close()
+    picture = loader.get_pixbuf()
+    if picture is None:
+        return None
+    left, top, side = square
+    succeeded, png_bytes = picture.new_subpixbuf(left, top, side, side).save_to_bufferv("png", [], [])
+    return bytes(png_bytes) if succeeded else None
 
 
 def capture_screen() -> Screenshot:

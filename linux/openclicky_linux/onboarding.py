@@ -30,7 +30,7 @@ gi.require_version("Gtk", "3.0")
 gi.require_version("Gdk", "3.0")
 from gi.repository import Gdk, GLib, Gtk  # noqa: E402
 
-from . import applog, autostart, inputaccess, offline, preferences  # noqa: E402
+from . import accounts, applog, auto_download, autostart, inputaccess, offline, preferences  # noqa: E402
 from .account_form import AccountForm  # noqa: E402
 from . import voice as voice_module  # noqa: E402
 from .config import load_settings, save_settings  # noqa: E402
@@ -347,6 +347,10 @@ class SetupWindow:
         if page_id == "offline" and self._busy:
             self._downloads_cancelled.set()
             return
+        if page_id == "offline":
+            # Skipped: the models never download on their own (Settings still can).
+            for asset in (offline.PARAKEET, voice_module.KOKORO):
+                auto_download.set_declined(asset, True)
         self.next_page()
 
     def _set_busy(self, busy: bool) -> None:
@@ -472,6 +476,17 @@ class SetupWindow:
         source = answers_source_sentence()
         if source:
             self.page.say(f"✓ answers come from {source}.", good=True)
+            return
+        # Nothing to type to get going (the Mac's tour): a guest on OpenClicky's free credits, so
+        # asking works right away; the email above keeps them.
+        page = self.page
+
+        def started(outcome) -> None:
+            if isinstance(outcome, accounts.Outcome) and outcome.kind == "signed_in":
+                self.account_form.refresh()
+                page.say("✓ you can try me right away on openclicky's free credits. add your email to keep them.", good=True)
+
+        run_in_background(accounts.start_guest, started)
 
     def _use_key(self) -> None:
         key = self.key_entry.get_text().strip()
@@ -496,6 +511,8 @@ class SetupWindow:
             self.primary_button.set_label("continue")
 
     def _download_offline(self) -> None:
+        for asset in (offline.PARAKEET, voice_module.KOKORO):
+            auto_download.set_declined(asset, False)
         self._set_busy(True)
         self._downloads_cancelled.clear()
         self.secondary_button.set_label("cancel")

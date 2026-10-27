@@ -11,11 +11,15 @@ The style's rules go into the prompt (`formatter.system_prompt`). It must never 
 past `MODEL_TIMEOUT_SECONDS` the local result is pasted, and so it is when the rewrite does not
 look like the same take (an answer to it, or cut short). A take heard by the offline engine is
 only polished when Settings allows it: the offline engine's promise is that nothing leaves.
+
+Hey Clicky's edits (`edit`, the Mac's `HeyClickyEditor`) go to the same model, and only with the
+clean-up on: it is the switch that keeps words on this computer.
 """
 
 from __future__ import annotations
 
 import json
+import time
 import urllib.error
 import urllib.request
 from dataclasses import dataclass
@@ -94,7 +98,7 @@ def text_of(polisher: Polisher, answer: dict) -> str | None:
 
 
 def polish(raw: str, local: str, style: DictationStyle, space: DictationSpace, settings: LinuxSettings, engine: str,
-           app_name: str | None = None, timeout_seconds: float = MODEL_TIMEOUT_SECONDS, send=None) -> tuple[str, bool]:
+           app_name: str | None = None, timeout_seconds: float = MODEL_TIMEOUT_SECONDS, send=None, nearby_text: str = "") -> tuple[str, bool]:
     """(the text to paste, whether the clean-up was wanted but did not happen). `local` is the
     rules-only result, kept whenever the model cannot be trusted with this take."""
     if not local or not style.polish_with_model or not wants_model(settings, engine):
@@ -102,7 +106,8 @@ def polish(raw: str, local: str, style: DictationStyle, space: DictationSpace, s
     polisher = polisher_for(settings)
     if polisher is None:
         return local, False
-    system = formatter.system_prompt(style, space, app_name=app_name, language_code=settings.language_code)
+    system = formatter.system_prompt(style, space, app_name=app_name, language_code=settings.language_code, script=settings.script,
+                                    nearby_text=nearby_text)
     request = request_for(polisher, system, raw, settings)
     try:
         if send is not None:
@@ -118,3 +123,94 @@ def polish(raw: str, local: str, style: DictationStyle, space: DictationSpace, s
         applog.append(f"polish: {polisher.kind}'s rewrite did not look like the take; the local clean-up went in")
         return local, True
     return cleaned, False
+
+
+# MARK: Hey Clicky
+
+EDIT_TIMEOUT_SECONDS = 20.0
+EDIT_NEEDS_CLEAN_UP = "hey clicky needs “clean up my words with ai” on (styles)"
+EDIT_NEEDS_OFFLINE_ALLOWED = "hey clicky sends the selection to a model: allow clean-up of offline takes in settings, dictation"
+EDIT_NEEDS_A_MODEL = "hey clicky needs a model: sign in, or add an openai, anthropic or openrouter key"
+
+
+def edit_refusal(settings: LinuxSettings, engine: str) -> str | None:
+    """Why an edit cannot be made now, else None."""
+    if settings.polish_with_model and engine == "offline" and not settings.polish_offline_takes:
+        # The clean-up is on; it is the offline engine's promise that keeps the selection here.
+        return EDIT_NEEDS_OFFLINE_ALLOWED
+    if not wants_model(settings, engine):
+        return EDIT_NEEDS_CLEAN_UP
+    if polisher_for(settings) is None:
+        return EDIT_NEEDS_A_MODEL
+    return None
+
+
+def edit_system_prompt(style: DictationStyle) -> str:
+    return ("You edit text for someone who dictated an instruction. Apply the instruction to the text and return only the edited text: "
+            "no preamble, no quotes, no explanation, no markdown fences. Keep the language and script of the text unless the "
+            f"instruction changes them. Style for this app ({style.name}): {style.rules}")
+
+
+def complete(system: str, user: str, settings: LinuxSettings, timeout_seconds: float = EDIT_TIMEOUT_SECONDS, send=None,
+             purpose: str = "edit") -> str:
+    """The clean-up model's answer to one request (an edit, a question about the history); raises
+    ValueError with a sentence."""
+    polisher = polisher_for(settings)
+    if polisher is None:
+        raise ValueError(EDIT_NEEDS_A_MODEL.replace("hey clicky", "this"))
+    request = request_for(polisher, system, user, settings)
+    if polisher.kind == "anthropic":
+        # An edit may grow the text ("add a closing paragraph"): the take-sized bound is too tight.
+        body = json.loads(request.data)
+        body["max_tokens"] = POLISH_MAX_OUTPUT_TOKENS
+        request.data = json.dumps(body).encode()
+    try:
+        if send is not None:
+            answer = send(request, timeout_seconds)
+        else:
+            with urllib.request.urlopen(request, timeout=timeout_seconds) as response:
+                answer = json.loads(response.read().decode("utf-8"))
+    except (urllib.error.URLError, OSError, TimeoutError, ValueError) as failure:
+        applog.append(f"{purpose}: {polisher.kind} failed ({type(failure).__name__})")
+        raise ValueError(f"{type(failure).__name__}") from failure
+    text = formatter.unwrap_model_answer(text_of(polisher, answer if isinstance(answer, dict) else {}) or "")
+    if not text:
+        raise ValueError(f"{polisher.kind} answered with nothing")
+    return text
+
+
+def edit(selection: str, instruction: str, style: DictationStyle, settings: LinuxSettings, engine: str,
+         timeout_seconds: float = EDIT_TIMEOUT_SECONDS, send=None) -> str:
+    """The selection with the spoken instruction applied; raises ValueError with the orb's sentence."""
+    refusal = edit_refusal(settings, engine)
+    if refusal:
+        raise ValueError(refusal)
+    try:
+        return complete(edit_system_prompt(style), f"Instruction: {instruction}\n\nText:\n{selection}", settings, timeout_seconds, send)
+    except ValueError as failure:
+        raise ValueError(f"couldn't finish your edit: {failure}") from failure
+
+
+# MARK: asking the history
+
+HISTORY_SYSTEM_PROMPT = ("You answer questions about a person's own dictation history. Use only the takes given; quote the relevant "
+                         "words and say when they were said. If nothing matches, say so in one sentence. Answer in two or three "
+                         "sentences, plainly.")
+
+
+def ask_history(question: str, takes: list, settings: LinuxSettings, send=None) -> str:
+    """A question over the takes given (`history.TakeRecord`s, newest first), as the Mac asks it."""
+    if not takes:
+        return "nothing in history to ask about yet."
+    if polisher_for(settings) is None:
+        return "asking needs a model: sign in, or add an openai, anthropic or openrouter key."
+    lines = []
+    for take in takes[:60]:
+        moment = time.localtime(take.created_at)
+        text = take.display_text.replace("\n", " ")[:400]
+        lines.append(f"[{time.strftime('%a %-d %b, %-I:%M %p', moment)}] ({take.app_name or '?'}) {text}")
+    try:
+        return complete(HISTORY_SYSTEM_PROMPT, f"Question: {question}\n\nTakes:\n" + "\n".join(lines), settings, send=send,
+                        purpose="history question")
+    except ValueError as failure:
+        return f"couldn't ask right now: {failure}"

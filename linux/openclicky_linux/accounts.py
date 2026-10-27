@@ -141,6 +141,22 @@ def start(email: str, backend_url: str | None = None) -> Outcome:
     return outcome_of(reply, email)
 
 
+def start_guest(backend_url: str | None = None) -> Outcome:
+    """No email at all: a guest made from this computer's device hash, on OpenClicky's free credits
+    (pooled per computer, so reinstalling never refills them). The email can come later through
+    `start`, whose guest replaces this one. Fails with "email_needed" when the backend wants one."""
+    device = device_hash()
+    if not device:
+        return Outcome("failed", UNREACHABLE)
+    try:
+        reply = _post(f"{backend_url or load_settings().backend_url}/auth/guest", {"device": device})
+    except (urllib.error.URLError, OSError, TimeoutError):
+        return Outcome("failed", UNREACHABLE)
+    if reply.status == 402:
+        return Outcome("failed", "email_needed")
+    return outcome_of(reply, "")
+
+
 def submit_code(email: str, code: str, backend_url: str | None = None) -> Outcome:
     email = email.strip().lower()
     body = {"email": email, "code": "".join(character for character in code if character.isdigit())}

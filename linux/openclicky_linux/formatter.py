@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import re
 
+from .languages import script_line
 from .space import DictationSpace, DictationStyle, SpokenShortcut
 from .spoken_numbers import digitize
 
@@ -99,7 +100,8 @@ def format_locally(raw: str, space: DictationSpace, style: DictationStyle | None
 # MARK: the model pass
 
 
-def system_prompt(style: DictationStyle, space: DictationSpace, app_name: str | None = None, language_code: str | None = None) -> str:
+def system_prompt(style: DictationStyle, space: DictationSpace, app_name: str | None = None, language_code: str | None = None,
+                  script: str = "native", nearby_text: str = "") -> str:
     """The Mac's clean-up prompt, line for line."""
     lines = [
         "You clean up dictated speech into written text. Return only the cleaned text, nothing else: no preamble, no quotes, no explanation, no markdown fences.",
@@ -111,9 +113,12 @@ def system_prompt(style: DictationStyle, space: DictationSpace, app_name: str | 
     ]
     if app_name:
         lines.append(f"The text is going into {app_name}.")
-    if language_code:
-        bare = language_code.split("-")[0].split("_")[0].lower()
-        lines.append(f"The language is {language_code} ({bare}). Write it in its native script.")
+    language_line = script_line(language_code, script)
+    if language_line:
+        lines.append(language_line)
+    if nearby_text.strip():
+        # The Mac's nearby text (`FocusedFieldReader`): what is already in the box spells names.
+        lines.append(f"The text box already holds this before the cursor; spell names and terms the way it does: «{nearby_text.strip()}»")
     if space.dictionary:
         terms = [f'"{term.written}"' + (f" (heard as {', '.join(chr(34) + alias + chr(34) for alias in term.heard_as)})" if term.heard_as else "")
                  for term in space.dictionary]

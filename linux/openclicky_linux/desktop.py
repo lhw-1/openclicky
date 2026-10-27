@@ -51,6 +51,8 @@ class ClipboardPaster:
         self._clipboard = Gtk.Clipboard.get(Gdk.SELECTION_CLIPBOARD)
         self._primary = Gtk.Clipboard.get(Gdk.SELECTION_PRIMARY)
         self._paste_generation = 0
+        # When a paste last changed the clipboard (its words, or the restore): the clipboard history skips those.
+        self.last_paste_at = 0.0
         self._selection_owner = None
         if keyboard is not None:
             from .x_selection import SelectionOwner
@@ -78,15 +80,18 @@ class ClipboardPaster:
             return True
         return send_paste_keystroke(self._xlib_display, with_shift=bool(window and window.is_terminal))
 
-    def paste(self, text: str, window: FocusedWindow | None) -> bool:
+    def paste(self, text: str, window: FocusedWindow | None, replacing_selection: bool = False) -> bool:
         """Puts `text` on the clipboard, posts the paste keystroke, and puts the person's own clipboard
         text back afterwards. The old clipboard is read asynchronously (`request_text`), never with
         `wait_for_text`: that runs a nested main loop, in which a queued esc or a new key press would
         be handled in the middle of a take's paste. Before the keystroke, the window in front is
         checked again; anything wrong leaves the words on the clipboard and reports it. False when
-        no keystroke can be posted at all (no XTEST)."""
+        no keystroke can be posted at all (no XTEST). `replacing_selection` (a Hey Clicky edit, a
+        rewrite in place): the primary selection is left alone, since an app that loses it drops the
+        highlight the paste is meant to replace."""
         if not self._can_send_keystroke():
             return False
+        self.last_paste_at = time.monotonic()
         self._paste_generation += 1
         this_paste = self._paste_generation
         asked_at = time.monotonic()
@@ -97,7 +102,9 @@ class ClipboardPaster:
                 applog.append("paste: an older take's paste was overtaken; its words were not pasted")
                 return
             if self._selection_owner is not None:
-                self._selection_owner.offer(text, on_taken_up=lambda taken: keystroke_once_taken_up(taken, previous_text, previous_primary))
+                selections = ("CLIPBOARD",) if replacing_selection else ("CLIPBOARD", "PRIMARY")
+                self._selection_owner.offer(text, selections=selections,
+                                            on_taken_up=lambda taken: keystroke_once_taken_up(taken, previous_text, previous_primary))
                 return
             self.copy_to_clipboard(text)
             send_keystroke(previous_text, previous_primary)
@@ -132,6 +139,7 @@ class ClipboardPaster:
                 return
 
             def restore_previous_clipboard() -> bool:
+                self.last_paste_at = time.monotonic()
                 if self._selection_owner is not None:
                     owner = self._selection_owner
                     # Only while the words are still ours: anything copied since stays.
@@ -171,15 +179,27 @@ _ORB_CSS = b"""
 .openclicky-orb label { color: #f4f1ec; font-size: 13px; }
 .openclicky-orb.listening { box-shadow: inset 0 0 0 2px #f0452b; }
 .openclicky-orb.failed label { color: #ffb4a6; }
+.openclicky-orb.small label { font-size: 11px; }
+.openclicky-orb.large label { font-size: 16px; }
+.openclicky-orb.small { padding: 5px 12px; border-radius: 14px; }
+.openclicky-orb.large { padding: 11px 20px; border-radius: 22px; }
+.openclicky-orb.light { background-color: rgba(246, 243, 238, 0.95); }
+.openclicky-orb.light label { color: #1c1a18; }
+.openclicky-orb.light.failed label { color: #b3261e; }
+.openclicky-orb.resting { opacity: 0.75; }
 """
 
 _PHASE_LABELS = {"listening": "● listening", "working": "…", "done": "✓", "failed": "✕"}
 
 
 class OrbWindow:
+    """The orb, as Settings → The Orb has it: when it shows, where, its size and theme. Resting
+    ("always"), it is a small pill that says how to dictate."""
     BOTTOM_MARGIN = 72
+    TOP_MARGIN = 36
+    SIDE_MARGIN = 24
 
-    def __init__(self, orb: OrbModel) -> None:
+    def __init__(self, orb: OrbModel, settings=None, resting_hint: str = "") -> None:
         provider = Gtk.CssProvider()
         provider.load_from_data(_ORB_CSS)
         Gtk.StyleContext.add_provider_for_screen(Gdk.Screen.get_default(), provider, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION)
@@ -202,14 +222,39 @@ class OrbWindow:
         self.label = Gtk.Label()
         self._box.add(self.label)
         self.window.add(self._box)
+        self.orb = orb
+        self.resting_hint = resting_hint
+        self.shows, self.position, self.size, self.theme = "whileDictating", "bottom", "normal", "dark"
+        if settings is not None:
+            self.apply(settings)
         orb.listeners.append(self.update)
+
+    def apply(self, settings) -> None:
+        """Settings → The Orb, at once."""
+        self.shows, self.position, self.size, self.theme = settings.orb_shows, settings.orb_position, settings.orb_size, settings.orb_theme
+        style = self._box.get_style_context()
+        for name in ("small", "large", "light"):
+            style.remove_class(name)
+        if self.size != "normal":
+            style.add_class(self.size)
+        if self.theme == "light":
+            style.add_class("light")
+        self.update(self.orb)
 
     def update(self, orb: OrbModel) -> None:
         style = self._box.get_style_context()
         for phase in ("listening", "working", "done", "failed"):
             style.remove_class(phase)
+        style.remove_class("resting")
         if orb.phase == "idle":
-            self.window.hide()
+            if self.shows != "always":
+                self.window.hide()
+                return
+            style.add_class("resting")
+            self.label.set_text(f"● {self.resting_hint}" if self.resting_hint else "●")
+            self.window.resize(1, 1)
+            self.window.show_all()
+            self._place()
             return
         style.add_class(orb.phase)
         prefix = _PHASE_LABELS.get(orb.phase, "")
@@ -219,11 +264,14 @@ class OrbWindow:
         # Shrinks to the new line: a window keeps its largest size unless asked for less.
         self.window.resize(1, 1)
         self.window.show_all()
-        self._place_at_bottom_center()
+        self._place()
 
-    def _place_at_bottom_center(self) -> None:
+    def _place(self) -> None:
         display = Gdk.Display.get_default()
         monitor = display.get_primary_monitor() or display.get_monitor(0)
         area = monitor.get_workarea()
         width, height = self.window.get_size()
-        self.window.move(area.x + (area.width - width) // 2, area.y + area.height - height - self.BOTTOM_MARGIN)
+        x = {"bottomLeft": area.x + self.SIDE_MARGIN,
+             "bottomRight": area.x + area.width - width - self.SIDE_MARGIN}.get(self.position, area.x + (area.width - width) // 2)
+        y = area.y + self.TOP_MARGIN if self.position == "top" else area.y + area.height - height - self.BOTTOM_MARGIN
+        self.window.move(x, y)
